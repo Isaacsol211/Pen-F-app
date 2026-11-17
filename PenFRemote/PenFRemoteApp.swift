@@ -31,6 +31,7 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             camera.scenePhaseChanged(newPhase)
         }
+        .task { WatchBridge.shared.start(camera: camera) }
         #if DEBUG
         // `-connectFromShortcut` runs what the "Connect to Camera" shortcut runs, for testing in the
         // Simulator, which has no Shortcuts app.

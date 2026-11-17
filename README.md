@@ -45,6 +45,7 @@ The LUMIX side is tested only against a mock camera so far; see
   - save originals to Photos;
   - **star** photos (tap and hold, or the star when viewing one), show **Starred** only, and **download the RAWs of starred photos**: the .ORF next to each starred JPEG goes to Photos, or to Files ▸ On My iPhone ▸ PEN-F Remote ▸ RAW if Photos won't take it. Stars are remembered per file name and size.
 - **One-tap connect:** a "Connect to Camera" shortcut for the Action button, Siri and Shortcuts (see below).
+- **Apple Watch remote:** live view, exposure, shutter, self-timer, Bulb and the Digital Crown for EV (see below).
 - **··· menu:** live view size, camera clock sync, High Res Shot guide, all settings, request log, disconnect, power off.
 
 ## Run it on your iPhone
@@ -76,6 +77,28 @@ Once you've joined the camera's Wi-Fi in Settings, iOS rejoins it by itself when
 
 The app doesn't join the camera's Wi-Fi itself. That needs Apple's Hotspot Configuration capability, which Apple only grants to paid developer accounts. This app is signed with a free Personal Team, so the Wi-Fi join is left to iOS. With a paid account, `NEHotspotConfiguration` could be added to make it truly one-tap.
 
+## Apple Watch remote
+
+The Watch app is a remote for the iPhone app: the iPhone stays connected to the camera, and the Watch
+talks to the iPhone over Bluetooth/Wi-Fi (WatchConnectivity). A Watch can't stay on the camera's own
+Wi-Fi, so this is how camera Watch remotes generally work.
+
+- **Live view** at about 3 frames a second while the Watch app is on screen. It stops when you lower your wrist, to save battery.
+- **Battery, shots left** and the exposure the iPhone's strip shows (aperture, shutter, ISO, EV).
+- **Shutter:** takes a picture, starts and stops Bulb / Live modes, or records video in movie mode. A tap on your wrist confirms each shot.
+- **Self-timer:** Off, 2 s or 10 s, with a countdown over the live view and a cancel button. The cancel button also stops an interval run or a bracket.
+- **Digital Crown:** turns exposure compensation when the camera allows it (EV shows in orange).
+- Timed Bulb shows its countdown, and a running exposure or video shows its clock.
+
+Keep PEN-F Remote open on the iPhone while you use the Watch: iOS stops the app's camera
+connection in the background. Pocket mode is a good way to leave it running. If the iPhone app stops
+answering, the Watch says so instead of showing an old picture.
+
+**Installing it:** it's part of the PenFRemote scheme. Run that on your iPhone from Xcode, and the
+Watch app installs on the paired Watch (or install it from the Watch app ▸ Available Apps). The first
+time, turn on Developer Mode on the Watch (Settings ▸ Privacy & Security ▸ Developer Mode). It uses
+the same free Personal Team and expires with the iPhone app.
+
 ## Test without the camera (mock cameras)
 
 `mock-camera/mock_penf.py` pretends to be the PEN-F and `mock-camera/mock_lumix.py` a LUMIX GH5,
@@ -95,6 +118,11 @@ python3 mock-camera/mock_lumix.py
 
 Like the real PEN-F, the PEN-F mock rejects commands sent in the wrong mode (HTTP 520) and rejects unknown User-Agents.
 Its card has RAW+JPEG pairs (fake `.ORF` files that Photos rejects, so RAW downloads fall back to Files), and it offers Live Composite / Time / Bulb in M.
+
+To try the Watch app in the Simulator, pair a Watch simulator with the iPhone one
+(`xcrun simctl pair <watch> <iphone>`), then run the PenFRemote scheme on the iPhone and the
+PenFRemoteWatch scheme on the Watch. A Debug Watch build launched with `-crownSteps 2` turns the
+crown two clicks by itself, since the Simulator tools can't.
 
 The Simulator has no Shortcuts app. To run what the shortcut runs, launch a Debug build with `-connectFromShortcut`:
 
@@ -210,11 +238,18 @@ PenFRemote/
   Camera/FocusPeaking.swift  Core Image edge overlay for focus peaking
   Camera/Geotag.swift        location log (When In Use) and nearest-point lookup
   Camera/Shortcuts.swift     "Connect to Camera" App Intent and App Shortcut
+  Camera/WatchBridge.swift   iPhone end of the Watch remote: status, commands, preview frames
+  Camera/StripValues.swift   the exposure strip's values (shared with the Watch)
   Camera/Panasonic.swift     LUMIX driver: pairing, keep-alive, settings, shooting, UPnP card browser
   Camera/XML.swift           tiny XML parser + camera command list
   Camera/PropertyFormat.swift labels for raw property values
   Views/ExtrasViews.swift    bracketing sheet, pocket mode, bulb timer, RAW download bar
   Views/…                    SwiftUI screens
+PenFRemoteWatch/             Apple Watch remote (SwiftUI, WatchConnectivity)
+  PhoneLink.swift            Watch end of the link to the iPhone app
+  WatchRemoteView.swift      live view, values, self-timer, shutter, Digital Crown EV
+Shared/
+  WatchProtocol.swift        messages and status shared by the iPhone and Watch apps
 mock-camera/
   mock_penf.py               fake PEN-F (HTTP + RTP live view)
   mock_lumix.py              fake LUMIX GH5 (cam.cgi, UDP live view, UPnP card, file server)
