@@ -18,6 +18,8 @@ struct RemoteView: View {
     @AppStorage("ui.grid") private var showGrid = false
     @AppStorage("ui.nightMode") private var nightMode = false
     @State private var showLoupe = false
+    @State private var showBracket = false
+    @State private var pocketMode = false
 
     var body: some View {
         GeometryReader { geo in
@@ -50,6 +52,10 @@ struct RemoteView: View {
         .sheet(isPresented: $showInterval) {
             IntervalView().presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showBracket) {
+            BracketView().presentationDetents([.medium, .large])
+        }
+        .fullScreenCover(isPresented: $pocketMode) { PocketModeView() }
         .fullScreenCover(isPresented: $showGallery) { GalleryView() }
         .confirmationDialog("Turn the camera off?", isPresented: $confirmPowerOff, titleVisibility: .visible) {
             Button("Turn off", role: .destructive) { Task { await camera.powerOff() } }
@@ -266,6 +272,21 @@ struct RemoteView: View {
             ToolItem(id: "night", icon: "eye", title: "Night", on: nightMode) { nightMode.toggle() },
             ToolItem(id: "histogram", icon: "chart.bar.xaxis", title: "Histogram", on: showHistogram) { showHistogram.toggle() },
             ToolItem(id: "grid", icon: "grid", title: "Grid", on: showGrid) { showGrid.toggle() },
+            ToolItem(id: "peaking", icon: "scope", title: "Peaking", on: camera.focusPeaking) {
+                camera.focusPeaking.toggle()
+            },
+            ToolItem(id: "bracket", icon: "square.stack.3d.down.right", title: "Bracket", on: camera.bracket.running) {
+                toolsOpen = false; showBracket = true
+            },
+            ToolItem(id: "pocket", icon: "moon.zzz", title: "Pocket", on: false) {
+                toolsOpen = false; pocketMode = true
+            },
+            ToolItem(id: "geotag", icon: camera.geotagging ? "location.fill" : "location", title: "Geotag",
+                     on: camera.geotagging) {
+                camera.geotagging.toggle()
+                camera.showToast(camera.geotagging ? "Geotagging on: saved photos get your location"
+                                                   : "Geotagging off")
+            },
             ToolItem(id: "tap", icon: camera.touchShutter ? "hand.tap.fill" : "hand.tap",
                      title: camera.touchShutter ? "Tap shoots" : "Tap AF", on: camera.touchShutter) {
                 camera.touchShutter.toggle()
@@ -506,18 +527,29 @@ struct ShutterButton: View {
     @Environment(CameraModel.self) private var camera
     @State private var pressed = false
 
+    /// Interval or bracket progress, drawn as a ring around the shutter.
+    private var sequenceProgress: CGFloat? {
+        if camera.interval.running, camera.interval.total > 0 {
+            return CGFloat(camera.interval.done) / CGFloat(camera.interval.total)
+        }
+        if camera.bracket.running, camera.bracket.total > 0 {
+            return CGFloat(camera.bracket.done) / CGFloat(camera.bracket.total)
+        }
+        return nil
+    }
+
     var body: some View {
-        let enabled = camera.mode == .rec && !camera.isSwitchingMode
+        let enabled = camera.mode == .rec && !camera.isSwitchingMode && !camera.bracket.running
         let movie = camera.isMovieMode
         ZStack {
             // Interval progress wraps the shutter.
-            if camera.interval.running, camera.interval.total > 0 {
+            if let progress = sequenceProgress {
                 Circle()
-                    .trim(from: 0, to: CGFloat(camera.interval.done) / CGFloat(camera.interval.total))
+                    .trim(from: 0, to: progress)
                     .stroke(Theme.accent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .frame(width: 102, height: 102)
-                    .animation(.smooth, value: camera.interval.done)
+                    .animation(.smooth, value: progress)
             }
             if let started = camera.exposureStartedAt {
                 TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
@@ -542,8 +574,8 @@ struct ShutterButton: View {
                     // Timed long exposure: big countdown in the shutter.
                     TimelineView(.periodic(from: .now, by: 0.25)) { context in
                         let left = max(0, Int((duration - context.date.timeIntervalSince(started)).rounded(.up)))
-                        Text(left > 0 ? "\(left)" : "NR")
-                            .font(.system(size: left > 99 ? 22 : 28, weight: .semibold, design: .rounded).monospacedDigit())
+                        Text(left >= 60 ? String(format: "%d:%02d", left / 60, left % 60) : (left > 0 ? "\(left)" : "NR"))
+                            .font(.system(size: left >= 600 ? 18 : (left >= 60 ? 22 : 28), weight: .semibold, design: .rounded).monospacedDigit())
                             .foregroundStyle(Theme.accent)
                             .contentTransition(.numericText(countsDown: true))
                             .animation(.snappy, value: left)
@@ -574,6 +606,22 @@ struct ShutterButton: View {
                         .glassEffect(.regular, in: .capsule)
                 }
                 .offset(y: -62)
+            } else if camera.bracket.running {
+                Button { camera.cancelBracket() } label: {
+                    HStack(spacing: 4) {
+                        Text("\(camera.bracket.done + 1)/\(camera.bracket.total)\(camera.bracket.label.map { " · \($0)" } ?? "")")
+                        Image(systemName: "xmark").font(.system(size: 8, weight: .heavy))
+                    }
+                    .font(.caption2.monospacedDigit().weight(.bold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .glassEffect(.regular, in: .capsule)
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+                .offset(y: -62)
+                .accessibilityLabel("Cancel bracketing")
             }
         }
         .frame(width: 104, height: 104)

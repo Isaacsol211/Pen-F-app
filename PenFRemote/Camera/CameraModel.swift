@@ -61,6 +61,9 @@ struct CameraImage: Identifiable, Hashable {
 @MainActor
 @Observable
 final class CameraModel {
+    /// The one model the app and its Shortcuts actions share.
+    static let shared = CameraModel()
+
     // MARK: Settings (saved between launches)
 
     var brand: CameraBrand
@@ -146,6 +149,39 @@ final class CameraModel {
     var cardFolders: [CardFolder] = []
     var galleryLoading = false
     var galleryError: String?
+
+    // MARK: Extras (peaking, timed bulb, bracketing, geotagging, smart import)
+
+    /// Focus peaking overlay on live view; computed off the main thread a few times a second.
+    var focusPeaking = UserDefaults.standard.bool(forKey: "ui.peaking") {
+        didSet {
+            UserDefaults.standard.set(focusPeaking, forKey: "ui.peaking")
+            receiver?.setPeaking(focusPeaking)
+            if !focusPeaking { peakingOverlay = nil }
+        }
+    }
+    var peakingOverlay: UIImage?
+    /// Stop Bulb / Live Time / Live Composite automatically after this many seconds (0 = off).
+    var bulbTimer: Double = UserDefaults.standard.double(forKey: "bulbTimer") {
+        didSet { UserDefaults.standard.set(bulbTimer, forKey: "bulbTimer") }
+    }
+    @ObservationIgnored var openExposureStopTask: Task<Void, Never>?
+    var bracket = BracketState()
+    @ObservationIgnored var bracketTask: Task<Void, Never>?
+    /// Log where the phone is while connected, and add it to photos saved to Photos.
+    var geotagging = UserDefaults.standard.bool(forKey: "geotag") {
+        didSet {
+            UserDefaults.standard.set(geotagging, forKey: "geotag")
+            updateLocationLogging()
+        }
+    }
+    @ObservationIgnored let locationLog = LocationLog()
+    /// Starred card files, keyed by name and size so a reused file name on a new card doesn't match.
+    var starred: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "stars") ?? []) {
+        didSet { UserDefaults.standard.set(Array(starred), forKey: "stars") }
+    }
+    var rawImport: RawImportProgress?
+    @ObservationIgnored var rawImportTask: Task<Void, Never>?
 
     // MARK: Request log
 
@@ -251,7 +287,28 @@ final class CameraModel {
 
     // MARK: - Connect / disconnect
 
-    func connect() async {
+    /// Connects; with a deadline, keeps trying until then (e.g. while iOS joins the camera's Wi-Fi
+    /// after a Shortcut or the Action button opened the app).
+    func connect(waitingUntil deadline: Date? = nil) async {
+        guard phase == .disconnected else { return }
+        while true {
+            await connectOnce()
+            guard phase == .disconnected, let deadline, Date() < deadline, !Task.isCancelled else { return }
+            let failure = lastError
+            lastError = nil
+            phase = .connecting
+            status = "Waiting for the camera's Wi-Fi…"
+            try? await Task.sleep(for: .seconds(2))
+            phase = .disconnected
+            status = nil
+            if Date() >= deadline {
+                lastError = failure
+                return
+            }
+        }
+    }
+
+    private func connectOnce() async {
         guard phase == .disconnected else { return }
         host = host.trimmingCharacters(in: .whitespacesAndNewlines)
         saveSettings()
@@ -305,6 +362,7 @@ final class CameraModel {
             phase = .connected
             UIApplication.shared.isIdleTimerDisabled = true
             status = nil
+            updateLocationLogging()
             await enterRecMode()
         } catch {
             lastError = Self.describe(error, host: host)
@@ -335,6 +393,11 @@ final class CameraModel {
         panasonicKeepAlive?.cancel()
         panasonicKeepAlive = nil
         stopInterval()
+        cancelBracket()
+        openExposureStopTask?.cancel()
+        openExposureStopTask = nil
+        rawImportTask?.cancel()
+        peakingOverlay = nil
         receiver?.stop()
         receiver = nil
         client = nil
@@ -351,6 +414,7 @@ final class CameraModel {
         images = []
         thumbnailCache = [:]
         fps = 0
+        updateLocationLogging()
     }
 
     private func startReceiver() throws {
@@ -362,6 +426,11 @@ final class CameraModel {
                 if let histogram { self?.histogram = histogram }
                 if let sharpness { self?.updateFocusMeter(sharpness) }
             }
+            receiver.onPeaking = { [weak self] overlay in
+                guard let self, self.focusPeaking else { return }
+                self.peakingOverlay = overlay.map { UIImage(cgImage: $0) }
+            }
+            receiver.setPeaking(focusPeaking)
             do {
                 try receiver.start()
                 self.receiver = receiver
@@ -617,8 +686,23 @@ final class CameraModel {
 
     /// Open-ended exposures: first tap starts, second tap stops.
     func toggleOpenExposure() async {
-        guard let client, mode == .rec else { return }
-        if brand == .panasonic { await panasonicToggleBulb(); return }
+        guard client != nil, mode == .rec else { return }
+        let starting = !isShooting
+        if !starting {
+            openExposureStopTask?.cancel()
+            openExposureStopTask = nil
+            exposureDuration = nil
+        }
+        if brand == .panasonic {
+            await panasonicToggleBulb()
+        } else {
+            await olympusToggleOpenExposure()
+        }
+        if starting, isShooting, bulbTimer > 0 { scheduleOpenExposureStop(after: bulbTimer) }
+    }
+
+    private func olympusToggleOpenExposure() async {
+        guard let client else { return }
         if isShooting {
             _ = try? await client.getUrgent("exec_takemotion", [("com", "stoptake")])
             isShooting = false
@@ -763,26 +847,35 @@ final class CameraModel {
         return full.preparingThumbnail(of: CGSize(width: 2000, height: 2000)) ?? full
     }
 
-    func saveOriginalToPhotos(_ image: CameraImage) async throws {
-        guard let client else { throw CameraError("Not connected.") }
-        let data: Data
-        if let urls = image.urls {
-            data = try await client.fetch(urls.original, timeout: 300)
-        } else {
-            data = try await client.download(path: image.path)
-        }
+    /// Returns whether the photo was geotagged.
+    @discardableResult
+    func saveOriginalToPhotos(_ image: CameraImage) async throws -> Bool {
+        let data = try await downloadOriginal(image)
         let access = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard access == .authorized || access == .limited else {
             throw CameraError("Photos access is off. Turn it on in Settings ▸ PEN-F Remote ▸ Photos.")
         }
+        return try await addToPhotos(data, for: image)
+    }
+
+    /// Adds a downloaded file to Photos, with the logged location nearest its capture time when
+    /// geotagging is on. Returns whether a location was added.
+    @discardableResult
+    func addToPhotos(_ data: Data, for image: CameraImage) async throws -> Bool {
         let type: PHAssetResourceType = image.isVideo ? .video : .photo
         let filename = image.name
+        let location = geotagging ? locationLog.location(near: image.date) : nil
         try await PHPhotoLibrary.shared().performChanges {
             let request = PHAssetCreationRequest.forAsset()
             let options = PHAssetResourceCreationOptions()
             options.originalFilename = filename
             request.addResource(with: type, data: data, options: options)
+            if let location { request.location = location }
         }
+        if let location {
+            debugLog("geotag \(filename): \(location.coordinate.latitude), \(location.coordinate.longitude)")
+        }
+        return location != nil
     }
 
     // MARK: - Log & errors

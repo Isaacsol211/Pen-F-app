@@ -122,6 +122,15 @@ struct ConnectView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .glassEffect(.regular.tint(.red.opacity(0.35)), in: .rect(cornerRadius: 20, style: .continuous))
             .transition(.blurReplace)
+        } else if !connecting {
+            Label {
+                Text("**One tap next time:** put the \"Connect to Camera\" shortcut on the Action button (Settings ▸ Action Button ▸ Shortcut ▸ PEN-F Remote). Once you've joined the camera's Wi-Fi here, iOS rejoins it whenever the camera's Wi-Fi is on, and the app connects by itself.")
+            } icon: {
+                Image(systemName: "bolt.circle").foregroundStyle(Theme.accent)
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
         }
     }
 

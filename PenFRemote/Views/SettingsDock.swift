@@ -318,13 +318,19 @@ struct ShutterOptions: View {
                 .id("shutter-dial")
                 .transition(.blurReplace)
             } else {
-                Text(current == "livecomp"
-                     ? "Live Composite stacks only new light: star trails without over-exposing the sky. Tap the shutter to start, again to stop."
-                     : "The exposure runs until you tap the shutter again.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.blurReplace)
+                VStack(alignment: .leading, spacing: 8) {
+                    BulbTimerControl()
+                    Text(current == "livecomp"
+                         ? "Live Composite stacks only new light: star trails without over-exposing the sky. "
+                            + (camera.bulbTimer > 0 ? "It stops by itself after \(CameraModel.durationLabel(camera.bulbTimer))." : "Tap the shutter to start, again to stop.")
+                         : (camera.bulbTimer > 0
+                            ? "The exposure stops by itself after \(CameraModel.durationLabel(camera.bulbTimer)), or when you tap the shutter."
+                            : "The exposure runs until you tap the shutter again."))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.blurReplace)
             }
         }
         .animation(.smooth, value: current)

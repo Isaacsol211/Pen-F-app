@@ -189,6 +189,8 @@
 				INFOPLIST_FILE = "PenFRemote-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "PEN-F Remote";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "PEN-F Remote talks to your Olympus camera over its Wi-Fi to show live view and take pictures.";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "With geotagging on, PEN-F Remote notes where you are while connected to the camera and adds that location to photos you save to Photos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "PEN-F Remote saves photos you download from the camera's card to your library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -219,6 +221,8 @@
 				INFOPLIST_FILE = "PenFRemote-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "PEN-F Remote";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "PEN-F Remote talks to your Olympus camera over its Wi-Fi to show live view and take pictures.";
+				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "With geotagging on, PEN-F Remote notes where you are while connected to the camera and adds that location to photos you save to Photos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "PEN-F Remote saves photos you download from the camera's card to your library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

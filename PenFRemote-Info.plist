@@ -10,5 +10,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<!-- RAW files that Photos won't take are saved to Documents/RAW, shown in Files. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
 </dict>
 </plist>

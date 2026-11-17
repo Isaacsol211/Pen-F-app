@@ -315,6 +315,14 @@ private struct LiveImage: View {
             Image(uiImage: frame)
                 .resizable()
                 .interpolation(smooth ? .high : .medium)
+                .overlay {
+                    if camera.focusPeaking, let peaks = camera.peakingOverlay {
+                        Image(uiImage: peaks)
+                            .resizable()
+                            .interpolation(.medium)
+                            .allowsHitTesting(false)
+                    }
+                }
         }
     }
 }

@@ -22,6 +22,7 @@ The LUMIX side is tested only against a mock camera so far; see
   - Live Comp / Live Time / Live Bulb as their own segments.
   - A locked setting explains why and offers a one-tap unlock, e.g. "Switch to S".
 - **Tap to focus** with the camera's AF result box. A **focus loupe** (4×, switches to 1280×960 by itself) helps nail manual focus on stars.
+- **Focus peaking:** sharp edges are outlined in red, in the viewfinder and inside the loupe. It runs on its own thread at up to 12 fps and skips frames when busy, so live view keeps its frame rate.
 - **The shutter does everything:**
   - single, burst (hold) and movie record;
   - long exposures with a countdown ring;
@@ -32,12 +33,18 @@ The LUMIX side is tested only against a mock camera so far; see
   - sets M, the widest aperture, ISO, ~4000 K and anti-shock.
   - Star trails use Live Composite.
 - **Interval timer** for time-lapse and star stacking, with a progress ring around the shutter.
+- **Timed Bulb:** Bulb, Live Time and Live Composite can stop by themselves after 30 s, 1–10 min or any length you pick, with a countdown in the shutter.
+- **Exposure bracketing:** 3, 5, 7 or 9 frames, ⅓ to 2 EV apart. It varies exposure compensation in P, A and S and the shutter speed in M (or whichever you choose), shows what it will shoot first, can be cancelled, and puts the setting back afterwards. No focus bracketing: there's no Wi-Fi command to step the focus, so use the camera's own Focus BKT.
+- **Pocket mode:** a black screen with a dim red countdown for long night sessions. The screen has to stay on, because iOS stops the app's Wi-Fi when the iPhone locks; for hours-long star trails, use the camera's own Live Composite or interval shooting.
 - **Night mode:** red UI to keep your eyes dark-adapted.
+- **Geotagging:** while connected, the app can log where you are (When In Use only, kept for two weeks on the phone). Photos you save to Photos get the logged position nearest their capture time, within 10 minutes. The capture time comes from the camera's clock, so sync it first (··· ▸ Sync camera clock).
 - **Last-shot thumbnail** after every capture.
 - **Card browser:**
   - zoom transition, swipe between photos, pinch/double-tap zoom;
   - a 50 MP badge on High Res Shot files;
-  - save originals to Photos.
+  - save originals to Photos;
+  - **star** photos (tap and hold, or the star when viewing one), show **Starred** only, and **download the RAWs of starred photos**: the .ORF next to each starred JPEG goes to Photos, or to Files ▸ On My iPhone ▸ PEN-F Remote ▸ RAW if Photos won't take it. Stars are remembered per file name and size.
+- **One-tap connect:** a "Connect to Camera" shortcut for the Action button, Siri and Shortcuts (see below).
 - **··· menu:** live view size, camera clock sync, High Res Shot guide, all settings, request log, disconnect, power off.
 
 ## Run it on your iPhone
@@ -61,6 +68,14 @@ The LUMIX side is tested only against a mock camera so far; see
 
 The camera is always at `192.168.0.10`. Close OI.Share / OM Image Share first so the two apps don't compete for the camera.
 
+### One tap next time (Action button)
+
+The app adds a **Connect to Camera** shortcut. Put it on the Action button (Settings ▸ Action Button ▸ Shortcut ▸ PEN-F Remote), or say "Connect to my camera with PEN-F Remote". It opens the app and keeps trying to connect for 30 seconds.
+
+Once you've joined the camera's Wi-Fi in Settings, iOS rejoins it by itself whenever the camera's Wi-Fi is on, so the flow is: turn on Wi-Fi on the camera, press the Action button, shoot.
+
+The app doesn't join the camera's Wi-Fi itself. That needs Apple's Hotspot Configuration capability, which Apple only grants to paid developer accounts. This app is signed with a free Personal Team, so the Wi-Fi join is left to iOS. With a paid account, `NEHotspotConfiguration` could be added to make it truly one-tap.
+
 ## Test without the camera (mock cameras)
 
 `mock-camera/mock_penf.py` pretends to be the PEN-F and `mock-camera/mock_lumix.py` a LUMIX GH5,
@@ -79,6 +94,13 @@ python3 mock-camera/mock_lumix.py
 - **On a real iPhone on the same Wi-Fi:** run it with `--bind 0.0.0.0` and use `<your Mac's IP>:8080` / `:8082`.
 
 Like the real PEN-F, the PEN-F mock rejects commands sent in the wrong mode (HTTP 520) and rejects unknown User-Agents.
+Its card has RAW+JPEG pairs (fake `.ORF` files that Photos rejects, so RAW downloads fall back to Files), and it offers Live Composite / Time / Bulb in M.
+
+The Simulator has no Shortcuts app. To run what the shortcut runs, launch a Debug build with `-connectFromShortcut`:
+
+```bash
+xcrun simctl launch booted dev.penfremote.remote4821 -connectFromShortcut
+```
 The LUMIX mock asks for approval the first time a phone pairs (`--refuse` makes it say No), only browses
 the card in playback mode, and stops live view if the app stops polling it. It also serves its media server
 and files on the real camera's ports, 60606 and 50001.
@@ -184,9 +206,14 @@ PenFRemote/
   Camera/OlympusClient.swift HTTP commands, request log, card listing parser
   Camera/LiveView.swift      UDP socket, RTP reassembly, frame metadata parser, LUMIX JPEG datagrams
   Camera/CameraModel.swift   connection/mode state machine, shooting, settings, gallery
+  Camera/Extras.swift        timed bulb, bracketing, stars and RAW download, shortcut connect
+  Camera/FocusPeaking.swift  Core Image edge overlay for focus peaking
+  Camera/Geotag.swift        location log (When In Use) and nearest-point lookup
+  Camera/Shortcuts.swift     "Connect to Camera" App Intent and App Shortcut
   Camera/Panasonic.swift     LUMIX driver: pairing, keep-alive, settings, shooting, UPnP card browser
   Camera/XML.swift           tiny XML parser + camera command list
   Camera/PropertyFormat.swift labels for raw property values
+  Views/ExtrasViews.swift    bracketing sheet, pocket mode, bulb timer, RAW download bar
   Views/…                    SwiftUI screens
 mock-camera/
   mock_penf.py               fake PEN-F (HTTP + RTP live view)

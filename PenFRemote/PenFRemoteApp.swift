@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct PenFRemoteApp: App {
-    @State private var camera = CameraModel()
+    @State private var camera = CameraModel.shared
 
     var body: some Scene {
         WindowGroup {
@@ -31,6 +31,13 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             camera.scenePhaseChanged(newPhase)
         }
+        #if DEBUG
+        // `-connectFromShortcut` runs what the "Connect to Camera" shortcut runs, for testing in the
+        // Simulator, which has no Shortcuts app.
+        .task {
+            if ProcessInfo.processInfo.arguments.contains("-connectFromShortcut") { camera.connectFromShortcut() }
+        }
+        #endif
     }
 }
 

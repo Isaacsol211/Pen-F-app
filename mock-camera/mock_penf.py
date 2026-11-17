@@ -34,7 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FRAMES_DIR = os.path.join(HERE, "frames")
 ACCEPTED_USER_AGENTS = {"OI.Share v2", "OlympusCameraKit"}
 
-SHUTTER = ['60"', '50"', '40"', '30"', '25"', '20"', '15"', '13"', '10"', '8"', '6"', '5"', '4"',
+SHUTTER = ['livecomp', 'livetime', 'livebulb', '60"', '50"', '40"', '30"', '25"', '20"', '15"', '13"', '10"', '8"', '6"', '5"', '4"',
            '3.2"', '2.5"', '2"', '1.6"', '1.3"', '1"', '1.3', '1.6', '2', '2.5', '3', '4', '5', '6',
            '8', '10', '13', '15', '20', '25', '30', '40', '50', '60', '80', '100', '125', '160',
            '200', '250', '320', '400', '500', '640', '800', '1000', '1250', '1600', '2000',
@@ -172,18 +172,26 @@ class MockCamera:
             'artfilter': 'popart', 'colortone': 'natural',
         }
         self.images = []
+        self.open_since = None   # Live Composite / Time / Bulb exposure in progress
         start = datetime.datetime.now() - datetime.timedelta(days=2)
-        for k in range(4):
-            self.add_image(frames[(k * 13) % len(frames)], start + datetime.timedelta(hours=k * 5))
+        for k in range(6):
+            # Every other one was shot RAW+JPEG, so the card has .ORF files next to some JPEGs.
+            self.add_image(frames[(k * 13) % len(frames)], start + datetime.timedelta(hours=k * 5), raw=(k % 2 == 0))
 
     # -- state helpers -------------------------------------------------------
-    def add_image(self, data, when=None):
+    def add_image(self, data, when=None, raw=True):
+        """Adds a JPEG, and with raw=True an .ORF beside it (the camera set to RAW+JPEG)."""
         when = when or datetime.datetime.now()
         month = "123456789ABC"[when.month - 1]
-        name = f"P{month}{when.day:02d}{self.counter:04d}.JPG"
+        base = f"P{month}{when.day:02d}{self.counter:04d}"
         self.counter += 1
-        self.images.append((name, data, when))
-        return name
+        self.images.append((base + ".JPG", data, when))
+        if raw:
+            # Not a real ORF (just bytes of a plausible size), so Photos will refuse it: the app
+            # then saves it to Files instead, which is what this lets you test.
+            fake = b"IIRO" + random.Random(base).randbytes(1_500_000)
+            self.images.append((base + ".ORF", fake, when))
+        return base + ".JPG"
 
     def attribute(self, name):
         mode = self.values['takemode']
@@ -364,7 +372,8 @@ class Handler(BaseHTTPRequestHandler):
         if com in ("getrecview", "getlastjpg"):
             if not self.cam.images:
                 return self.reply(404)
-            return self.reply(200, self.cam.images[-1][1], "image/jpeg")
+            last_jpeg = next(data for name, data, _ in reversed(self.cam.images) if name.endswith(".JPG"))
+            return self.reply(200, last_jpeg, "image/jpeg")
         self.reply(200)
 
     def parse_point(self, q):
@@ -392,6 +401,10 @@ class Handler(BaseHTTPRequestHandler):
         if com == "starttake":
             if point:
                 cam.af = (1, max(0, point[0] - 40), max(0, point[1] - 30), 80, 60, time.time() + 2)
+            if cam.values['shutspeedvalue'] in ('livecomp', 'livetime', 'livebulb'):
+                cam.open_since = time.time()
+                print(f"  * {cam.values['shutspeedvalue']} exposure started")
+                return self.xml("<response><take>ok</take></response>")
             time.sleep(0.35)  # pretend to focus and expose
             name = cam.add_image(cam.frames[cam.frame_index % len(cam.frames)])
             print(f"  * click -> {name}")
@@ -409,6 +422,11 @@ class Handler(BaseHTTPRequestHandler):
                 cam.movie_started = None
             return self.reply(200)
         if com == "stoptake":
+            if cam.open_since is not None:
+                seconds = time.time() - cam.open_since
+                cam.open_since = None
+                name = cam.add_image(cam.frames[cam.frame_index % len(cam.frames)])
+                print(f"  * {cam.values['shutspeedvalue']} stopped after {seconds:.1f}s -> {name}")
             return self.reply(200)
         self.reply(200)
 
@@ -477,7 +495,10 @@ class Handler(BaseHTTPRequestHandler):
     def cmd_get_thumbnail(self, q, body):
         if self.cam.mode != "play":
             return self.refuse("thumbnails need play mode")
-        data = self.find_image(q.get("DIR", ""))
+        path = q.get("DIR", "")
+        if path.upper().endswith(".ORF"):
+            path = path[:-4] + ".JPG"   # the camera shows a RAW's embedded preview
+        data = self.find_image(path)
         self.reply(200, data, "image/jpeg") if data else self.reply(404)
 
     def cmd_get_resizeimg(self, q, body):
@@ -485,7 +506,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def file(self, path):
         data = self.find_image(path)
-        self.reply(200, data, "image/jpeg") if data else self.reply(404)
+        ctype = "application/octet-stream" if path.upper().endswith(".ORF") else "image/jpeg"
+        self.reply(200, data, ctype) if data else self.reply(404)
 
     def cmd_set_utctimediff(self, q, body):
         if self.cam.mode != "play":

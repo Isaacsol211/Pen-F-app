@@ -248,6 +248,12 @@ final class LiveViewReceiver: @unchecked Sendable {
     let port: UInt16
     let format: LiveViewFormat
     var onFrame: (@MainActor (UIImage?, LiveInfo?, [Float]?, Double?) -> Void)?
+    /// Focus-peaking overlays, when peaking is on (nil clears it).
+    var onPeaking: (@MainActor (CGImage?) -> Void)?
+    private let peaker = FocusPeaker()
+    private var peakingOn = false
+
+    func setPeaking(_ on: Bool) { lock.withLock { peakingOn = on } }
 
     private var fd: Int32 = -1
     private let lock = NSLock()
@@ -390,6 +396,16 @@ final class LiveViewReceiver: @unchecked Sendable {
         var sharpness: Double?
         if let region = lock.withLock({ meterRegion }), let cg = image?.cgImage {
             sharpness = Self.sharpness(of: cg, region: region)
+        }
+
+        // Peaking runs on its own queue and skips frames while busy, so live view keeps its frame rate.
+        if lock.withLock({ peakingOn }), let cg = image?.cgImage {
+            peaker.submit(cg) { [weak self] overlay in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    MainActor.assumeIsolated { self.onPeaking?(overlay) }
+                }
+            }
         }
 
         DispatchQueue.main.async { [weak self] in
