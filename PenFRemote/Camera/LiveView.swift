@@ -207,10 +207,46 @@ enum LiveInfoParser {
     }
 }
 
+/// How a camera packs live view into UDP.
+enum LiveViewFormat {
+    /// Olympus: RTP, one JPEG split over several packets, metadata in an RTP extension.
+    case olympusRTP
+    /// Panasonic: one complete JPEG per datagram after a camera-specific header.
+    case jpegPerDatagram
+}
+
+/// A complete JPEG inside a datagram: from the first SOI marker (FF D8 FF) to the end.
+/// Used for Panasonic, whose header length varies by model and firmware.
+func jpegInDatagram(_ p: UnsafeBufferPointer<UInt8>) -> Data? {
+    let n = p.count
+    guard n > 4 else { return nil }
+    var i = 0
+    // LUMIX: a 32-byte header whose last two bytes give the length of a second header.
+    if n > 34 {
+        let offset = 32 + (Int(p[30]) << 8 | Int(p[31]))
+        if offset + 2 < n, p[offset] == 0xFF, p[offset + 1] == 0xD8 { i = offset }
+    }
+    // Otherwise look for the JPEG start marker.
+    while i + 2 < n {
+        if p[i] == 0xFF && p[i + 1] == 0xD8 && p[i + 2] == 0xFF { break }
+        i += 1
+    }
+    guard i + 2 < n else { return nil }
+    var end = n
+    // Trim anything after the last EOI marker (FF D9).
+    var j = n - 2
+    while j > i {
+        if p[j] == 0xFF && p[j + 1] == 0xD9 { end = j + 2; break }
+        j -= 1
+    }
+    return Data(UnsafeBufferPointer(rebasing: p[i..<end]))
+}
+
 /// Listens on a UDP port for the whole connection and hands decoded frames to the main actor.
 /// Frames that arrive while the UI is still busy with the previous one are dropped.
 final class LiveViewReceiver: @unchecked Sendable {
     let port: UInt16
+    let format: LiveViewFormat
     var onFrame: (@MainActor (UIImage?, LiveInfo?, [Float]?, Double?) -> Void)?
 
     private var fd: Int32 = -1
@@ -224,7 +260,10 @@ final class LiveViewReceiver: @unchecked Sendable {
 
     func setMeterRegion(_ region: CGRect?) { lock.withLock { meterRegion = region } }
 
-    init(port: UInt16) { self.port = port }
+    init(port: UInt16, format: LiveViewFormat = .olympusRTP) {
+        self.port = port
+        self.format = format
+    }
 
     func start() throws {
         let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
@@ -275,7 +314,16 @@ final class LiveViewReceiver: @unchecked Sendable {
         var assembler = RTPFrameAssembler()
         while isRunning {
             let count = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, 0) }
-            if count > 0 {
+            if count > 0, format == .jpegPerDatagram {
+                stats.packets += 1
+                if let jpeg = buffer.withUnsafeBufferPointer({ jpegInDatagram(UnsafeBufferPointer(rebasing: $0[0..<count])) }) {
+                    stats.completed += 1
+                    stats.jpegBytes += jpeg.count
+                    deliver(jpeg: jpeg, ext: nil)
+                } else {
+                    stats.dropped += 1
+                }
+            } else if count > 0 {
                 stats.packets += 1
                 let output = buffer.withUnsafeBufferPointer {
                     assembler.push(UnsafeBufferPointer(rebasing: $0[0..<count]))

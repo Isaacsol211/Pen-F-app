@@ -125,7 +125,12 @@ struct ExposureStrip: View {
             if let live = info.aperture { return live }
         case "shutspeedvalue":
             if let p = property, PropertyFormat.isOpenEnded(shutter: p.value) {
-                return p.value.lowercased() == "livecomp" ? "LC" : p.value.lowercased() == "livetime" ? "LT" : "LB"
+                switch p.value.lowercased() {
+                case "livecomp": return "LC"
+                case "livetime": return "LT"
+                case "livebulb": return "LB"
+                default: return PropertyFormat.display(name, p.value)   // Bulb, Time
+                }
             }
             if let live = info.shutter { return live }
         case "isospeedvalue":

@@ -223,7 +223,9 @@ struct ValueDial: View {
             guard let s = PropertyFormat.seconds(fromShutter: value) else { return true }
             return nearWhole(log2(s), 0.12)          // …1/250, 1/125, 1/60… 1", 2", 4", 8", 15"…
         case "isospeedvalue":
-            guard let iso = Double(value) else { return true }
+            // Only Auto gets a label among the named values: iAuto (LUMIX) and Low (PEN-F) sit right
+            // next to it and the labels would overlap. The header still names the selected value.
+            guard let iso = Double(value) else { return value.lowercased() == "auto" }
             return nearWhole(log2(iso / 100), 0.1)   // 200, 400, 800, 1600…
         case "focalvalue":
             guard let f = Double(value) else { return true }

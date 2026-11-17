@@ -43,7 +43,7 @@ struct ConnectView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("PEN-F REMOTE")
+            Text("CAMERA REMOTE")
                 .font(.system(size: 13, weight: .semibold))
                 .tracking(3)
                 .foregroundStyle(Theme.accent)
@@ -54,19 +54,37 @@ struct ConnectView: View {
     }
 
     private var steps: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            StepRow(number: 1,
-                    title: "Start Wi-Fi on the camera",
-                    detail: "Open Connection to Smartphone on the PEN-F and wait for the screen with the SSID, password and QR code.")
-            StepRow(number: 2,
-                    title: "Join that network",
-                    detail: "Settings ▸ Wi-Fi ▸ PEN-F-P-… with the 8-digit password from the camera. \"No Internet Connection\" is expected. If iOS hops back to your home Wi-Fi, turn off Auto-Join for it.")
-            StepRow(number: 3,
-                    title: "Connect",
-                    detail: "Allow Local Network access when iOS asks. Live view needs it.")
+        VStack(alignment: .leading, spacing: 18) {
+            BrandPicker()
+            ForEach(Array(Self.steps(for: camera.brand).enumerated()), id: \.offset) { index, step in
+                StepRow(number: index + 1, title: step.title, detail: step.detail)
+            }
         }
         .padding(20)
         .glassEffect(.regular, in: .rect(cornerRadius: 28, style: .continuous))
+        .animation(.smooth, value: camera.brand)
+    }
+
+    static func steps(for brand: CameraBrand) -> [(title: String, detail: String)] {
+        switch brand {
+        case .olympus:
+            return [
+                ("Start Wi-Fi on the camera",
+                 "Open Connection to Smartphone on the PEN-F and wait for the screen with the SSID, password and QR code."),
+                ("Join that network",
+                 "Settings ▸ Wi-Fi ▸ PEN-F-P-… with the 8-digit password from the camera. \"No Internet Connection\" is expected. If iOS hops back to your home Wi-Fi, turn off Auto-Join for it."),
+                ("Connect", "Allow Local Network access when iOS asks. Live view needs it."),
+            ]
+        case .panasonic:
+            return [
+                ("Start Wi-Fi on the camera",
+                 "On the GH5: MENU ▸ Setup ▸ Wi-Fi ▸ Wi-Fi Function ▸ New Connection ▸ Remote Shooting & View. The camera shows its network name."),
+                ("Join that network",
+                 "Settings ▸ Wi-Fi ▸ the camera's network (e.g. GH5-…). Enter the password if the camera shows one. \"No Internet Connection\" is expected."),
+                ("Connect, then approve on the camera",
+                 "Allow Local Network access when iOS asks. The first time, the camera asks whether to connect to this iPhone: choose Yes."),
+            ]
+        }
     }
 
     @ViewBuilder private var connectSection: some View {
@@ -126,29 +144,32 @@ struct ConnectView: View {
         if showAdvanced {
             VStack(alignment: .leading, spacing: 16) {
                 LabeledContent("Camera address") {
-                    TextField("192.168.0.10", text: $camera.host)
+                    TextField(camera.brand.defaultHost, text: $camera.host)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .multilineTextAlignment(.trailing)
                         .font(.body.monospaced())
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("User-Agent").font(.subheadline).foregroundStyle(.secondary)
-                    Picker("User-Agent", selection: $camera.userAgent) {
-                        ForEach(CameraModel.userAgents, id: \.self) { Text($0).tag($0) }
+                if camera.brand == .olympus {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("User-Agent").font(.subheadline).foregroundStyle(.secondary)
+                        Picker("User-Agent", selection: $camera.userAgent) {
+                            ForEach(CameraModel.userAgents, id: \.self) { Text($0).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Live view size").font(.subheadline).foregroundStyle(.secondary)
                     Picker("Live view size", selection: $camera.liveViewQuality) {
-                        ForEach(CameraModel.defaultLiveViewSizes, id: \.self) { Text(CameraModel.liveViewLabel($0)).tag($0) }
+                        ForEach(camera.brand == .olympus ? CameraModel.defaultLiveViewSizes : camera.availableLiveViewSizes,
+                                id: \.self) { Text(CameraModel.liveViewLabel($0)).tag($0) }
                     }
                     .pickerStyle(.menu)
                     .fixedSize()
                 }
-                Text("The camera is always 192.168.0.10. For the mock camera in the Simulator, use 127.0.0.1:8080.")
+                Text("The \(camera.brand.shortTitle) camera is always \(camera.brand.defaultHost). For the mock cameras in the Simulator, use 127.0.0.1:8080 (Olympus) or 127.0.0.1:8082 (LUMIX).")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Button("Open iPhone Settings", systemImage: "gear") {
@@ -188,12 +209,14 @@ private struct WifiStatusRow: View {
     var body: some View {
         let (icon, color, text): (String, Color, String) = {
             guard let address else { return ("wifi.slash", .orange, "This iPhone isn't on Wi-Fi") }
-            if host.hasPrefix("192.168.0."), !address.hasPrefix("192.168.0.") {
+            // The phone should be on the camera's subnet (192.168.0.x for Olympus, 192.168.54.x for LUMIX).
+            let octets = host.split(separator: ":").first.map { $0.split(separator: ".") } ?? []
+            if octets.count == 4, octets[0] != "127", !address.hasPrefix(octets.prefix(3).joined(separator: ".") + ".") {
                 return ("exclamationmark.triangle.fill", .orange,
-                        "On another Wi-Fi network (\(address)). Join PEN-F-P-… first.")
+                        "On another Wi-Fi network (\(address)). Join the camera's network first.")
             }
             return ("wifi", .secondary,
-                    "Wi-Fi address \(address). Check that Settings ▸ Wi-Fi shows PEN-F-P-…")
+                    "Wi-Fi address \(address). Check that Settings ▸ Wi-Fi shows the camera's network.")
         }()
         Label(text, systemImage: icon)
             .font(.subheadline)
@@ -219,5 +242,33 @@ private struct StepRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+/// Olympus / LUMIX switch at the top of the setup card.
+private struct BrandPicker: View {
+    @Environment(CameraModel.self) private var camera
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(CameraBrand.allCases) { brand in
+                let on = brand == camera.brand
+                Button {
+                    withAnimation(.snappy) { camera.setBrand(brand) }
+                } label: {
+                    Text(brand.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(on ? Color.black : Color.white.opacity(0.85))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 36)
+                        .background(on ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.08)),
+                                    in: .capsule)
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .sensoryFeedback(.selection, trigger: camera.brand)
+        .disabled(camera.phase != .disconnected)
     }
 }

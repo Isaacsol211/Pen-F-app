@@ -110,8 +110,11 @@ struct RemoteView: View {
                 }
             }
             .padding(.horizontal, 12)
-            ModeCarousel()
-                .padding(.vertical, 2)
+            // LUMIX bodies have a physical mode dial the app can't read or turn.
+            if camera.properties["takemode"] != nil {
+                ModeCarousel()
+                    .padding(.vertical, 2)
+            }
             shutterRow
                 .padding(.bottom, 4)
         }
@@ -162,8 +165,10 @@ struct RemoteView: View {
     private var landscapeRail: some View {
         VStack(spacing: 10) {
             menuButton
-            ModeCarousel(axis: .vertical)
-                .frame(maxHeight: 130)
+            if camera.properties["takemode"] != nil {
+                ModeCarousel(axis: .vertical)
+                    .frame(maxHeight: 130)
+            }
             Spacer(minLength: 0)
             ShutterButton()
             Spacer(minLength: 0)
@@ -213,13 +218,15 @@ struct RemoteView: View {
                 }
             }
             Section {
-                Button { showHighRes = true } label: {
-                    Label("High Res Shot helper", systemImage: "square.grid.3x3.square")
-                }
-                Button {
-                    Task { if await camera.syncClock() { camera.showToast("Camera clock set to this iPhone") } }
-                } label: {
-                    Label("Sync camera clock", systemImage: "clock.arrow.2.circlepath")
+                if camera.brand == .olympus {
+                    Button { showHighRes = true } label: {
+                        Label("High Res Shot helper", systemImage: "square.grid.3x3.square")
+                    }
+                    Button {
+                        Task { if await camera.syncClock() { camera.showToast("Camera clock set to this iPhone") } }
+                    } label: {
+                        Label("Sync camera clock", systemImage: "clock.arrow.2.circlepath")
+                    }
                 }
                 Button { showAllSettings = true } label: {
                     Label("All camera settings", systemImage: "list.bullet")
@@ -246,7 +253,7 @@ struct RemoteView: View {
     }
 
     private var tools: [ToolItem] {
-        [
+        let all = [
             ToolItem(id: "astro", icon: "moon.stars.fill", title: "Astro", on: false) {
                 toolsOpen = false; showAstro = true
             },
@@ -267,6 +274,15 @@ struct RemoteView: View {
                 toolsOpen = false; showHighRes = true
             },
         ]
+        guard camera.brand == .panasonic else { return all }
+        // LUMIX: no High Res Shot; video is a switch here because the mode dial can't be read.
+        let video = ToolItem(id: "video", icon: camera.lumixVideoMode ? "video.fill" : "video", title: "Video",
+                             on: camera.lumixVideoMode) {
+            guard !camera.isRecordingMovie else { return }
+            camera.lumixVideoMode.toggle()
+            withAnimation(.snappy) { toolsOpen = false }
+        }
+        return [video] + all.filter { $0.id != "highres" }
     }
 
     private var shutterRow: some View {

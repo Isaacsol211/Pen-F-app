@@ -204,7 +204,7 @@ private struct PhotoPage: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(image.name).font(.headline.monospaced())
-                        Text(image.size == 0
+                        Text(image.size == 0 && image.urls == nil
                              ? "From another camera"
                              : "\(image.date.formatted(date: .abbreviated, time: .shortened)) · \(ByteCountFormatter.string(fromByteCount: Int64(image.size), countStyle: .file))\(image.looksHighRes ? " · High Res" : "")")
                             .font(.caption)

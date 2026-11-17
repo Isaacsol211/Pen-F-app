@@ -55,9 +55,14 @@ enum PropertyFormat {
         case "expcomp":
             return Double(value) == 0 ? "±0.0" : value
         case "isospeedvalue":
-            return value.lowercased() == "auto" ? "Auto" : value
+            switch value.lowercased() {
+            case "auto": return "Auto"
+            case "i_iso": return "iAuto"   // LUMIX intelligent ISO
+            default: return value
+            }
         case "wbvalue":
-            return whiteBalance[value] ?? "WB \(value)"
+            if let name = whiteBalance[value] { return name }
+            return Int(value) != nil ? "WB \(value)" : words(value)   // LUMIX names its other modes
         case "drivemode":
             return drive(value)
         case "artfilter", "colortone":

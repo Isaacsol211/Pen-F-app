@@ -74,7 +74,8 @@ struct HighResView: View {
 extension CameraImage {
     /// A normal PEN-F JPEG is ~8–12 MB and an ORF ~20–25 MB; High Res files are far bigger.
     var looksHighRes: Bool {
-        switch fileExtension {
+        guard urls == nil else { return false }   // LUMIX files (no Olympus High Res mode)
+        return switch fileExtension {
         case "JPG": size > 18_000_000
         case "ORF": size > 50_000_000
         default: false

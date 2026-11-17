@@ -25,6 +25,7 @@ extension CameraModel {
     /// The PEN-F lists both `getrecview` and `getlastjpg`; try the first, fall back to the second.
     func fetchLastShot() async {
         guard let client, mode == .rec else { return }
+        if brand == .panasonic { await panasonicFetchLastShot(); return }
         for command in ["getrecview", "getlastjpg"] where commands.supports("exec_takemisc", command) {
             guard let data = try? await client.get("exec_takemisc", [("com", command)], timeout: 8),
                   let image = UIImage(data: data) else {
@@ -39,10 +40,13 @@ extension CameraModel {
 
     // MARK: - Movie
 
-    var isMovieMode: Bool { properties["takemode"]?.value.lowercased() == "movie" }
+    var isMovieMode: Bool {
+        brand == .panasonic ? lumixVideoMode : properties["takemode"]?.value.lowercased() == "movie"
+    }
 
     func toggleMovie() async {
         guard let client, mode == .rec else { return }
+        if brand == .panasonic { await panasonicToggleMovie(); return }
         if isRecordingMovie {
             _ = try? await client.getUrgent("exec_takemotion", [("com", "stopmovietake")])
             isRecordingMovie = false
@@ -136,6 +140,7 @@ extension CameraModel {
     @discardableResult
     func syncClock() async -> Bool {
         guard let client else { return false }
+        if brand == .panasonic { return await panasonicSyncClock() }
         let wasLive = liveViewRunning
         await stopLiveView()
         let utc = DateFormatter()

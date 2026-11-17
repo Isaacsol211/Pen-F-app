@@ -3,6 +3,11 @@
 A small iPhone test app that controls an Olympus PEN-F over the camera's own Wi-Fi.
 It uses the same protocol as Olympus's OI.Share / OM Image Share app.
 
+It also has **experimental support for Panasonic LUMIX bodies (written for the GH5)**, using the
+protocol of Panasonic's Image App / LUMIX Sync. Pick the camera brand on the Connect screen.
+The LUMIX side is tested only against a mock camera so far; see
+[Panasonic LUMIX (GH5)](#panasonic-lumix-gh5--experimental).
+
 **What it does**
 
 - **Liquid Glass UI (iOS 26+), portrait and landscape.**
@@ -56,19 +61,27 @@ It uses the same protocol as Olympus's OI.Share / OM Image Share app.
 
 The camera is always at `192.168.0.10`. Close OI.Share / OM Image Share first so the two apps don't compete for the camera.
 
-## Test without the camera (mock PEN-F)
+## Test without the camera (mock cameras)
 
-`mock-camera/mock_penf.py` pretends to be the camera, live view included.
-It needs only Python 3 and Swift, both on macOS already.
+`mock-camera/mock_penf.py` pretends to be the PEN-F and `mock-camera/mock_lumix.py` a LUMIX GH5,
+live view included. They need only Python 3 and Swift, both on macOS already.
 
 ```bash
 python3 mock-camera/mock_penf.py
 ```
 
-- **In the Simulator:** Connect screen ▸ Advanced ▸ Camera address = `127.0.0.1:8080`.
-- **On a real iPhone on the same Wi-Fi:** run it with `--bind 0.0.0.0` and use `<your Mac's IP>:8080`.
+```bash
+python3 mock-camera/mock_lumix.py
+```
 
-Like the real camera, the mock rejects commands sent in the wrong mode (HTTP 520) and rejects unknown User-Agents.
+- **In the Simulator:** Connect screen ▸ pick the brand ▸ Advanced ▸ Camera address =
+  `127.0.0.1:8080` (PEN-F) or `127.0.0.1:8082` (LUMIX).
+- **On a real iPhone on the same Wi-Fi:** run it with `--bind 0.0.0.0` and use `<your Mac's IP>:8080` / `:8082`.
+
+Like the real PEN-F, the PEN-F mock rejects commands sent in the wrong mode (HTTP 520) and rejects unknown User-Agents.
+The LUMIX mock asks for approval the first time a phone pairs (`--refuse` makes it say No), only browses
+the card in playback mode, and stops live view if the app stops polling it. It also serves its media server
+and files on the real camera's ports, 60606 and 50001.
 
 ## How the protocol works
 
@@ -104,18 +117,79 @@ Still unconfirmed:
 - **`colorphase` (Hue dial)**: probably the Color Creator hue. Test it with the Creative dial on CRT.
 - **Astro preset and Live Composite**: tested against the mock only.
 
+## Panasonic LUMIX (GH5) — experimental
+
+Written for the GH5 from open-source descriptions of Panasonic's Wi-Fi protocol. Other bodies that work
+with Image App / LUMIX Sync (GH4, GH5S, G9, G80/G85, GX9, S-series…) speak the same protocol and
+should mostly work. **None of this has been tried on a real LUMIX camera yet.**
+
+### Connect
+
+1. On the GH5: **MENU ▸ Setup ▸ Wi-Fi ▸ Wi-Fi Function ▸ New Connection ▸ Remote Shooting & View.**
+   The camera shows its network name (e.g. `GH5-XXXXXX`).
+2. On the iPhone: Settings ▸ Wi-Fi ▸ that network. A Wi-Fi password is off by default on the GH5;
+   if you turned it on, enter it.
+3. In the app pick **Panasonic LUMIX** ▸ **Connect to camera**. The first time, the camera asks whether to
+   connect to "PENF-Remote": choose **Yes** on the camera. Later connections skip this.
+
+The camera is always at `192.168.54.1`. Close Image App / LUMIX Sync on other phones first; the camera talks to one app at a time.
+
+### What works (against the mock)
+
+- Pairing with the on-camera Yes/No prompt, and readable errors when the camera says No or is busy.
+- Live view (640×480 or 320×240) with the histogram, grid, loupe and night mode.
+- Battery %, shots left and an overheating warning, polled every second (this also keeps the stream alive).
+- Aperture (limited to the lens's real range), shutter including Bulb, ISO including iAuto, EV and white balance,
+  on the same dials and haptics as the PEN-F.
+- Tap to focus, single shots, long exposures with a countdown, Bulb with tap-to-stop.
+- **Video:** turn on **Video** in the tools tray (the GH5's mode dial can't be read or turned over Wi-Fi),
+  then the shutter becomes a record button.
+- Card browser over the camera's media server: JPG, RW2 and MP4, with thumbnails, preview and saving
+  originals to Photos.
+- The Astro preset and interval timer use whatever the camera accepts (aperture, shutter, ISO).
+
+### What doesn't
+
+- **Mode dial, drive mode, Photo Style, quality and other menus:** not settable from the app. Set them on the camera.
+- **Last-shot thumbnail:** LUMIX review images need playback mode, which stops live view, so open the card instead.
+- **Clock sync** and **High Res Shot** are Olympus features and are hidden for LUMIX.
+
+### How the protocol works
+
+| What | How |
+|---|---|
+| Commands | `GET http://192.168.54.1/cam.cgi?mode=…`. Replies are XML (`<camrply><result>ok</result>…`) or CSV (`ok,…`); errors start with `err_`. |
+| Pairing | `mode=accctrl&type=req_acc&value=<phone UUID>&value2=<name>`. While the camera shows its prompt it answers `ok_under_research`; the app asks again every second. |
+| State | `mode=getstate` (battery, shots left, temperature, mode). The app polls it every second as a keep-alive. `getinfo&type=lens` gives the lens's aperture and shutter limits. |
+| Live view | `mode=startstream&value=<UDP port>`. Each datagram is one JPEG after a 32-byte header; bytes 30–31 give the length of a second header before the JPEG. |
+| Settings | `getsetting` / `setsetting` with `type=focal`, `shtrspeed`, `iso`, `exposure`, `whitebalance`. Aperture and shutter are APEX × 256 written `n/256`: f-number = 2^(n/512), time = 2^(−n/256); Bulb is `16384/256`. |
+| Shooting | `camcmd&value=capture` (and `capture_cancel` to end Bulb), `video_recstart` / `video_recstop`, `camctrl&type=touch&value=x/y` for touch AF on a 0–1000 grid. |
+| Card | `camcmd&value=playmode`, then UPnP ContentDirectory `Browse` on port 60606 (paged 50 at a time). Each item links its original (`CAM_ORG`), RAW (`CAM_RAW`) and thumbnails (`CAM_TN`, `CAM_LRGTN`) on port 50001. |
+
+Sources: [Rambalac/GMaster](https://github.com/Rambalac/GMaster),
+[peci1/lumix-link-desktop](https://github.com/peci1/lumix-link-desktop),
+[cleverfox/lumixproto](https://github.com/cleverfox/lumixproto),
+[klausweiss/lumix-upnp-dump](https://github.com/klausweiss/lumix-upnp-dump) and
+[libgphoto2's LUMIX driver](https://github.com/gphoto/libgphoto2).
+
+Worth checking first on a real GH5: the pairing reply, the live-view header, the exact white-balance names,
+and whether `touch` or `touchaf` is the focus command.
+
 ## Files
 
 ```
 PenFRemote/
   PenFRemoteApp.swift        app entry, theme
+  Camera/CameraBrand.swift   Olympus / Panasonic: addresses, Wi-Fi names, live-view format
   Camera/OlympusClient.swift HTTP commands, request log, card listing parser
-  Camera/LiveView.swift      UDP socket, RTP reassembly, frame metadata parser
+  Camera/LiveView.swift      UDP socket, RTP reassembly, frame metadata parser, LUMIX JPEG datagrams
   Camera/CameraModel.swift   connection/mode state machine, shooting, settings, gallery
+  Camera/Panasonic.swift     LUMIX driver: pairing, keep-alive, settings, shooting, UPnP card browser
   Camera/XML.swift           tiny XML parser + camera command list
   Camera/PropertyFormat.swift labels for raw property values
   Views/…                    SwiftUI screens
 mock-camera/
   mock_penf.py               fake PEN-F (HTTP + RTP live view)
+  mock_lumix.py              fake LUMIX GH5 (cam.cgi, UDP live view, UPnP card, file server)
   make_frames.swift          renders the fake live-view frames
 ```

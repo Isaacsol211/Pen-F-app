@@ -24,8 +24,23 @@ struct CardFolder: Identifiable, Hashable {
     let path: String
     let name: String
     let count: Int
-    /// Olympus names its folders 100OLYMP…; anything else came from another camera.
-    var isForeign: Bool { !name.uppercased().hasSuffix("OLYMP") }
+    /// A folder made by a different camera brand, which this camera may not list.
+    var isForeign: Bool
+
+    init(path: String, name: String, count: Int, isForeign: Bool? = nil) {
+        self.path = path
+        self.name = name
+        self.count = count
+        // Olympus names its folders 100OLYMP…; anything else came from another camera.
+        self.isForeign = isForeign ?? !name.uppercased().hasSuffix("OLYMP")
+    }
+}
+
+/// Where a photo can be fetched when the camera serves files by URL (Panasonic, via UPnP).
+struct MediaURLs: Hashable {
+    var thumbnail: URL?
+    var preview: URL?
+    var original: URL
 }
 
 struct CameraImage: Identifiable, Hashable {
@@ -35,6 +50,7 @@ struct CameraImage: Identifiable, Hashable {
     let size: Int
     let attributes: Int
     let date: Date
+    var urls: MediaURLs? = nil
 
     var path: String { directory + "/" + name }
     var isDirectory: Bool { attributes & 16 != 0 }
@@ -47,6 +63,10 @@ struct CameraImage: Identifiable, Hashable {
 final class CameraModel {
     // MARK: Settings (saved between launches)
 
+    var brand: CameraBrand
+    /// LUMIX bodies record video from any mode (their red button works anywhere), so the app keeps
+    /// its own Photo/Video switch for them instead of reading a mode dial.
+    var lumixVideoMode = false
     var host: String
     var userAgent: String
     var liveViewQuality: String
@@ -140,9 +160,14 @@ final class CameraModel {
     @ObservationIgnored private var loggedDescList = false
     /// Live-view size to go back to when the focus loupe closes.
     @ObservationIgnored var liveViewBeforeLoupe: String?
+    /// Panasonic stops streaming unless it hears from the app regularly.
+    @ObservationIgnored var panasonicKeepAlive: Task<Void, Never>?
+    /// Per-connection LUMIX state (lens limits, value tables, UPnP address).
+    @ObservationIgnored var lumix = PanasonicSession()
 
     init() {
         let defaults = UserDefaults.standard
+        brand = CameraBrand(rawValue: defaults.string(forKey: "brand") ?? "") ?? .olympus
         host = defaults.string(forKey: "host") ?? "192.168.0.10"
         userAgent = defaults.string(forKey: "userAgent") ?? "OI.Share v2"
         liveViewQuality = defaults.string(forKey: "lvqty") ?? "0640x0480"
@@ -151,13 +176,29 @@ final class CameraModel {
             liveViewQuality = "0640x0480"
             defaults.set(true, forKey: "lvqtyResetTo640")
         }
+        fitLiveViewQualityToBrand()
+    }
+
+    /// LUMIX streams only 320×240 or 640×480; fall back to 640×480 if a bigger Olympus size was saved.
+    private func fitLiveViewQualityToBrand() {
+        if brand == .panasonic, !availableLiveViewSizes.contains(liveViewQuality) { liveViewQuality = "0640x0480" }
     }
 
     private func saveSettings() {
         let defaults = UserDefaults.standard
+        defaults.set(brand.rawValue, forKey: "brand")
         defaults.set(host, forKey: "host")
         defaults.set(userAgent, forKey: "userAgent")
         defaults.set(liveViewQuality, forKey: "lvqty")
+    }
+
+    /// Switches camera family, moving the address to the new family's default unless it was customised.
+    func setBrand(_ newBrand: CameraBrand) {
+        guard newBrand != brand, phase == .disconnected else { return }
+        if CameraBrand.allCases.map(\.defaultHost).contains(host) { host = newBrand.defaultHost }
+        brand = newBrand
+        fitLiveViewQualityToBrand()
+        saveSettings()
     }
 
     /// Pixel size of the live-view frames actually arriving (the camera's AF coordinate space).
@@ -194,6 +235,7 @@ final class CameraModel {
     }
 
     var availableLiveViewSizes: [String] {
+        if brand == .panasonic { return ["0320x0240", "0640x0480"] }   // LUMIX: qvga or vga
         let fromCamera = commands.liveViewSizes
         return fromCamera.isEmpty ? Self.defaultLiveViewSizes : fromCamera
     }
@@ -223,8 +265,12 @@ final class CameraModel {
         }
         self.client = client
 
-        debugLog("connect: host=\(host) wifi=\(NetworkInfo.wifiAddress() ?? "none") ua=\(userAgent)")
+        debugLog("connect: brand=\(brand.rawValue) host=\(host) wifi=\(NetworkInfo.wifiAddress() ?? "none") ua=\(userAgent)")
+        Self.ssidHint = brand.ssidHint
         do {
+          if brand == .panasonic {
+            try await panasonicHandshake()
+          } else {
             // The first request can fail while iOS shows the Local Network prompt,
             // and the camera can be slow right after its Wi-Fi comes up, so retry a little.
             var reply: Data?
@@ -253,6 +299,7 @@ final class CameraModel {
                 debugLog("COMMANDLIST\n\(rawCommandList)")
             }
             loggedDescList = false
+          }
 
             try startReceiver()
             phase = .connected
@@ -273,6 +320,11 @@ final class CameraModel {
     func powerOff() async {
         guard let client else { return }
         await stopLiveView()
+        if brand == .panasonic {
+            await panasonicPowerOff()
+            teardown()
+            return
+        }
         _ = try? await client.get("switch_cammode", [("mode", "play")])
         _ = try? await client.get("exec_pwoff")
         teardown()
@@ -280,6 +332,8 @@ final class CameraModel {
 
     private func teardown() {
         UIApplication.shared.isIdleTimerDisabled = false
+        panasonicKeepAlive?.cancel()
+        panasonicKeepAlive = nil
         stopInterval()
         receiver?.stop()
         receiver = nil
@@ -302,7 +356,7 @@ final class CameraModel {
     private func startReceiver() throws {
         var lastFailure: Error?
         for port in UInt16(40000)...UInt16(40010) {
-            let receiver = LiveViewReceiver(port: port)
+            let receiver = LiveViewReceiver(port: port, format: brand.liveViewFormat)
             receiver.onFrame = { [weak self] image, info, histogram, sharpness in
                 self?.handleFrame(image, info)
                 if let histogram { self?.histogram = histogram }
@@ -343,6 +397,7 @@ final class CameraModel {
     /// Recording mode: required for live view, shooting and reading/changing settings.
     func enterRecMode() async {
         guard let client else { return }
+        if brand == .panasonic { await panasonicEnterRecMode(); return }
         isSwitchingMode = true
         defer { isSwitchingMode = false }
         do {
@@ -371,6 +426,7 @@ final class CameraModel {
         liveViewRunning = true
         liveViewStartedAt = Date()
         lastFrameAt = nil
+        if brand == .panasonic { await panasonicStartLiveView(); return }
         do {
             let reply = try await client.get("exec_takemisc", [("com", "startliveview"), ("port", String(format: "%05d", Int(udpPort)))])
             debugLog("STARTLIVEVIEW reply: \(String(decoding: reply, as: UTF8.self))")
@@ -384,6 +440,7 @@ final class CameraModel {
         guard let client, liveViewRunning else { return }
         liveViewRunning = false
         fps = 0
+        if brand == .panasonic { await panasonicStopLiveView(); return }
         _ = try? await client.get("exec_takemisc", [("com", "stopliveview")])
     }
 
@@ -428,6 +485,7 @@ final class CameraModel {
 
     func refreshProperties() async {
         guard let client else { return }
+        if brand == .panasonic { await panasonicRefreshProperties(); return }
         do {
             let data = try await client.get("get_camprop", [("com", "desc"), ("propname", "desclist")])
             rawDescList = String(decoding: data, as: UTF8.self)
@@ -455,6 +513,7 @@ final class CameraModel {
     @discardableResult
     func setProperty(_ name: String, to value: String, reportErrors: Bool = true) async -> Bool {
         guard let client else { return false }
+        if brand == .panasonic { return await panasonicSetProperty(name, to: value, reportErrors: reportErrors) }
         // Sent verbatim (the camera's parser is simple; shutter values contain a literal ").
         let body = "<?xml version=\"1.0\"?>\r\n<set>\r\n<value>\(value)</value>\r\n</set>\r\n"
         let previous = properties[name]?.value
@@ -488,6 +547,7 @@ final class CameraModel {
             return
         }
 
+        if brand == .panasonic { await panasonicFocus(at: normalized); return }
         let pointValue = Self.pointString(p)
         debugLog("tap: normalized=(\(String(format: "%.3f, %.3f", point.x, point.y))) point=\(pointValue) lvqty=\(liveViewQuality) frame=\(liveFrame.map { "\(Int($0.size.width))x\(Int($0.size.height))" } ?? "none") focusmode=\(properties["focusmode"]?.value ?? "?")")
         // assignafframe moves the AF target; takeready is a half-press (AF) at that point.
@@ -509,6 +569,7 @@ final class CameraModel {
     func clearFocus() async {
         focusPoint = nil
         liveInfo.afState = 0
+        if brand == .panasonic { await panasonicReleaseFocus(); return }
         _ = try? await client?.get("exec_takemotion", [("com", "releaseafframe")])
     }
 
@@ -520,6 +581,7 @@ final class CameraModel {
     /// Press = start taking. In continuous drive the camera keeps shooting until release.
     func shutterPressed() async {
         guard let client, mode == .rec, !isShooting else { return }
+        if brand == .panasonic { await panasonicShutterPressed(); return }
         isShooting = true
         var params: [(String, String)] = [("com", "starttake")]
         if let focusPoint { params.append(("point", Self.pointString(pixelPoint(focusPoint)))) }
@@ -547,6 +609,7 @@ final class CameraModel {
     }
 
     func shutterReleased() async {
+        if brand == .panasonic { await panasonicShutterReleased(); return }
         guard let client, isShooting, isContinuousDrive else { return }
         _ = try? await client.getUrgent("exec_takemotion", [("com", "stoptake")])
         isShooting = false
@@ -555,6 +618,7 @@ final class CameraModel {
     /// Open-ended exposures: first tap starts, second tap stops.
     func toggleOpenExposure() async {
         guard let client, mode == .rec else { return }
+        if brand == .panasonic { await panasonicToggleBulb(); return }
         if isShooting {
             _ = try? await client.getUrgent("exec_takemotion", [("com", "stoptake")])
             isShooting = false
@@ -606,6 +670,7 @@ final class CameraModel {
         galleryError = nil
         defer { galleryLoading = false }
         await stopLiveView()
+        if brand == .panasonic { await panasonicOpenGallery(); return }
         do {
             if mode != .play {
                 _ = try await client.get("switch_cammode", [("mode", "play")])
@@ -661,6 +726,12 @@ final class CameraModel {
 
     func thumbnail(for image: CameraImage) async -> UIImage? {
         if let cached = thumbnailCache[image.path] { return cached }
+        if let urls = image.urls {
+            guard let data = try? await client?.fetch(urls.thumbnail ?? urls.preview ?? urls.original, log: false),
+                  let thumb = UIImage(data: data) else { return nil }
+            thumbnailCache[image.path] = thumb
+            return thumb
+        }
         guard let client,
               let data = try? await client.get("get_thumbnail", [("DIR", image.path)], log: false),
               let thumb = UIImage(data: data) else { return nil }
@@ -670,6 +741,11 @@ final class CameraModel {
 
     func preview(for image: CameraImage) async throws -> UIImage {
         guard let client else { throw CameraError("Not connected.") }
+        if let urls = image.urls {
+            let data = try await client.fetch(urls.preview ?? urls.thumbnail ?? urls.original)
+            guard let picture = UIImage(data: data) else { throw CameraError("Couldn't decode the preview.") }
+            return picture
+        }
         if image.fileExtension == "JPG",
            let data = try? await client.get("get_resizeimg", [("DIR", image.path), ("size", "1600")]),
            let resized = UIImage(data: data) {
@@ -689,7 +765,12 @@ final class CameraModel {
 
     func saveOriginalToPhotos(_ image: CameraImage) async throws {
         guard let client else { throw CameraError("Not connected.") }
-        let data = try await client.download(path: image.path)
+        let data: Data
+        if let urls = image.urls {
+            data = try await client.fetch(urls.original, timeout: 300)
+        } else {
+            data = try await client.download(path: image.path)
+        }
         let access = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard access == .authorized || access == .limited else {
             throw CameraError("Photos access is off. Turn it on in Settings ▸ PEN-F Remote ▸ Photos.")
@@ -717,6 +798,9 @@ final class CameraModel {
         lastError = Self.describe(error, host: host)
     }
 
+    /// The camera Wi-Fi name to mention in connection errors (set per brand on connect).
+    static var ssidHint = "PEN-F-P-…"
+
     static func describe(_ error: Error, host: String) -> String {
         guard let urlError = error as? URLError else { return error.localizedDescription }
 
@@ -738,9 +822,9 @@ final class CameraModel {
 
         let network: String
         if let wifi = NetworkInfo.wifiAddress() {
-            network = "This iPhone is on Wi-Fi (\(wifi)), but probably not the camera's network: home routers often use 192.168.0.x too. Open Settings ▸ Wi-Fi and check it says PEN-F-P-…; iOS likes to switch back to a network with internet. Also check Local Network is on for PEN-F Remote in Settings ▸ Privacy & Security."
+            network = "This iPhone is on Wi-Fi (\(wifi)), but probably not the camera's network: home routers often use 192.168.0.x too. Open Settings ▸ Wi-Fi and check it says \(ssidHint); iOS likes to switch back to a network with internet. Also check Local Network is on for PEN-F Remote in Settings ▸ Privacy & Security."
         } else {
-            network = "This iPhone isn't on Wi-Fi. Join PEN-F-P-… in Settings ▸ Wi-Fi."
+            network = "This iPhone isn't on Wi-Fi. Join \(ssidHint) in Settings ▸ Wi-Fi."
         }
         return "\(reason) \(network) [code \(urlError.code.rawValue)]"
     }

@@ -112,6 +112,18 @@ final class OlympusClient: @unchecked Sendable {
         try await send(method: "GET", path: path, body: nil, timeout: 180, log: true)
     }
 
+    /// GET an absolute URL (Panasonic serves photos from its UPnP server on another port).
+    func fetch(_ url: URL?, timeout: TimeInterval = 30, log: Bool = true) async throws -> Data {
+        guard let url else { throw CameraError("The camera gave no address for this file.") }
+        return try await send(method: "GET", path: url.absoluteString, body: nil, timeout: timeout, log: log)
+    }
+
+    /// POST a SOAP request (UPnP ContentDirectory).
+    func soap(_ url: URL, action: String, body: String) async throws -> Data {
+        try await send(method: "POST", path: url.absoluteString, body: Data(body.utf8), timeout: 20, log: true,
+                       headers: ["Content-Type": "text/xml; charset=\"utf-8\"", "SOAPACTION": "\"\(action)\""])
+    }
+
     static func path(_ cgi: String, _ params: [(String, String)]) -> String {
         var path = "/\(cgi).cgi"
         if !params.isEmpty {
@@ -120,10 +132,12 @@ final class OlympusClient: @unchecked Sendable {
         return path
     }
 
-    private func send(method: String, path: String, body: Data?, timeout: TimeInterval, log: Bool) async throws -> Data {
+    private func send(method: String, path: String, body: Data?, timeout: TimeInterval, log: Bool,
+                      headers: [String: String] = [:]) async throws -> Data {
         await gate.acquire()
         do {
-            let data = try await perform(using: session, method: method, path: path, body: body, timeout: timeout, log: log)
+            let data = try await perform(using: session, method: method, path: path, body: body, timeout: timeout,
+                                         log: log, headers: headers)
             await gate.release()
             return data
         } catch {
@@ -133,9 +147,10 @@ final class OlympusClient: @unchecked Sendable {
     }
 
     private func perform(using session: URLSession, method: String, path: String, body: Data?,
-                         timeout: TimeInterval, log: Bool) async throws -> Data {
+                         timeout: TimeInterval, log: Bool, headers: [String: String] = [:]) async throws -> Data {
         try Task.checkCancellation()
-        guard let url = URL(string: "http://\(host)\(path)") else { throw CameraError("Bad camera address: \(host)") }
+        let address = path.hasPrefix("http") ? path : "http://\(host)\(path)"
+        guard let url = URL(string: address) else { throw CameraError("Bad camera address: \(host)") }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = method
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
@@ -143,6 +158,7 @@ final class OlympusClient: @unchecked Sendable {
             request.httpBody = body
             request.setValue("text/plain;charset=utf-8", forHTTPHeaderField: "Content-Type")
         }
+        for (field, value) in headers { request.setValue(value, forHTTPHeaderField: field) }
 
         let started = Date()
         let data: Data
