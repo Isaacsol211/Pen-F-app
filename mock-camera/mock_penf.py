@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mock Olympus PEN-F for testing PEN-F Remote without the camera.
+Mock Olympus PEN-F for testing Shutterlink without the camera.
 
 It speaks the same OI.Share Wi-Fi protocol as the real body: HTTP commands
 (switch_cammode, get_camprop, set_camprop, exec_takemotion, get_imglist, ...)
@@ -125,6 +125,9 @@ COMMAND_LIST = """<?xml version="1.0" encoding="Shift-JIS"?>
 </oishare>
 """
 
+
+# What get_caminfo reports; --model changes it to try other bodies.
+MODEL = "PEN-F"
 
 def load_frames():
     paths = sorted(glob.glob(os.path.join(FRAMES_DIR, "*.jpg")))
@@ -342,7 +345,7 @@ class Handler(BaseHTTPRequestHandler):
         self.xml("<connectmode>private</connectmode>")
 
     def cmd_get_caminfo(self, q, body):
-        self.xml("<caminfo><model>PEN-F (mock)</model></caminfo>")
+        self.xml(f"<caminfo><model>{MODEL} (mock)</model></caminfo>")
 
     def cmd_get_commandlist(self, q, body):
         self.reply(200, COMMAND_LIST)
@@ -527,7 +530,11 @@ def main():
     ap.add_argument("--port", type=int, default=8080, help="HTTP port (default 8080; the real camera uses 80)")
     ap.add_argument("--fps", type=float, default=20, help="live view frame rate")
     ap.add_argument("--quiet", action="store_true", help="don't print every response")
+    ap.add_argument("--model", default="PEN-F",
+                    help="model name get_caminfo reports, e.g. E-M10MarkIII or AIR-A01 (default PEN-F)")
     args = ap.parse_args()
+    global MODEL
+    MODEL = args.model
     sys.stdout.reconfigure(line_buffering=True)
 
     cam = MockCamera(load_frames())
