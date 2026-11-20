@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mock Panasonic LUMIX GH5 for testing PEN-F Remote's LUMIX support without the camera.
+Mock Panasonic LUMIX GH5 for testing Shutterlink's LUMIX support without the camera.
 
 It speaks the Image App / LUMIX Sync Wi-Fi protocol as described by open-source
 implementations (the real GH5 has not been checked against this):
@@ -22,6 +22,11 @@ In the app: Connect screen > LUMIX > Advanced > Camera address = 127.0.0.1:8082.
 Like the real camera it asks before letting a new phone in: the first two
 pairing requests answer "ok_under_research" (the camera is showing its
 Yes/No prompt), then it accepts. --refuse makes it say No instead.
+
+--encrypted acts like the newer bodies (S5IIX, G9II…) as liblumix describes them:
+the UPnP description advertises X_CamCapability ending in 1, pairing is
+req_acc_g then req_acc_e (UDN and name as lowercase hex), and every later
+cam.cgi request must carry the session id in an X-SESSION_ID header.
 It also stops streaming if the app stops polling getstate for 10 seconds.
 """
 import argparse
@@ -45,6 +50,10 @@ from mock_penf import load_frames  # noqa: E402  (same live-view frames as the P
 UPNP_PORT = 60606
 FILE_PORT = 50001
 NAME = "GH5-MOCK"
+MODEL = "DC-GH5"   # --model changes it, e.g. DC-LX100 or DMC-GH4
+UDN = "4D454930-0000-1000-8000-mockgh5"
+SESSION = "5e55i0n1d"
+ENCRYPTED = False
 
 # A Leica DG 12-60mm f/2.8-4 at the wide end would report a range; keep it simple with a
 # 25mm f/1.7 prime: F1.7-F16, 1/8000-60 s. Codes are APEX x 256.
@@ -204,6 +213,9 @@ class CamHandler(BaseHTTPRequestHandler):
         mode = q.get("mode", "")
         if mode != "getstate" or self.verbose:
             print(f"cam.cgi {url.query}")
+        if ENCRYPTED and mode != "accctrl" and self.headers.get("X-SESSION_ID") != SESSION:
+            print("  (no or wrong X-SESSION_ID: rejected)")
+            return self.result("err_reject")
         handler = getattr(self, "mode_" + mode, None)
         if handler is None:
             return self.result("err_non_support")
@@ -213,6 +225,8 @@ class CamHandler(BaseHTTPRequestHandler):
     # -- pairing & info --------------------------------------------------------
     def mode_accctrl(self, q):
         cam = self.cam
+        if ENCRYPTED:
+            return self.encrypted_accctrl(q)
         if q.get("type") != "req_acc":
             return self.result("err_param")
         uuid = q.get("value", "")
@@ -230,10 +244,37 @@ class CamHandler(BaseHTTPRequestHandler):
             cam.paired.add(uuid)
         self.csv(f"ok,{NAME},remote,encrypted")
 
+    def encrypted_accctrl(self, q):
+        cam = self.cam
+        kind = q.get("type")
+        if kind == "req_acc_g":
+            return self.csv("ok,1a2b3c4d")
+        if kind != "req_acc_e":
+            return self.result("err_unsuitable_app")
+        try:
+            udn = bytes.fromhex(q.get("value", "")).decode()
+            name = bytes.fromhex(q.get("value2", "")).decode()
+        except ValueError:
+            return self.result("err_param")
+        if udn != UDN:
+            print(f"  (wrong UDN {udn!r})")
+            return self.result("err_param")
+        if udn not in cam.paired:
+            attempts = cam.pairing_attempts.get(udn, 0) + 1
+            cam.pairing_attempts[udn] = attempts
+            if attempts <= 2:
+                print(f"  (camera shows: Connect to {name}? Yes / No)")
+                return self.csv("ok_under_research")
+            if cam.refuse:
+                cam.pairing_attempts[udn] = 0
+                return self.result("err_user_refused")
+            cam.paired.add(udn)
+        self.csv(f"ok,{NAME},remote,open,{SESSION}")
+
     def mode_getinfo(self, q):
         kind = q.get("type")
         if kind == "capability":
-            return self.result("ok", "<comm_proto_ver>2.6</comm_proto_ver><product_info><model_name>DC-GH5</model_name>"
+            return self.result("ok", f"<comm_proto_ver>2.6</comm_proto_ver><product_info><model_name>{MODEL}</model_name>"
                                      "</product_info><camera_type>s</camera_type>")
         if kind == "lens":
             return self.csv(f"ok,{code_text(av_code(LENS_MAX_F))},{code_text(av_code(LENS_MIN_F))},"
@@ -412,8 +453,8 @@ DEVICE_DESCRIPTION = """<?xml version="1.0"?>
 <friendlyName>{name}</friendlyName>
 <manufacturer>Panasonic</manufacturer>
 <modelName>LUMIX</modelName>
-<modelNumber>DC-GH5</modelNumber>
-<UDN>uuid:4D454930-0000-1000-8000-mockgh5</UDN>
+<modelNumber>{model}</modelNumber>
+<UDN>uuid:{udn}</UDN>{capability}
 <serviceList>
 <service>
 <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
@@ -462,7 +503,8 @@ class MediaHandler(BaseHTTPRequestHandler):
         if port == UPNP_PORT:
             if path == "/Server0/ddd":
                 print("UPnP: device description")
-                return self.reply(200, DEVICE_DESCRIPTION.format(name=NAME))
+                capability = "\n<pana:X_CamCapability>0001</pana:X_CamCapability>" if ENCRYPTED else ""
+                return self.reply(200, DEVICE_DESCRIPTION.format(name=NAME, udn=UDN, capability=capability, model=MODEL))
             return self.reply(404, "not found", "text/plain")
         # File server: /DO<id>.JPG original, /DO<id>.RW2 raw, /DT thumbnail, /DL large preview.
         name = path.lstrip("/")
@@ -567,7 +609,12 @@ def main():
     ap.add_argument("--fps", type=float, default=30, help="live view frame rate")
     ap.add_argument("--refuse", action="store_true", help="answer No to the pairing prompt")
     ap.add_argument("--quiet", action="store_true", help="don't print every command")
+    ap.add_argument("--encrypted", action="store_true", help="newer pairing (req_acc_g/req_acc_e + X-SESSION_ID)")
+    ap.add_argument("--model", default="DC-GH5", help="model the camera reports, e.g. DC-LX100 or DMC-GH4")
     args = ap.parse_args()
+    global ENCRYPTED, MODEL
+    ENCRYPTED = args.encrypted
+    MODEL = args.model
     sys.stdout.reconfigure(line_buffering=True)
 
     cam = MockLumix(load_frames(), refuse=args.refuse)

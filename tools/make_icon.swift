@@ -1,12 +1,15 @@
-// Renders the PEN-F Remote app icon (light, dark and tinted variants) at 1024×1024.
-// Usage: swift tools/make_icon.swift <output-dir>
+// Renders the Shutterlink artwork (flat, on black): the app icon (light, dark and tinted variants, 1024×1024), the
+// Watch icon, and the aperture mark the launch screen shows.
+// Usage: swift tools/make_icon.swift <repo-root>
+//   writes Shutterlink/Assets.xcassets/AppIcon.appiconset/AppIcon{,-Dark,-Tinted}.png,
+//          ShutterlinkWatch/Assets.xcassets/AppIcon.appiconset/AppIcon.png and
+//          Shutterlink/Assets.xcassets/LaunchMark.imageset/LaunchMark.png
 import CoreGraphics
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-let out = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
-let size = 1024
+let root = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "."
 let space = CGColorSpace(name: CGColorSpace.sRGB)!
 
 func rgb(_ hex: UInt32, _ a: CGFloat = 1) -> CGColor {
@@ -14,131 +17,131 @@ func rgb(_ hex: UInt32, _ a: CGFloat = 1) -> CGColor {
                                             CGFloat(hex & 0xFF) / 255, a])!
 }
 
-enum Variant { case light, dark, tinted }
+enum Variant { case light, dark, tinted, mark }
 
-func render(_ variant: Variant) -> CGImage {
+/// Six aperture blades around a hexagonal opening. Each hexagon edge, extended until it meets the
+/// outer circle, is the boundary between two blades (the classic iris drawing).
+struct Iris {
+    let center: CGPoint
+    let outer: CGFloat
+    let inner: CGFloat
+    let rotation: CGFloat
+
+    var vertices: [CGPoint] {
+        (0..<6).map { i in
+            let a = rotation + CGFloat(i) * .pi / 3
+            return CGPoint(x: center.x + inner * cos(a), y: center.y + inner * sin(a))
+        }
+    }
+
+    /// Where the edge arriving at vertex i, carried on past it, meets the outer circle.
+    func rim(_ i: Int) -> CGPoint {
+        let v = vertices
+        let a = v[(i + 5) % 6], b = v[i]
+        var d = CGPoint(x: b.x - a.x, y: b.y - a.y)
+        let len = hypot(d.x, d.y)
+        d = CGPoint(x: d.x / len, y: d.y / len)
+        let p = CGPoint(x: b.x - center.x, y: b.y - center.y)
+        let dot = p.x * d.x + p.y * d.y
+        let t = -dot + sqrt(dot * dot - (p.x * p.x + p.y * p.y - outer * outer))
+        return CGPoint(x: b.x + t * d.x, y: b.y + t * d.y)
+    }
+
+    func blade(_ i: Int) -> CGPath {
+        let v = vertices
+        let path = CGMutablePath()
+        let p0 = rim(i), p1 = rim((i + 1) % 6)
+        path.move(to: v[i])
+        path.addLine(to: p0)
+        path.addArc(center: center, radius: outer, startAngle: atan2(p0.y - center.y, p0.x - center.x),
+                    endAngle: atan2(p1.y - center.y, p1.x - center.x), clockwise: false)
+        path.addLine(to: v[(i + 1) % 6])
+        path.closeSubpath()
+        return path
+    }
+
+    var opening: CGPath {
+        let path = CGMutablePath()
+        path.addLines(between: vertices)
+        path.closeSubpath()
+        return path
+    }
+}
+
+func drawMark(_ ctx: CGContext, center c: CGPoint, scale k: CGFloat, variant: Variant) {
+    // Flat, bold: amber ring and opening, light blades with black seams, on black.
+    let tinted = variant == .tinted
+    let amber = tinted ? rgb(0xFFFFFF) : rgb(0xFFB029)
+    let seam = rgb(0x000000)
+    ctx.setFillColor(seam)
+    ctx.fillEllipse(in: CGRect(x: c.x - 340 * k, y: c.y - 340 * k, width: 680 * k, height: 680 * k))
+    ctx.setStrokeColor(amber)
+    ctx.setLineWidth(30 * k)
+    ctx.strokeEllipse(in: CGRect(x: c.x - 312 * k, y: c.y - 312 * k, width: 624 * k, height: 624 * k))
+
+    let iris = Iris(center: c, outer: 276 * k, inner: 112 * k, rotation: .pi / 12)
+    for i in 0..<6 {
+        // Two flat tones, alternating, so the blades read as separate leaves.
+        let tone: UInt32 = tinted ? (i % 2 == 0 ? 0x6E6E6E : 0x5A5A5A) : (i % 2 == 0 ? 0xF2F3F5 : 0xCDD1D9)
+        ctx.addPath(iris.blade(i))
+        ctx.setFillColor(rgb(tone))
+        ctx.fillPath()
+        ctx.addPath(iris.blade(i))
+        ctx.setStrokeColor(seam)
+        ctx.setLineWidth(12 * k)
+        ctx.setLineJoin(.round)
+        ctx.strokePath()
+    }
+    ctx.addPath(iris.opening)
+    ctx.setFillColor(amber)
+    ctx.fillPath()
+    ctx.addPath(iris.opening)
+    ctx.setStrokeColor(seam)
+    ctx.setLineWidth(12 * k)
+    ctx.strokePath()
+
+    // Two thick Wi-Fi arcs off the ring's top-right: the link.
+    let origin = CGPoint(x: c.x + 250 * k, y: c.y + 250 * k)
+    ctx.setStrokeColor(amber)
+    ctx.setLineCap(.round)
+    ctx.setLineWidth(46 * k)
+    for r in [104.0, 176.0] {
+        ctx.addArc(center: origin, radius: CGFloat(r) * k, startAngle: .pi * 0.06, endAngle: .pi * 0.44, clockwise: false)
+        ctx.strokePath()
+    }
+}
+
+func render(_ variant: Variant, size: Int) -> CGImage {
     let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.setShouldAntialias(true)
     ctx.interpolationQuality = .high
     let S = CGFloat(size)
-    let amber = rgb(0xFAA83D)
-
-    // Background (dark/tinted variants are transparent: iOS supplies the backdrop).
+    // Pure black behind the light icon; dark, tinted and the launch mark are transparent
+    // (iOS supplies the backdrop).
     if variant == .light {
-        let bg = CGGradient(colorsSpace: space, colors: [rgb(0x2C3150), rgb(0x0A0A10)] as CFArray, locations: [0, 1])!
-        ctx.drawLinearGradient(bg, start: CGPoint(x: 0, y: S), end: CGPoint(x: 0, y: 0), options: [])
-        let glow = CGGradient(colorsSpace: space, colors: [rgb(0xFAA83D, 0.55), rgb(0xFAA83D, 0)] as CFArray, locations: [0, 1])!
-        ctx.drawRadialGradient(glow, startCenter: CGPoint(x: S * 0.82, y: S * 0.86), startRadius: 0,
-                               endCenter: CGPoint(x: S * 0.82, y: S * 0.86), endRadius: S * 0.62, options: [])
-        // A few stars.
-        for (x, y, r) in [(0.14, 0.88, 5.0), (0.26, 0.80, 3.0), (0.40, 0.92, 4.0), (0.08, 0.70, 3.0), (0.56, 0.84, 2.5)] {
-            ctx.setFillColor(rgb(0xFFFFFF, 0.85))
-            ctx.fillEllipse(in: CGRect(x: S * x - r, y: S * y - r, width: r * 2, height: r * 2))
-        }
+        ctx.setFillColor(rgb(0x000000))
+        ctx.fill(CGRect(x: 0, y: 0, width: S, height: S))
     }
-
-    // Camera body.
-    let body = CGRect(x: S * 0.13, y: S * 0.22, width: S * 0.74, height: S * 0.44)
-    let bodyPath = CGPath(roundedRect: body, cornerWidth: 70, cornerHeight: 70, transform: nil)
-
-    // Shutter dial sitting on the top plate (drawn first so the body overlaps its base).
-    let dial = CGRect(x: body.maxX - 250, y: body.maxY - 10, width: 160, height: 52)
-    ctx.addPath(CGPath(roundedRect: dial, cornerWidth: 14, cornerHeight: 14, transform: nil))
-    ctx.setFillColor(variant == .tinted ? rgb(0xBDBDBD) : rgb(0xC9CBD2))
-    ctx.fillPath()
-    ctx.setStrokeColor(rgb(0x7E818B, 0.8))
-    ctx.setLineWidth(4)
-    for i in stride(from: dial.minX + 16, to: dial.maxX - 8, by: 16) {
-        ctx.move(to: CGPoint(x: i, y: dial.minY + 14))
-        ctx.addLine(to: CGPoint(x: i, y: dial.maxY - 8))
-    }
-    ctx.strokePath()
-
-    // Black leatherette lower half.
-    ctx.saveGState()
-    ctx.addPath(bodyPath)
-    ctx.clip()
-    ctx.setFillColor(variant == .tinted ? rgb(0x262626) : rgb(0x18181D))
-    ctx.fill(body)
-    // Silver top plate.
-    let plate = CGRect(x: body.minX, y: body.maxY - body.height * 0.40, width: body.width, height: body.height * 0.40)
-    let silver = CGGradient(colorsSpace: space,
-                            colors: (variant == .tinted ? [rgb(0xF2F2F2), rgb(0xA8A8A8)] : [rgb(0xF4F5F8), rgb(0xA9ADB8)]) as CFArray,
-                            locations: [0, 1])!
-    ctx.saveGState()
-    ctx.clip(to: plate)
-    ctx.drawLinearGradient(silver, start: CGPoint(x: 0, y: plate.maxY), end: CGPoint(x: 0, y: plate.minY), options: [])
-    ctx.restoreGState()
-    // Seam between plate and body.
-    ctx.setFillColor(rgb(0x000000, 0.35))
-    ctx.fill(CGRect(x: plate.minX, y: plate.minY - 4, width: plate.width, height: 6))
-    ctx.restoreGState()
-    // Thin edge light so the black body separates from the dark background.
-    ctx.addPath(bodyPath)
-    ctx.setStrokeColor(rgb(0xFFFFFF, 0.16))
-    ctx.setLineWidth(5)
-    ctx.strokePath()
-
-    // Viewfinder window, top-left like a rangefinder.
-    let finder = CGRect(x: body.minX + 64, y: plate.minY + 52, width: 150, height: 78)
-    ctx.addPath(CGPath(roundedRect: finder, cornerWidth: 16, cornerHeight: 16, transform: nil))
-    ctx.setFillColor(rgb(0x23252D))
-    ctx.fillPath()
-    ctx.addPath(CGPath(roundedRect: finder.insetBy(dx: 14, dy: 14), cornerWidth: 8, cornerHeight: 8, transform: nil))
-    ctx.setFillColor(variant == .tinted ? rgb(0x5A5A5A) : rgb(0x3D4A6E))
-    ctx.fillPath()
-
-    // Lens.
-    let c = CGPoint(x: body.midX + 30, y: body.midY - 6)
-    func disc(_ r: CGFloat, _ color: CGColor) {
-        ctx.setFillColor(color)
-        ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
-    }
-    disc(212, variant == .tinted ? rgb(0xD0D0D0) : rgb(0xD6D8DE))    // silver mount
-    disc(196, rgb(0x0E0E12))                                          // barrel
-    // Amber focus ring.
-    ctx.setStrokeColor(variant == .tinted ? rgb(0xFFFFFF) : amber)
-    ctx.setLineWidth(14)
-    ctx.strokeEllipse(in: CGRect(x: c.x - 166, y: c.y - 166, width: 332, height: 332))
-    // Glass.
-    let glass = CGGradient(colorsSpace: space,
-                           colors: (variant == .tinted ? [rgb(0x6A6A6A), rgb(0x101010)] : [rgb(0x4B5BA8), rgb(0x0B0D1C)]) as CFArray,
-                           locations: [0, 1])!
-    ctx.saveGState()
-    ctx.addEllipse(in: CGRect(x: c.x - 140, y: c.y - 140, width: 280, height: 280))
-    ctx.clip()
-    ctx.drawRadialGradient(glass, startCenter: CGPoint(x: c.x - 40, y: c.y + 50), startRadius: 0,
-                           endCenter: c, endRadius: 150, options: [.drawsAfterEndLocation])
-    ctx.restoreGState()
-    // Reflections.
-    ctx.setFillColor(rgb(0xFFFFFF, 0.55))
-    ctx.fillEllipse(in: CGRect(x: c.x - 82, y: c.y + 36, width: 58, height: 36))
-    ctx.setFillColor(rgb(0xFFFFFF, 0.22))
-    ctx.fillEllipse(in: CGRect(x: c.x + 46, y: c.y - 80, width: 30, height: 20))
-
-    // Wi-Fi arcs from the top-right corner of the camera.
-    let origin = CGPoint(x: body.maxX - 100, y: body.maxY + 130)
-    ctx.setStrokeColor(variant == .tinted ? rgb(0xFFFFFF) : amber)
-    ctx.setLineCap(.round)
-    for (i, r) in [44.0, 92.0, 140.0].enumerated() {
-        ctx.setLineWidth(i == 0 ? 0 : 22)
-        if i == 0 {
-            ctx.setFillColor(variant == .tinted ? rgb(0xFFFFFF) : amber)
-            ctx.fillEllipse(in: CGRect(x: origin.x - 20, y: origin.y - 20, width: 40, height: 40))
-            continue
-        }
-        ctx.addArc(center: origin, radius: CGFloat(r), startAngle: .pi * 0.08, endAngle: .pi * 0.58, clockwise: false)
-        ctx.strokePath()
-    }
+    let k = S / 1024
+    let center = CGPoint(x: S * 0.455, y: S * 0.455)
+    drawMark(ctx, center: center, scale: variant == .mark ? k * 1.12 : k * 1.08, variant: variant)
     return ctx.makeImage()!
 }
 
-try FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
-for (variant, name) in [(Variant.light, "AppIcon.png"), (.dark, "AppIcon-Dark.png"), (.tinted, "AppIcon-Tinted.png")] {
-    let url = URL(fileURLWithPath: out).appendingPathComponent(name)
+func write(_ image: CGImage, to path: String) throws {
+    let url = URL(fileURLWithPath: root).appendingPathComponent(path)
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)!
-    CGImageDestinationAddImage(dest, render(variant), nil)
+    CGImageDestinationAddImage(dest, image, nil)
     CGImageDestinationFinalize(dest)
     print("wrote \(url.path)")
 }
+
+let icons = "Shutterlink/Assets.xcassets/AppIcon.appiconset/"
+try write(render(.light, size: 1024), to: icons + "AppIcon.png")
+try write(render(.dark, size: 1024), to: icons + "AppIcon-Dark.png")
+try write(render(.tinted, size: 1024), to: icons + "AppIcon-Tinted.png")
+try write(render(.light, size: 1024), to: "ShutterlinkWatch/Assets.xcassets/AppIcon.appiconset/AppIcon.png")
+// 180 pt at 3x for the launch screen.
+try write(render(.mark, size: 540), to: "Shutterlink/Assets.xcassets/LaunchMark.imageset/LaunchMark.png")

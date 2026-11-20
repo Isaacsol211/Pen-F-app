@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Cameras speak plain HTTP on their own Wi-Fi (192.168.0.10, 192.168.54.1, …). -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- Launch screen: the Shutterlink aperture mark on the app's night-blue background. -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+		<key>UIImageName</key>
+		<string>LaunchMark</string>
+		<key>UIImageRespectsSafeAreaInsets</key>
+		<true/>
+	</dict>
+	<!-- The app is always dark; this makes the launch screen's status bar light too. -->
+	<key>UIUserInterfaceStyle</key>
+	<string>Dark</string>
+	<!-- RAW files that Photos won't take are saved to Documents/RAW, shown in Files. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+</dict>
+</plist>

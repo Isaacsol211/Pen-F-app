@@ -1,22 +1,169 @@
-# PEN-F Remote
+# Shutterlink
 
-A small iPhone test app that controls an Olympus PEN-F over the camera's own Wi-Fi.
-It uses the same protocol as Olympus's OI.Share / OM Image Share app.
+An iPhone (and Apple Watch) remote for cameras, over the camera's own Wi-Fi. It started as a remote for the
+Olympus PEN-F and now covers **every Wi-Fi Olympus / OM System and Panasonic LUMIX body**, with experimental
+drivers for **Nikon, Canon and Sony**. Pick the brand on the Connect screen, or leave it on **Auto** and the app
+works out which camera it's talking to. Only the PEN-F has been tried on a real camera so far.
 
-It also has **experimental support for Panasonic LUMIX bodies (written for the GH5)**, using the
-protocol of Panasonic's Image App / LUMIX Sync. Pick the camera brand on the Connect screen.
-The LUMIX side is tested only against a mock camera so far; see
-[Panasonic LUMIX (GH5)](#panasonic-lumix-gh5--experimental).
+## Supported cameras
+
+Each brand has a driver behind one interface (`Camera/CameraDriver.swift`) that says what the camera can do,
+so the app hides what a body can't (live-view size, Bulb, video, clock sync, High Res Shot, card browser…).
+On top of that, a per-model table (`Camera/ModelProfiles.swift`) holds what a camera doesn't report about
+itself: which bodies have High Res Shot, which compacts have fixed or physical controls, pairing quirks, and
+advice shown once after connecting (e.g. "set Wi-Fi to Private" on the E-M1). Bodies missing from the table
+still connect; they just get the brand's defaults.
+
+**Auto** picks the brand from the camera network's address range (Olympus 192.168.0.x, LUMIX 192.168.54.x,
+Sony 192.168.122.x, Nikon/Canon 192.168.1.x), then asks each candidate a read-only question in its own protocol.
+
+**Bluetooth is never needed.** Every Olympus/OM and LUMIX body here lets the phone join the camera's own Wi-Fi
+directly; on the newer ones Bluetooth is optional (OM System: Device Connection works with Bluetooth off; LUMIX
+Sync bodies: Remote Shooting & View works over Wi-Fi alone). A shutter-only Bluetooth fallback for bodies
+without Wi-Fi remote isn't built; the driver interface leaves room for it.
+
+| Brand | How the phone joins | Transport | What works in the app | Status |
+|---|---|---|---|---|
+| Olympus / OM System | Camera's access point (Connection to Smartphone / Device Connection: SSID + password + QR on screen) | OI.Share HTTP at 192.168.0.10, RTP live view over UDP. Each body lists its own commands, live-view sizes and settable properties, which the app reads | Live view, every Wi-Fi-settable setting, Bulb / Live Time / Live Composite, video, last-shot review, card with RAW download, clock sync, High Res Shot guide where the body has it | PEN-F **tested on hardware**; the rest researched (table below) |
+| Panasonic LUMIX | Camera's access point (Remote Shooting & View); approve this iPhone on the camera the first time | `cam.cgi` HTTP at 192.168.54.1, one JPEG per UDP datagram. Newer bodies: `req_acc_g`/`req_acc_e` pairing and an `X-SESSION_ID` header | Live view, aperture/shutter/ISO/EV/WB (where the body allows), tap AF, shoot, Bulb, video (app's Video switch), card with RAW download | GH5 **mock only**; the rest researched (table below). Newer pairing unverified on any real camera |
+| Nikon | Z / SnapBridge bodies: **Connect to smart device ▸ Wi-Fi connection ▸ Establish Wi-Fi connection** (no Bluetooth pairing); older DSLRs: Wi-Fi ▸ Network connection ▸ Enable. Not "Connect to PC". Turn off live view on the camera first | PTP/IP on TCP 15740 at 192.168.1.1 | Live view, aperture/shutter/ISO (incl. auto)/EV/WB, tap AF, shoot, video (Z), last-shot review, card with RAW download in 1 MB pieces. No Bulb/Time | **Experimental**, mock only (Z 6II-style and D750-style). Third-party clients have worked on Z6/Z7, Zfc, Z30, D5300, D750, D7200; Z6III/Zf/Z8/Z9 unconfirmed |
+| Canon | **CCAPI must be activated once per camera** with Canon's free tool and developer account; then the camera's CCAPI Wi-Fi connection. Turn HTTPS and user authentication off; the camera shows its "CCAPI top URL" | CCAPI: REST + JSON on port 8080 | Live view (polled JPEGs), aperture/shutter/ISO/EV/WB, AF point, shoot, Bulb, video, last-shot review, card | **Experimental**, mock only (EOS R6). CCAPI bodies: R3, R5, R6, R6 II, R7, R8, R10, R50, R100, RP, 90D, 850D, 250D, M50 II, M200, G5 X II, G7 X III, SX70 HS (activation); R1, R5 II, R50 V, V10 (built in). Not the original EOS R |
+| Sony | Smart Remote Control / Ctrl w/ Smartphone (DIRECT-… network) | Camera Remote API: JSON-RPC at 192.168.122.1:8080, HTTP live-view stream | Live view, aperture/shutter/ISO/EV/WB, touch AF, shoot, Bulb, video, last-shot review, card | **Experimental**, mock only (a6000). Bodies up to ~2019; not the a7 IV, a7S III, a1, ZV-E10, a6700 or later |
+| Fujifilm | Camera access point at 192.168.0.1; newer bodies pair over Bluetooth first | A PTP/IP variant on ports 55740–55742 | – | Not supported (researched only) |
+
+### Olympus / OM System bodies
+
+Strings the cameras report have only been seen for the E-M10 ("E-M10") and TG-5 ("TG-5"); the rest are matched
+by name in any spelling ("E-M10MarkIII", "E-M10 Mark III"…). Live Composite / Live Time / Bulb, movie and
+live-view sizes come from each camera's own lists, so they need no table entry.
+
+| Body | Year | Status | Differences the app handles |
+|---|---|---|---|
+| PEN E-P5 | 2013 | Researched only | – |
+| OM-D E-M1 | 2013 | Researched only | Wi-Fi must be set to **Private**; no movie mode over Wi-Fi |
+| Stylus 1 / 1s | 2013 | Researched only | – |
+| OM-D E-M10 | 2014 | Researched only | – |
+| Stylus SH-1 | 2014 | Researched only | – |
+| Tough TG-3 | 2014 | Researched only | – |
+| PEN E-PL7 | 2014 | Researched only | – |
+| OM-D E-M5 Mark II | 2015 | Researched only | High Res Shot |
+| Stylus SH-2 | 2015 | Researched only | – |
+| Tough TG-4 | 2015 | Researched only | – |
+| Tough TG-860 / TG-870 | 2015 | Researched only | – |
+| OM-D E-M10 Mark II | 2015 | Researched only | – |
+| AIR A01 | 2015 | Not supported | The AIR A01 speaks Olympus's Open Platform API |
+| PEN-F | 2016 | **Tested on hardware** | High Res Shot |
+| Stylus SH-3 | 2016 | Researched only | – |
+| PEN E-PL8 | 2016 | Researched only | – |
+| OM-D E-M1 Mark II | 2016 | Researched only | High Res Shot |
+| TG-Tracker | 2016 | Not supported | The TG-Tracker works with OI.Track, not remote shooting |
+| Tough TG-5 | 2017 | Researched only | – |
+| OM-D E-M10 Mark III | 2017 | Researched only | – |
+| PEN E-PL9 | 2018 | Researched only | – |
+| OM-D E-M1X | 2019 | Researched only | High Res Shot; Olympus may limit other apps to downloads on this body |
+| Tough TG-6 | 2019 | Researched only | – |
+| OM-D E-M5 Mark III | 2019 | Researched only | High Res Shot |
+| PEN E-PL10 | 2019 | Researched only | – |
+| OM-D E-M1 Mark III | 2020 | Researched only | High Res Shot; Olympus may limit other apps to downloads on this body |
+| OM-D E-M10 Mark IV | 2020 | Researched only | only some settings over Wi-Fi |
+| PEN E-P7 | 2021 | Researched only | – |
+| OM System OM-1 | 2022 | Researched only | High Res Shot; Device Connection, Bluetooth can stay off; newer protocol unconfirmed |
+| OM System OM-5 | 2022 | Researched only | High Res Shot; Device Connection, Bluetooth can stay off; newer protocol unconfirmed |
+| OM System TG-7 | 2023 | Researched only | Device Connection, Bluetooth can stay off; newer protocol unconfirmed |
+| OM System OM-1 Mark II | 2024 | Researched only | High Res Shot; Device Connection, Bluetooth can stay off; newer protocol unconfirmed |
+| OM System OM-3 | 2025 | Researched only | High Res Shot; Device Connection, Bluetooth can stay off; newer protocol unconfirmed |
+| OM System OM-5 Mark II | 2025 | Researched only | High Res Shot; Device Connection, Bluetooth can stay off; newer protocol unconfirmed |
+
+### Panasonic LUMIX bodies
+
+Matched by the camera's UPnP `modelNumber` (e.g. `DC-GH5`, `DMC-GX80`). Image App-era bodies (to 2019) pair with
+the plain `req_acc`; GH3/GH4 skip it; the S5 uses the plain one too. Whether the LUMIX Sync bodies from 2021 on
+use the newer pairing is only known for the S5 IIX and G9 II.
+
+| Body | Year | Status | Differences the app handles |
+|---|---|---|---|
+| LUMIX GH3 | 2012 | Researched only | no pairing step |
+| LUMIX G6 | 2013 | Researched only | – |
+| LUMIX GF6 | 2013 | Researched only | no ISO from the phone |
+| LUMIX LF1 | 2013 | Researched only | no ISO from the phone |
+| LUMIX GX7 | 2013 | Researched only | – |
+| LUMIX GM1 / GM1S | 2013 | Researched only | – |
+| LUMIX TS5 / FT5 | 2013 | Researched only | – |
+| LUMIX TZ40 / ZS30 | 2013 | Researched only | – |
+| LUMIX FZ70 / FZ72 | 2013 | Researched only | – |
+| LUMIX GH4 | 2014 | Researched only | no pairing step |
+| LUMIX TZ60 / ZS40 | 2014 | Researched only | no aperture/shutter from the phone |
+| LUMIX TZ55 / ZS35 | 2014 | Researched only | no aperture/shutter from the phone; no video |
+| LUMIX SZ8 | 2014 | Researched only | no aperture/shutter from the phone; no video |
+| LUMIX LX100 | 2014 | Researched only | no aperture/shutter from the phone; no EV from the phone |
+| LUMIX FZ1000 | 2014 | Researched only | – |
+| LUMIX GM5 | 2014 | Researched only | – |
+| LUMIX G7 / G70 | 2015 | Researched only | – |
+| LUMIX GF7 | 2015 | Researched only | – |
+| LUMIX TZ70 / ZS50 | 2015 | Researched only | no ISO from the phone |
+| LUMIX FZ300 / FZ330 | 2015 | Researched only | – |
+| LUMIX TS6 / FT6, TS30 | 2015 | Researched only | – |
+| LUMIX TZ57 / ZS45 | 2015 | Researched only | no video |
+| LUMIX SZ10 | 2015 | Researched only | no aperture/shutter from the phone; no video |
+| LUMIX GX8 | 2015 | Researched only | no EV from the phone |
+| LUMIX GX80 / GX85 / GX7 II | 2016 | Researched only | – |
+| LUMIX G80 / G85 / G81 | 2016 | Researched only | – |
+| LUMIX GF8 | 2016 | Researched only | – |
+| LUMIX TZ80 / ZS60 | 2016 | Researched only | – |
+| LUMIX TZ100 / ZS100 | 2016 | Researched only | – |
+| LUMIX LX10 / LX15 | 2016 | Researched only | – |
+| LUMIX FZ2000 / FZ2500 | 2016 | Researched only | – |
+| LUMIX GH5 | 2017 | Mock only | – |
+| LUMIX GF9 / GX800 / GX850 | 2017 | Researched only | – |
+| LUMIX G9 | 2017 | Researched only | High Resolution Mode not from the app |
+| LUMIX TZ90 / ZS70 | 2017 | Researched only | – |
+| LUMIX FZ80 / FZ82 | 2017 | Researched only | – |
+| LUMIX GH5S | 2018 | Researched only | – |
+| LUMIX GX9 / GX7 III | 2018 | Researched only | – |
+| LUMIX TZ200 / ZS200 | 2018 | Researched only | – |
+| LUMIX LX100 II | 2018 | Researched only | – |
+| LUMIX GF10 / GF90 | 2018 | Researched only | – |
+| LUMIX FT7 / TS7 | 2018 | Researched only | no aperture/shutter from the phone; 4K off while Wi-Fi is on |
+| LUMIX G90 / G95 / G91 | 2019 | Researched only | – |
+| LUMIX TZ95 / ZS80 | 2019 | Researched only | – |
+| LUMIX FZ1000 II | 2019 | Researched only | – |
+| LUMIX S1 / S1R / S1H | 2019 | Researched only | – |
+| LUMIX G100 | 2020 | Researched only | – |
+| LUMIX S5 | 2020 | Researched only | 16:9 live view |
+| LUMIX BGH1 | 2020 | Researched only | – |
+| LUMIX GH5 II | 2021 | Researched only | Wi-Fi password always on since firmware 1.4 |
+| LUMIX GH6 | 2022 | Researched only | – |
+| LUMIX BS1H | 2022 | Researched only | – |
+| LUMIX S5 II | 2023 | Researched only | may use the newer pairing (experimental); Wi-Fi password always on since the 2025 firmware |
+| LUMIX S5 IIX | 2023 | Researched only | newer pairing (experimental); Wi-Fi password always on since the 2025 firmware |
+| LUMIX G9 II | 2023 | Researched only | newer pairing (experimental); Wi-Fi password always on since the 2025 firmware |
+| LUMIX TZ99 / ZS99 | 2023 | Researched only | – |
+| LUMIX G97 | 2024 | Researched only | – |
+| LUMIX GH7 | 2024 | Researched only | may use the newer pairing (experimental); Wi-Fi password always on since the 2025 firmware |
+| LUMIX S9 | 2024 | Researched only | remote shooting needs firmware 1.1+; may use the newer pairing (experimental); Wi-Fi password always on since the 2025 firmware |
+| LUMIX G100D | 2024 | Researched only | – |
+| LUMIX S1 II / S1R II / L10 | 2025 | Researched only | LUMIX Lab/Flow era: the older Wi-Fi remote protocol may be gone |
+
+**Apple Watch** works the same with every brand: it talks to the iPhone app, not the camera.
+
+**iPhone Duo:** the app runs full screen on both screens, folded and open. On the outer screen it keeps
+clear of the camera bar on the right edge. Open, it switches to its landscape layout with the shutter rail
+on the left. Live view keeps running through a fold. Checked in the Simulator only.
 
 **What it does**
 
-- **Liquid Glass UI (iOS 26+), portrait and landscape.**
+- **A camera-style screen, portrait and landscape:** black, with one amber accent.
+  - A top bar shows the camera, battery and shots left.
+  - Aperture, shutter, ISO, EV, white balance and drive are big monospaced readouts. **AUTO** marks the ones the camera is choosing itself.
+  - A mode dial sits above the shutter.
+  - A quick row gives one-tap grid, histogram, peaking, loupe and night mode (on taller iPhones).
+  - The **tools grid** (⊞ next to the shutter) floats over the picture. **Shooting** opens Astro, Interval, Bracket, Pocket and High Res; **Switches** turns aids on and off, lit amber when on.
   - In landscape the shutter rail sits on the side away from the Dynamic Island.
   - Text size is capped so the layout can't break.
 - **Live view up to 30 fps.**
   - Shutter, aperture, EV and ISO, plus **battery %, shots left and lens focal length**, are read from each frame.
   - Live histogram and composition grid.
-- **Every Wi-Fi-settable camera setting is an icon on the main screen.** Tap one and its options open in place:
+- **Tap a readout and its options open in place:**
   - a swipe dial for aperture, shutter, ISO, EV and hue;
   - a button grid for mode, white balance, drive and movie exposure;
   - Live Comp / Live Time / Live Bulb as their own segments.
@@ -43,17 +190,17 @@ The LUMIX side is tested only against a mock camera so far; see
   - zoom transition, swipe between photos, pinch/double-tap zoom;
   - a 50 MP badge on High Res Shot files;
   - save originals to Photos;
-  - **star** photos (tap and hold, or the star when viewing one), show **Starred** only, and **download the RAWs of starred photos**: the .ORF next to each starred JPEG goes to Photos, or to Files ▸ On My iPhone ▸ PEN-F Remote ▸ RAW if Photos won't take it. Stars are remembered per file name and size.
+  - **star** photos (tap and hold, or the star when viewing one), show **Starred** only, and **download the RAWs of starred photos**: the RAW file (.ORF, .RW2, .NEF, .CR3, .ARW…) next to each starred JPEG goes to Photos, or to Files ▸ On My iPhone ▸ Shutterlink ▸ RAW if Photos won't take it. Stars are remembered per file name and size.
 - **One-tap connect:** a "Connect to Camera" shortcut for the Action button, Siri and Shortcuts (see below).
 - **Apple Watch remote:** live view, exposure, shutter, self-timer, Bulb and the Digital Crown for EV (see below).
 - **··· menu:** live view size, camera clock sync, High Res Shot guide, all settings, request log, disconnect, power off.
 
 ## Run it on your iPhone
 
-1. Open `PenFRemote.xcodeproj` in Xcode.
-2. Select the **PenFRemote** target ▸ **Signing & Capabilities** ▸ **Team**, and pick your Apple ID.
+1. Open `Shutterlink.xcodeproj` in Xcode.
+2. Select the **Shutterlink** target ▸ **Signing & Capabilities** ▸ **Team**, and pick your Apple ID.
    A free "Personal Team" works. If Xcode says the bundle ID is taken, change
-   `dev.penfremote.remote4821` to anything unique.
+   `dev.shutterlink.remote4821` (and the Watch app's `dev.shutterlink.remote4821.watchkitapp`) to anything unique.
 3. Plug in the iPhone. Choose it as the run destination and press ▶.
    The first time, iOS asks you to:
    - enable **Developer Mode** (Settings ▸ Privacy & Security), and
@@ -61,21 +208,52 @@ The LUMIX side is tested only against a mock camera so far; see
 
    Free-team builds expire after 7 days. Press ▶ again to refresh.
 
+**Coming from PEN-F Remote?** Shutterlink has a new bundle ID, so it installs as a separate app: delete
+the old PEN-F Remote from the iPhone, and on the Watch install Shutterlink from the Watch app ▸ Available Apps.
+Settings (brand, address, stars) start fresh, and iOS asks for Local Network, Photos and Location again.
+
 ## Connect to the camera
 
-1. On the PEN-F, start **Connection to Smartphone**. You want the screen with the SSID, password and QR code.
-2. On the iPhone, open Settings ▸ Wi-Fi ▸ `PEN-F-P-…` and enter the 8-digit password shown on the camera.
-3. Open PEN-F Remote ▸ **Connect to camera**. Allow **Local Network** access when asked. If the first attempt fails because the prompt was up, tap Connect again.
+The home screen lists **your cameras**: every camera this iPhone has connected to, most recent first.
+Turn on the camera's Wi-Fi, join its network in Settings ▸ Wi-Fi, and tap its card. Long-press a card to
+forget it.
 
-The camera is always at `192.168.0.10`. Close OI.Share / OM Image Share first so the two apps don't compete for the camera.
+The first time, tap **Add your camera** (later, **Add a camera** under the list):
+
+1. Pick **Automatic** (recommended: the app works out the brand) or your brand. Nikon, Canon and Sony are
+   marked Beta.
+2. Follow the steps the sheet shows for that brand. For the PEN-F: start **Connection to Smartphone**, then
+   in Settings ▸ Wi-Fi join `PEN-F-P-…` with the 8-digit password shown on the camera.
+3. Tap **Connect** and allow **Local Network** access when asked. Once it connects, the camera is saved.
+
+**Advanced** in the sheet holds the camera address (for the mock cameras, or a camera on another network),
+the Olympus User-Agent and the live-view size. Close OI.Share / OM Image Share / LUMIX Sync first so the
+apps don't compete for the camera.
 
 ### One tap next time (Action button)
 
-The app adds a **Connect to Camera** shortcut. Put it on the Action button (Settings ▸ Action Button ▸ Shortcut ▸ PEN-F Remote), or say "Connect to my camera with PEN-F Remote". It opens the app and keeps trying to connect for 30 seconds.
+The app adds a **Connect to Camera** shortcut. Put it on the Action button (Settings ▸ Action Button ▸ Shortcut ▸ Shutterlink), or say "Connect to my camera with Shutterlink". It opens the app and keeps trying to connect for 30 seconds.
 
 Once you've joined the camera's Wi-Fi in Settings, iOS rejoins it by itself whenever the camera's Wi-Fi is on, so the flow is: turn on Wi-Fi on the camera, press the Action button, shoot.
 
 The app doesn't join the camera's Wi-Fi itself. That needs Apple's Hotspot Configuration capability, which Apple only grants to paid developer accounts. This app is signed with a free Personal Team, so the Wi-Fi join is left to iOS. With a paid account, `NEHotspotConfiguration` could be added to make it truly one-tap.
+
+### Friends: try this first
+
+Only the PEN-F has been tried on a real camera. If you have another body, these few checks tell the most.
+If anything fails, open ··· ▸ **Request log** and send it over.
+
+- **Olympus / OM System:** start **Connection to Smartphone** and join the network. Check live view, change
+  EV, take one shot. E-M1 (Mark I): set the camera's Wi-Fi to **Private** first.
+- **LUMIX:** use **Remote Shooting & View** and choose **Yes** when the camera asks. Check live view, take
+  one shot. On an S5 II, G9 II or GH7 the pairing is the big unknown, so say exactly what the camera shows.
+- **Nikon (Beta):** turn off live view on the camera. Use **Connect to smart device ▸ Wi-Fi connection**, not
+  "Connect to PC". Check live view, take one shot, open the card. Lengthen the camera's standby timer.
+- **Canon (Beta):** the camera needs CCAPI activated first. That takes Canon's free tool, a Canon developer
+  account and a USB cable. Then turn off HTTPS and user authentication in the camera's CCAPI settings, and
+  type the "CCAPI top URL" the camera shows into Advanced if Automatic doesn't find it. The original EOS R
+  has no CCAPI.
+- **Sony (Beta):** only bodies up to about 2019 with Smart Remote Control work. An a7 IV or ZV-E10 won't.
 
 ## Apple Watch remote
 
@@ -90,50 +268,66 @@ Wi-Fi, so this is how camera Watch remotes generally work.
 - **Digital Crown:** turns exposure compensation when the camera allows it (EV shows in orange).
 - Timed Bulb shows its countdown, and a running exposure or video shows its clock.
 
-Keep PEN-F Remote open on the iPhone while you use the Watch: iOS stops the app's camera
+Keep Shutterlink open on the iPhone while you use the Watch: iOS stops the app's camera
 connection in the background. Pocket mode is a good way to leave it running. If the iPhone app stops
 answering, the Watch says so instead of showing an old picture.
 
-**Installing it:** it's part of the PenFRemote scheme. Run that on your iPhone from Xcode, and the
+**Installing it:** it's part of the Shutterlink scheme. Run that on your iPhone from Xcode, and the
 Watch app installs on the paired Watch (or install it from the Watch app ▸ Available Apps). The first
 time, turn on Developer Mode on the Watch (Settings ▸ Privacy & Security ▸ Developer Mode). It uses
 the same free Personal Team and expires with the iPhone app.
 
 ## Test without the camera (mock cameras)
 
-`mock-camera/mock_penf.py` pretends to be the PEN-F and `mock-camera/mock_lumix.py` a LUMIX GH5,
-live view included. They need only Python 3 and Swift, both on macOS already.
+`mock-camera/` has a fake camera for every brand, live view included. They need only Python 3 and Swift,
+both on macOS already.
+
+| Mock | Pretends to be | Simulator address | Options |
+|---|---|---|---|
+| `mock_penf.py` | Olympus PEN-F (OI.Share HTTP + RTP live view) | `127.0.0.1:8080` | `--model E-M1` (or any body) to report another model |
+| `mock_lumix.py` | Panasonic GH5 (`cam.cgi`, UDP live view, UPnP card on 60606, files on 50001) | `127.0.0.1:8082` | `--refuse` (camera says No), `--encrypted` (newer pairing + session id), `--model DC-LX100` (or any body) |
+| `mock_nikon.py` | Nikon Z 6II (PTP/IP) | `127.0.0.1:15740` | `--dslr` (D750-style: 1/10000 s shutter units, older capture and event ops) |
+| `mock_canon.py` | Canon EOS R6 (CCAPI) | `127.0.0.1:8084` | |
+| `mock_sony.py` | Sony a6000 (Camera Remote API, live-view stream, description on 64321) | `127.0.0.1:8086` | |
 
 ```bash
-python3 mock-camera/mock_penf.py
+python3 mock-camera/mock_nikon.py
 ```
 
-```bash
-python3 mock-camera/mock_lumix.py
-```
-
-- **In the Simulator:** Connect screen ▸ pick the brand ▸ Advanced ▸ Camera address =
-  `127.0.0.1:8080` (PEN-F) or `127.0.0.1:8082` (LUMIX).
-- **On a real iPhone on the same Wi-Fi:** run it with `--bind 0.0.0.0` and use `<your Mac's IP>:8080` / `:8082`.
+- **In the Simulator:** Connect screen ▸ Auto (or the brand) ▸ Advanced ▸ Camera address = the address above.
+- **On a real iPhone on the same Wi-Fi:** run the mock with `--bind 0.0.0.0` and use `<your Mac's IP>:<port>`.
 
 Like the real PEN-F, the PEN-F mock rejects commands sent in the wrong mode (HTTP 520) and rejects unknown User-Agents.
 Its card has RAW+JPEG pairs (fake `.ORF` files that Photos rejects, so RAW downloads fall back to Files), and it offers Live Composite / Time / Bulb in M.
+The other mocks also refuse values a real camera wouldn't take, report busy while "writing to the card", and have RAW files on the card.
+
+**Driver self-test.** A Debug build launched with `-selfTest <brand|auto> <127.0.0.1:port>` runs a driver through
+connect, live view, every settable setting, tap AF, a shot, last-shot review, video, battery, the card (thumbnail,
+preview, JPEG and RAW download) and back to live view, and prints `SELFTEST PASS/FAIL` lines. It refuses any
+address that isn't on this Mac, because it takes pictures and changes settings.
+
+```bash
+xcrun simctl launch --console booted dev.shutterlink.remote4821 -selfTest nikon 127.0.0.1:15740
+```
+
+All five drivers (and LUMIX `--encrypted`, Nikon `--dslr`) pass it against their mocks, and Auto picks the
+right brand for each mock from the address alone.
 
 To try the Watch app in the Simulator, pair a Watch simulator with the iPhone one
-(`xcrun simctl pair <watch> <iphone>`), then run the PenFRemote scheme on the iPhone and the
-PenFRemoteWatch scheme on the Watch. A Debug Watch build launched with `-crownSteps 2` turns the
+(`xcrun simctl pair <watch> <iphone>`), then run the Shutterlink scheme on the iPhone and the
+ShutterlinkWatch scheme on the Watch. A Debug Watch build launched with `-crownSteps 2` turns the
 crown two clicks by itself, since the Simulator tools can't.
 
 The Simulator has no Shortcuts app. To run what the shortcut runs, launch a Debug build with `-connectFromShortcut`:
 
 ```bash
-xcrun simctl launch booted dev.penfremote.remote4821 -connectFromShortcut
+xcrun simctl launch booted dev.shutterlink.remote4821 -connectFromShortcut
 ```
 The LUMIX mock asks for approval the first time a phone pairs (`--refuse` makes it say No), only browses
 the card in playback mode, and stops live view if the app stops polling it. It also serves its media server
 and files on the real camera's ports, 60606 and 50001.
 
-## How the protocol works
+## How the Olympus protocol works
 
 | What | How |
 |---|---|
@@ -170,8 +364,9 @@ Still unconfirmed:
 ## Panasonic LUMIX (GH5) — experimental
 
 Written for the GH5 from open-source descriptions of Panasonic's Wi-Fi protocol. Other bodies that work
-with Image App / LUMIX Sync (GH4, GH5S, G9, G80/G85, GX9, S-series…) speak the same protocol and
-should mostly work. **None of this has been tried on a real LUMIX camera yet.**
+with Image App / LUMIX Sync speak the same protocol and should mostly work; see
+[Supported cameras](#supported-cameras) for which, and for the newer bodies' pairing.
+**None of this has been tried on a real LUMIX camera yet.**
 
 ### Connect
 
@@ -192,7 +387,7 @@ The camera is always at `192.168.54.1`. Close Image App / LUMIX Sync on other ph
 - Aperture (limited to the lens's real range), shutter including Bulb, ISO including iAuto, EV and white balance,
   on the same dials and haptics as the PEN-F.
 - Tap to focus, single shots, long exposures with a countdown, Bulb with tap-to-stop.
-- **Video:** turn on **Video** in the tools tray (the GH5's mode dial can't be read or turned over Wi-Fi),
+- **Video:** turn on **Video** in the tools grid (the GH5's mode dial can't be read or turned over Wi-Fi),
   then the shutter becomes a record button.
 - Card browser over the camera's media server: JPG, RW2 and MP4, with thumbnails, preview and saving
   originals to Photos.
@@ -204,7 +399,7 @@ The camera is always at `192.168.54.1`. Close Image App / LUMIX Sync on other ph
 - **Last-shot thumbnail:** LUMIX review images need playback mode, which stops live view, so open the card instead.
 - **Clock sync** and **High Res Shot** are Olympus features and are hidden for LUMIX.
 
-### How the protocol works
+### How the LUMIX protocol works
 
 | What | How |
 |---|---|
@@ -225,33 +420,66 @@ Sources: [Rambalac/GMaster](https://github.com/Rambalac/GMaster),
 Worth checking first on a real GH5: the pairing reply, the live-view header, the exact white-balance names,
 and whether `touch` or `touchaf` is the focus command.
 
+## Nikon, Canon and Sony: how the protocols work
+
+| | Nikon | Canon | Sony |
+|---|---|---|---|
+| Transport | PTP/IP: two TCP connections to port 15740 (commands, events), little-endian packets | CCAPI: `GET /ccapi` lists the APIs; REST + JSON | JSON-RPC: `POST /sony/camera {"method", "params", "id", "version"}` |
+| Session | Init Command Request (our GUID, name) → Ack; Init Event Request → Ack; OpenSession(1) with transaction id 0; GetDeviceInfo | Device information, battery | `getVersions`, `startRecMode` where listed, `getAvailableApiList` |
+| Live view | ChangeCameraMode(1), StartLiveView 0x9201, wait on DeviceReady 0x90C8, then GetLiveViewImage 0x9203 in a loop (128/384-byte header, then JPEG) | `POST shooting/liveview {"liveviewsize":"small"}`, then `GET shooting/liveview/flip` in a loop | `startLiveview` → URL of an endless stream: 8-byte header + 128-byte header (`24 35 68 79`, JPEG size) + JPEG |
+| Settings | GetDevicePropDesc / SetDevicePropValue: FNumber 0x5007 (f×100), Nikon shutter 0xD100 (num<<16 \| den; 0x500D in 1/10000 s on older bodies), ISO 0x500F + auto 0xD054, EV 0x5010 (1/1000 EV), WB 0x5005 | `shooting/settings/{tv,av,iso,exposure,wb}` → `{"value","ability"}`; PUT `{"value"}`. `"f5.6"`, `"1/125"`, `"0\"5"`, `"+1_1/3"` | `getAvailable…` → `[current, [choices]]`, `set…`. EV is an index (⅓ or ½ steps) |
+| Shoot | InitiateCaptureRecInMedia 0x9207 (0xFFFFFFFF, 0 = to card) or InitiateCapture 0x100E; retry while busy; ObjectAdded from GetEvent 0x90C7 / GetEventEx 0x941C | `POST shooting/control/shutterbutton {"af":true}`; Bulb with `shutterbutton/manual` full_press / release | `actTakePicture` (→ postview URL), `startBulbShooting` / `stopBulbShooting` |
+| Card | GetStorageIDs, GetObjectHandles, GetObjectInfo, GetThumb, GetLargeThumb 0x90C4, GetPartialObject in 1 MB pieces | `contents` → storage → folder (`?kind=number`, `?page=N`) → file `?kind=thumbnail\|display`, plain GET for the original | `setCameraFunction "Contents Transfer"`, then avContent `getContentList` (v1.3) |
+
+Sources: libgphoto2 (`ptpip.c`, `ptp.h`, `config.c`, `library.c`), Nikon's online manuals and SnapBridge help,
+airmtp, digiCamControl; Canon's camera manuals and CCAPI sample code, Canomate, ccapi.py; pysony. LUMIX's newer
+pairing: liblumix and the lumix-remote protocol notes.
+
 ## Files
 
 ```
-PenFRemote/
-  PenFRemoteApp.swift        app entry, theme
-  Camera/CameraBrand.swift   Olympus / Panasonic: addresses, Wi-Fi names, live-view format
-  Camera/OlympusClient.swift HTTP commands, request log, card listing parser
-  Camera/LiveView.swift      UDP socket, RTP reassembly, frame metadata parser, LUMIX JPEG datagrams
-  Camera/CameraModel.swift   connection/mode state machine, shooting, settings, gallery
+Shutterlink/
+  ShutterlinkApp.swift       app entry, launch hand-off
+  Camera/CameraDriver.swift  the driver interface and capability flags every brand implements
+  Camera/CameraBrand.swift   brands: addresses, Wi-Fi names, default capabilities
+  Camera/BrandDetector.swift Auto: subnet guess plus a read-only probe per protocol
+  Camera/ModelProfiles.swift every Wi-Fi Olympus/OM and LUMIX body: features, pairing, notes
+  Camera/CameraHTTPClient.swift HTTP commands (one at a time), request log, Olympus card listing parser
+  Camera/OlympusDriver.swift Olympus / OM System (OI.Share)
+  Camera/Panasonic.swift     LUMIX driver: pairing (both kinds), keep-alive, settings, shooting, UPnP card browser
+  Camera/PTPIP.swift         PTP/IP transport and PTP datasets
+  Camera/Nikon.swift         Nikon driver (PTP/IP + Nikon vendor operations)
+  Camera/Canon.swift         Canon CCAPI driver
+  Camera/Sony.swift          Sony Camera Remote API driver
+  Camera/LiveStreams.swift   pulled live view (Nikon, Canon) and Sony's HTTP stream
+  Camera/LiveView.swift      UDP socket, RTP reassembly, frame metadata parser, LUMIX JPEG datagrams, pushed frames
+  Camera/CameraModel.swift   connection/mode state machine; forwards everything to the driver
+  Camera/SavedCameras.swift  the home screen's saved cameras and one-tap reconnect
+  Camera/SelfTest.swift      Debug-only -selfTest against the mocks
   Camera/Extras.swift        timed bulb, bracketing, stars and RAW download, shortcut connect
   Camera/FocusPeaking.swift  Core Image edge overlay for focus peaking
   Camera/Geotag.swift        location log (When In Use) and nearest-point lookup
   Camera/Shortcuts.swift     "Connect to Camera" App Intent and App Shortcut
   Camera/WatchBridge.swift   iPhone end of the Watch remote: status, commands, preview frames
   Camera/StripValues.swift   the exposure strip's values (shared with the Watch)
-  Camera/Panasonic.swift     LUMIX driver: pairing, keep-alive, settings, shooting, UPnP card browser
   Camera/XML.swift           tiny XML parser + camera command list
   Camera/PropertyFormat.swift labels for raw property values
+  Views/Design.swift         colours, surfaces and button styles shared by every screen
+  Views/BrandMark.swift      the Shutterlink aperture mark, name lockup and launch hand-off
   Views/ExtrasViews.swift    bracketing sheet, pocket mode, bulb timer, RAW download bar
   Views/…                    SwiftUI screens
-PenFRemoteWatch/             Apple Watch remote (SwiftUI, WatchConnectivity)
+ShutterlinkWatch/            Apple Watch remote (SwiftUI, WatchConnectivity)
   PhoneLink.swift            Watch end of the link to the iPhone app
   WatchRemoteView.swift      live view, values, self-timer, shutter, Digital Crown EV
 Shared/
   WatchProtocol.swift        messages and status shared by the iPhone and Watch apps
 mock-camera/
   mock_penf.py               fake PEN-F (HTTP + RTP live view)
-  mock_lumix.py              fake LUMIX GH5 (cam.cgi, UDP live view, UPnP card, file server)
+  mock_lumix.py              fake LUMIX GH5 (cam.cgi, UDP live view, UPnP card, file server; --encrypted)
+  mock_nikon.py              fake Nikon Z 6II / D750 (PTP/IP)
+  mock_canon.py              fake Canon EOS R6 (CCAPI)
+  mock_sony.py               fake Sony a6000 (Camera Remote API, live-view stream)
   make_frames.swift          renders the fake live-view frames
+tools/
+  make_icon.swift            renders the app and Watch icons and the launch-screen mark
 ```
