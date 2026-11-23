@@ -6,7 +6,7 @@ import UIKit
 /// against a mock camera and prints "SELFTEST PASS/FAIL …" lines to stderr. It takes pictures and
 /// changes settings, so point it at a mock, never at a real camera.
 ///
-///     xcrun simctl launch --console-pty booted dev.shutterlink.remote4821 -selfTest nikon 127.0.0.1:15740
+///     xcrun simctl launch --console-pty booted com.apexcommerce.shutterlink -selfTest nikon 127.0.0.1:15740
 @MainActor
 enum DriverSelfTest {
     static func runIfRequested(_ camera: CameraModel) {
