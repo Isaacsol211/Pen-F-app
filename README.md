@@ -199,8 +199,8 @@ on the left. Live view keeps running through a fold. Checked in the Simulator on
 
 1. Open `Shutterlink.xcodeproj` in Xcode.
 2. Select the **Shutterlink** target ▸ **Signing & Capabilities** ▸ **Team**, and pick your Apple ID.
-   A free "Personal Team" works. If Xcode says the bundle ID is taken, change
-   `dev.shutterlink.remote4821` (and the Watch app's `dev.shutterlink.remote4821.watchkitapp`) to anything unique.
+   The project is signed with the Apexmerce team. With your own team (a free "Personal Team" works), change
+   `com.apexcommerce.shutterlink` (and the Watch app's `com.apexcommerce.shutterlink.watchkitapp`) to anything unique.
 3. Plug in the iPhone. Choose it as the run destination and press ▶.
    The first time, iOS asks you to:
    - enable **Developer Mode** (Settings ▸ Privacy & Security), and
@@ -236,7 +236,7 @@ The app adds a **Connect to Camera** shortcut. Put it on the Action button (Sett
 
 Once you've joined the camera's Wi-Fi in Settings, iOS rejoins it by itself whenever the camera's Wi-Fi is on, so the flow is: turn on Wi-Fi on the camera, press the Action button, shoot.
 
-The app doesn't join the camera's Wi-Fi itself. That needs Apple's Hotspot Configuration capability, which Apple only grants to paid developer accounts. This app is signed with a free Personal Team, so the Wi-Fi join is left to iOS. With a paid account, `NEHotspotConfiguration` could be added to make it truly one-tap.
+The app doesn't join the camera's Wi-Fi itself. That needs Apple's Hotspot Configuration capability, which Apple only grants to paid developer accounts. The app doesn't use it yet, so the Wi-Fi join is left to iOS. Now that it's signed with a paid team, `NEHotspotConfiguration` could be added to make it truly one-tap.
 
 ### Friends: try this first
 
@@ -274,8 +274,8 @@ answering, the Watch says so instead of showing an old picture.
 
 **Installing it:** it's part of the Shutterlink scheme. Run that on your iPhone from Xcode, and the
 Watch app installs on the paired Watch (or install it from the Watch app ▸ Available Apps). The first
-time, turn on Developer Mode on the Watch (Settings ▸ Privacy & Security ▸ Developer Mode). It uses
-the same free Personal Team and expires with the iPhone app.
+time, turn on Developer Mode on the Watch (Settings ▸ Privacy & Security ▸ Developer Mode). It's signed
+with the same team as the iPhone app, and a free-team build expires with it.
 
 ## Test without the camera (mock cameras)
 
@@ -307,7 +307,7 @@ preview, JPEG and RAW download) and back to live view, and prints `SELFTEST PASS
 address that isn't on this Mac, because it takes pictures and changes settings.
 
 ```bash
-xcrun simctl launch --console booted dev.shutterlink.remote4821 -selfTest nikon 127.0.0.1:15740
+xcrun simctl launch --console booted com.apexcommerce.shutterlink -selfTest nikon 127.0.0.1:15740
 ```
 
 All five drivers (and LUMIX `--encrypted`, Nikon `--dslr`) pass it against their mocks, and Auto picks the
@@ -321,7 +321,7 @@ crown two clicks by itself, since the Simulator tools can't.
 The Simulator has no Shortcuts app. To run what the shortcut runs, launch a Debug build with `-connectFromShortcut`:
 
 ```bash
-xcrun simctl launch booted dev.shutterlink.remote4821 -connectFromShortcut
+xcrun simctl launch booted com.apexcommerce.shutterlink -connectFromShortcut
 ```
 The LUMIX mock asks for approval the first time a phone pairs (`--refuse` makes it say No), only browses
 the card in playback mode, and stops live view if the app stops polling it. It also serves its media server
