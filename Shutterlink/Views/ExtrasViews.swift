@@ -4,28 +4,13 @@ import UIKit
 // MARK: - Exposure bracketing
 
 struct BracketView: View {
-    @Environment(CameraModel.self) private var camera
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("bracket.frames") private var frames = 3
-    @AppStorage("bracket.thirds") private var thirds = 3
-    @AppStorage("bracket.target") private var targetRaw = BracketTarget.auto.rawValue
-
-    private var plan: BracketPlan {
-        BracketPlan(frames: frames, thirds: thirds, target: BracketTarget(rawValue: targetRaw) ?? .auto)
-    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if camera.bracket.running {
-                        progressCard
-                    } else {
-                        setupCards
-                    }
-                }
-                .padding(16)
-                .animation(.smooth, value: camera.bracket.running)
+                BracketPanel()
+                    .padding(16)
             }
             .navigationTitle("Bracketing")
             .navigationBarTitleDisplayMode(.inline)
@@ -35,6 +20,29 @@ struct BracketView: View {
                 }
             }
         }
+    }
+}
+
+/// The bracketing cards: in a sheet on a phone, in the inspector on a large canvas.
+struct BracketPanel: View {
+    @Environment(CameraModel.self) private var camera
+    @AppStorage("bracket.frames") private var frames = 3
+    @AppStorage("bracket.thirds") private var thirds = 3
+    @AppStorage("bracket.target") private var targetRaw = BracketTarget.auto.rawValue
+
+    private var plan: BracketPlan {
+        BracketPlan(frames: frames, thirds: thirds, target: BracketTarget(rawValue: targetRaw) ?? .auto)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if camera.bracket.running {
+                progressCard
+            } else {
+                setupCards
+            }
+        }
+        .animation(.smooth, value: camera.bracket.running)
     }
 
     @ViewBuilder private var setupCards: some View {
@@ -46,7 +54,7 @@ struct BracketView: View {
             .pickerStyle(.segmented)
             Text("Step").font(.headline)
             Picker("Step", selection: $thirds) {
-                ForEach(1...6, id: \.self) { Text(Self.stepLabel($0)).tag($0) }
+                ForEach(1...6, id: \.self) { Text(BracketPanel.stepLabel($0)).tag($0) }
             }
             .pickerStyle(.segmented)
             Text("Vary").font(.headline)
@@ -345,13 +353,9 @@ struct PocketModeView: View {
         .onTapGesture(count: 2) { dismiss() }
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
+        .background(WindowSceneReader { dim($0?.screen) })
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
-            if let screen = Self.screen {
-                savedBrightness = screen.brightness
-                dimmedScreen = screen
-                screen.brightness = 0.02
-            }
         }
         .onDisappear {
             if let savedBrightness, let dimmedScreen { dimmedScreen.brightness = savedBrightness }
@@ -363,8 +367,14 @@ struct PocketModeView: View {
         .accessibilityAction(named: "Leave pocket mode") { dismiss() }
     }
 
-    private static var screen: UIScreen? {
-        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen }.first
+    /// Dims the screen showing this view. When the scene moves to another screen (folding or
+    /// unfolding an iPhone Duo), the old screen gets its brightness back and the new one is dimmed.
+    private func dim(_ screen: UIScreen?) {
+        guard screen !== dimmedScreen else { return }
+        if let savedBrightness, let dimmedScreen { dimmedScreen.brightness = savedBrightness }
+        savedBrightness = screen?.brightness
+        dimmedScreen = screen
+        screen?.brightness = 0.02
     }
 
     private func headline(at now: Date) -> String {

@@ -88,6 +88,52 @@ enum DriverSelfTest {
             camera.videoMode = false
         }
 
+        // The settings test above leaves values at the ends of their ranges (30 s shutters, −5 EV).
+        // Put back a quick exposure so the interval and bracket frames don't each take half a minute.
+        if let shutter = camera.properties["shutspeedvalue"], shutter.settable,
+           let quick = shutter.options
+            .compactMap({ option in PropertyFormat.seconds(fromShutter: option).map { (option, $0) } })
+            .min(by: { abs($0.1 - 1.0 / 250) < abs($1.1 - 1.0 / 250) })?.0 {
+            _ = await camera.setProperty("shutspeedvalue", to: quick)
+        }
+        if let ev = camera.properties["expcomp"], ev.settable,
+           let zero = ev.options.first(where: { Double($0) == 0 }) {
+            _ = await camera.setProperty("expcomp", to: zero)
+        }
+        camera.lastError = nil
+
+        // Interval timer: two frames, then it stops by itself.
+        let beforeInterval = camera.shotCounter
+        camera.startInterval(IntervalPlan(count: 2, seconds: 1.5))
+        await wait(20) { !camera.interval.running }
+        check("interval", camera.shotCounter == beforeInterval + 2 && camera.lastError == nil,
+              "shots=\(camera.shotCounter - beforeInterval) running=\(camera.interval.running) \(camera.lastError ?? "")")
+        camera.lastError = nil
+
+        // Exposure bracket: three frames, then the setting goes back.
+        let beforeBracket = camera.shotCounter
+        let bracketPlan = BracketPlan()
+        if case .success(let set) = camera.bracketSet(bracketPlan) {
+            let original = camera.properties[set.property]?.value
+            camera.startBracket(bracketPlan)
+            await wait(30) { !camera.bracket.running }
+            check("bracket", camera.shotCounter == beforeBracket + set.values.count && camera.lastError == nil
+                    && camera.properties[set.property]?.value == original,
+                  "\(set.property) \(set.values) shots=\(camera.shotCounter - beforeBracket) now=\(camera.properties[set.property]?.value ?? "-") \(camera.lastError ?? "")")
+        } else if case .failure(let error) = camera.bracketSet(bracketPlan) {
+            check("bracket", false, error.localizedDescription)
+        }
+        camera.lastError = nil
+
+        // Astro preset: every step either takes or says why it was skipped; none is refused.
+        await camera.applyAstro(AstroPlan(cropFactor: camera.cropFactor))
+        debugLog("SELFTEST INFO astro crop factor \(camera.cropFactor) for \(camera.cameraName ?? "-")")
+        for step in camera.presetSteps {
+            debugLog("SELFTEST INFO astro \(step.title) → \(step.value.map { PropertyFormat.display(step.property, $0) } ?? "-") \(step.state)")
+        }
+        let refused = camera.presetSteps.filter { if case .failed = $0.state { true } else { false } }
+        check("astro preset", refused.isEmpty, refused.map(\.title).joined(separator: ", "))
+
         check("battery", camera.liveInfo.battery != nil, "\(camera.liveInfo.battery.map(String.init) ?? "-")%")
 
         if camera.capabilities.cardBrowser {

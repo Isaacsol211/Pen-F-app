@@ -23,7 +23,10 @@ extension CameraModel {
             if let live = info.expComp { return live }
         case "wbvalue":
             guard let raw = property?.value else { return "–" }
-            return raw == "0" ? "AWB" : (PropertyFormat.whiteBalance[raw].map { String($0.prefix(6)) } ?? raw)
+            // Short enough for a strip cell, without cutting a word off mid-way ("Fluore").
+            let short = ["0": "AWB", "20": "Incand.", "35": "Fluor.", "64": "Underw.", "256": "OT 1", "257": "OT 2",
+                         "258": "OT 3", "259": "OT 4", "512": "Kelvin"]
+            return short[raw] ?? PropertyFormat.whiteBalance[raw] ?? raw
         default:
             break
         }

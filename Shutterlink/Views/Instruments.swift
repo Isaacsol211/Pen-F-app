@@ -99,25 +99,13 @@ struct CompositionGrid: View {
 
 /// Interval timer (time-lapse / star stacking) setup and progress.
 struct IntervalView: View {
-    @Environment(CameraModel.self) private var camera
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("interval.count") private var count = 60
-    @AppStorage("interval.seconds") private var seconds = 20.0
-
-    private var plan: IntervalPlan { IntervalPlan(count: count, seconds: seconds) }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if camera.interval.running {
-                        progressCard
-                    } else {
-                        setupCards
-                    }
-                }
-                .padding(16)
-                .animation(.smooth, value: camera.interval.running)
+                IntervalPanel()
+                    .padding(16)
             }
             .navigationTitle("Interval timer")
             .navigationBarTitleDisplayMode(.inline)
@@ -127,6 +115,26 @@ struct IntervalView: View {
                 }
             }
         }
+    }
+}
+
+/// The interval timer's cards: in a sheet on a phone, in the inspector on a large canvas.
+struct IntervalPanel: View {
+    @Environment(CameraModel.self) private var camera
+    @AppStorage("interval.count") private var count = 60
+    @AppStorage("interval.seconds") private var seconds = 20.0
+
+    private var plan: IntervalPlan { IntervalPlan(count: count, seconds: seconds) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if camera.interval.running {
+                progressCard
+            } else {
+                setupCards
+            }
+        }
+        .animation(.smooth, value: camera.interval.running)
     }
 
     @ViewBuilder private var setupCards: some View {
