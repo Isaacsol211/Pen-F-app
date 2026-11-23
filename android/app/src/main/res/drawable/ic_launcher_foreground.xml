@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Shutterlink aperture mark (same geometry as tools/make_icon.swift), generated. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFB029" android:strokeWidth="2.16" android:pathData="M28.66,56.88 A22.46,22.46 0 1,1 73.58,56.88 A22.46,22.46 0 1,1 28.66,56.88 Z"/>
+    <path android:fillColor="#FFF2F3F5" android:strokeColor="#FF000000" android:strokeWidth="0.86" android:strokeLineJoin="round" android:pathData="M58.99,54.77 L62.74,40.76 A19.87,19.87 0 0,0 42.97,38.75 L53.23,49.01 Z"/>
+    <path android:fillColor="#FFCCD1D9" android:strokeColor="#FF000000" android:strokeWidth="0.86" android:strokeLineJoin="round" android:pathData="M53.23,49.01 L42.97,38.75 A19.87,19.87 0 0,0 31.35,54.87 L45.36,51.12 Z"/>
+    <path android:fillColor="#FFF2F3F5" android:strokeColor="#FF000000" android:strokeWidth="0.86" android:strokeLineJoin="round" android:pathData="M45.36,51.12 L31.35,54.87 A19.87,19.87 0 0,0 39.50,73.00 L43.25,58.99 Z"/>
+    <path android:fillColor="#FFCCD1D9" android:strokeColor="#FF000000" android:strokeWidth="0.86" android:strokeLineJoin="round" android:pathData="M43.25,58.99 L39.50,73.00 A19.87,19.87 0 0,0 59.27,75.01 L49.01,64.75 Z"/>
+    <path android:fillColor="#FFF2F3F5" android:strokeColor="#FF000000" android:strokeWidth="0.86" android:strokeLineJoin="round" android:pathData="M49.01,64.75 L59.27,75.01 A19.87,19.87 0 0,0 70.89,58.89 L56.88,62.64 Z"/>
+    <path android:fillColor="#FFCCD1D9" android:strokeColor="#FF000000" android:strokeWidth="0.86" android:strokeLineJoin="round" android:pathData="M56.88,62.64 L70.89,58.89 A19.87,19.87 0 0,0 62.74,40.76 L58.99,54.77 Z"/>
+    <path android:fillColor="#FFFFB029" android:strokeColor="#FF000000" android:strokeWidth="0.86" android:pathData="M58.99,54.77 L53.23,49.01 L45.36,51.12 L43.25,58.99 L49.01,64.75 L56.88,62.64 Z"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFB029" android:strokeWidth="3.31" android:strokeLineCap="round" android:pathData="M76.48,37.48 A7.49,7.49 0 0,0 70.52,31.52"/>
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFB029" android:strokeWidth="3.31" android:strokeLineCap="round" android:pathData="M81.57,36.51 A12.67,12.67 0 0,0 71.49,26.43"/>
+</vector>

@@ -277,6 +277,65 @@ Watch app installs on the paired Watch (or install it from the Watch app ▸ Ava
 time, turn on Developer Mode on the Watch (Settings ▸ Privacy & Security ▸ Developer Mode). It's signed
 with the same team as the iPhone app, and a free-team build expires with it.
 
+## Android
+
+`android/` is the Android version: Kotlin and Jetpack Compose, one activity, the same drivers, screens and
+black/amber look as the iPhone app. Android 10 (API 29) or later.
+
+**Build it.** Needs a JDK 17+ (21 works) and the Android SDK (platform 36, build-tools 36.0.0). The Gradle
+wrapper fetches Gradle 8.14.3 itself.
+
+```bash
+cd android && JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home ./gradlew assembleDebug
+```
+
+The APK lands in `android/app/build/outputs/apk/debug/`. Install it with `adb install -r` on that file.
+
+**How it reaches the camera.** A camera's Wi-Fi has no internet, so Android keeps mobile data as the default
+network and would send the app's requests there. On Connect the app asks Android for the Wi-Fi network
+(`requestNetwork` without the internet capability, which also stops Android dropping a Wi-Fi it thinks is
+useless) and binds the whole app to it with `bindProcessToNetwork`: HTTP, PTP/IP and the UDP live-view socket
+all go over the camera's Wi-Fi. If Android says the network has no internet, choose to stay connected.
+
+**Joining the camera's Wi-Fi from the app.** Add a camera ▸ Join camera Wi-Fi from the app: type the network
+name and password the camera shows. Android asks you to confirm (`WifiNetworkSpecifier`), then keeps the phone
+on that network while the app holds it. Joining it in Settings ▸ Wi-Fi works too.
+
+**Permissions**, all asked only when needed:
+- **Nearby Wi-Fi devices** (Android 13+; location on Android 10–12): only for joining a camera's Wi-Fi from the app.
+- **Location**: only to show the Wi-Fi network's name on the Connect screen (Android hides SSIDs without it). Optional.
+- **Photos and media**: none. Saved photos and videos go to Pictures/Shutterlink and Movies/Shutterlink through
+  MediaStore; RAW files go to Download/Shutterlink/RAW, since most gallery apps can't show them.
+
+**In the emulator, against the mocks.** The Mac is `10.0.2.2`. The mocks send live view back to `127.0.0.1` on
+the Mac, so forward the live-view port into the emulator once per boot:
+
+```bash
+adb emu redir add udp:40000:40000
+```
+
+Then Add a camera ▸ Advanced ▸ Camera address `10.0.2.2:8080` (PEN-F), `:8082` (LUMIX), `:15740` (Nikon),
+`:8084` (Canon) or `:8086` (Sony). Debug builds also run the driver self-test from adb (it refuses anything but
+the Mac running the mocks):
+
+```bash
+adb shell am start -n com.apexcommerce.shutterlink/.MainActivity --es selfTest olympus --es host 10.0.2.2:8080
+adb logcat -s Shutterlink | grep SELFTEST
+```
+
+**Status (emulator and mocks only; not yet on a real phone or camera).**
+- All five drivers pass the self-test against their mocks in a Pixel 9a emulator (Android 15): Olympus/OM and
+  LUMIX, plus Nikon, Canon and Sony (Beta, as on iOS).
+- Checked by hand there:
+  - portrait and landscape layouts, the setting dials, mode dial, tools tray, loupe and grid;
+  - the card browser with stars, swipe-through viewer, Save, and the RAW download of starred photos;
+  - binding to the Wi-Fi network (with the debug `--ez bindWifi true` extra, since the mocks' address
+    normally skips it).
+- Not tried yet:
+  - joining a camera's Wi-Fi from the app (`WifiNetworkSpecifier`) and the permission prompts;
+  - a real phone on a real camera's network.
+- Not ported yet: geotagging, the "Connect to Camera" shortcut, and a Wear OS remote.
+
 ## Test without the camera (mock cameras)
 
 `mock-camera/` has a fake camera for every brand, live view included. They need only Python 3 and Swift,
@@ -473,6 +532,12 @@ ShutterlinkWatch/            Apple Watch remote (SwiftUI, WatchConnectivity)
   WatchRemoteView.swift      live view, values, self-timer, shutter, Digital Crown EV
 Shared/
   WatchProtocol.swift        messages and status shared by the iPhone and Watch apps
+android/                     Android app (Kotlin, Jetpack Compose); same structure as the iOS app
+  app/src/main/java/com/apexcommerce/shutterlink/
+    camera/                  drivers (Olympus, Panasonic, Nikon + PtpIp, Canon, Sony), CameraModel, live view,
+                             BrandDetector, ModelProfiles, Features, CameraNetwork (Wi-Fi binding), SelfTest
+    ui/                      Compose screens: Connect, Remote, Controls, OptionPanel, LiveViewPane, Gallery, Sheets
+    MainActivity.kt          the single activity, debug self-test hooks
 mock-camera/
   mock_penf.py               fake PEN-F (HTTP + RTP live view)
   mock_lumix.py              fake LUMIX GH5 (cam.cgi, UDP live view, UPnP card, file server; --encrypted)
