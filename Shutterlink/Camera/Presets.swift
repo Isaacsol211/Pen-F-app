@@ -50,6 +50,8 @@ enum PresetRecipe: String, CaseIterable, Identifiable {
 
 /// The settings before a preset changed them, so Undo can put them back.
 struct SettingsSnapshot: Equatable {
+    /// The setup that's on (a recipe's id, or a saved preset's).
+    let id: String
     let title: String
     let values: [String: String]
 }
@@ -216,12 +218,19 @@ extension CameraModel {
                 presetSteps[index].state = .failed(refused)
             }
         }
-        if changed { presetUndo = SettingsSnapshot(title: title, values: before) }
-        return !presetSteps.contains { if case .failed = $0.state { true } else { false } }
+        let failed = presetSteps.contains { if case .failed = $0.state { true } else { false } }
+        // The setup stays on (even when the camera was already set that way) until it's turned off,
+        // which puts back the settings from just before it.
+        if changed || !failed { presetUndo = SettingsSnapshot(id: id, title: title, values: before) }
+        return !failed
     }
 
     /// Puts back the settings from before the last preset: the mode first, then whatever it lets the
     /// app set (in A, for example, the camera picks the shutter itself again).
+    /// The setup (recipe or saved preset) is on: applied, and not yet turned off.
+    func isPresetOn(_ id: String) -> Bool { presetUndo?.id == id }
+
+    /// Turns the setup off: puts back the settings from before it.
     func undoPreset() async {
         guard let snapshot = presetUndo, !presetRunning else { return }
         presetRunning = true

@@ -102,7 +102,8 @@ struct PresetsPanel: View {
         }
     }
 
-    private func header(icon: String, title: String, subtitle: String, open: Bool, chevron: String) -> some View {
+    private func header(icon: String, title: String, subtitle: String, open: Bool, chevron: String,
+                        on: Bool = false) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.system(size: 17, weight: .semibold))
@@ -114,6 +115,11 @@ struct PresetsPanel: View {
                 Text(subtitle).font(.footnote).foregroundStyle(Theme.secondary).lineLimit(2)
             }
             Spacer(minLength: 0)
+            if on {
+                Label("On", systemImage: "checkmark.circle.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.green)
+            }
             Image(systemName: chevron)
                 .font(.footnote.weight(.bold))
                 .foregroundStyle(Theme.tertiary)
@@ -129,7 +135,7 @@ struct PresetsPanel: View {
             if recipe == .astro { openAstro() } else { expanded = open ? nil : recipe.id }
         } label: {
             header(icon: recipe.icon, title: recipe.title, subtitle: recipe.summary, open: open,
-                   chevron: recipe == .astro ? "arrow.up.right" : "chevron.right")
+                   chevron: recipe == .astro ? "arrow.up.right" : "chevron.right", on: camera.isPresetOn(recipe.id))
         }
         .buttonStyle(.plain)
         if open {
@@ -142,7 +148,7 @@ struct PresetsPanel: View {
                         .font(.footnote)
                         .foregroundStyle(Theme.secondary)
                 }
-                applyButton("Apply \(recipe.title)") { _ = await camera.apply(recipe) }
+                applyButton("Apply \(recipe.title)", id: recipe.id) { _ = await camera.apply(recipe) }
                 if recipe == .macro, camera.capabilities.focusDrive {
                     Button("Focus stack next", systemImage: "square.stack.3d.forward.dottedline") { openFocusStack() }
                         .buttonStyle(.surface)
@@ -159,7 +165,8 @@ struct PresetsPanel: View {
         Button {
             expanded = open ? nil : saved.id.uuidString
         } label: {
-            header(icon: "bookmark.fill", title: saved.name, subtitle: summary(saved), open: open, chevron: "chevron.right")
+            header(icon: "bookmark.fill", title: saved.name, subtitle: summary(saved), open: open, chevron: "chevron.right",
+                   on: camera.isPresetOn(saved.id.uuidString))
         }
         .buttonStyle(.plain)
         if open {
@@ -167,7 +174,7 @@ struct PresetsPanel: View {
                 ? camera.presetSteps : camera.steps(for: saved)
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(steps) { StepResultRow(step: $0) }
-                applyButton("Apply \(saved.name)") { await camera.apply(saved) }
+                applyButton("Apply \(saved.name)", id: saved.id.uuidString) { await camera.apply(saved) }
                 Button("Delete", systemImage: "trash", role: .destructive) {
                     expanded = nil
                     camera.deleteSavedPreset(saved)
@@ -189,18 +196,21 @@ struct PresetsPanel: View {
         .joined(separator: " · ")
     }
 
-    private func applyButton(_ title: String, action: @escaping () async -> Void) -> some View {
-        Button {
-            Task { await action() }
+    /// Applies the setup; once it's on, turns it off again (the settings from before come back).
+    private func applyButton(_ title: String, id: String, action: @escaping () async -> Void) -> some View {
+        let on = camera.isPresetOn(id)
+        return Button {
+            Task { if on { await camera.undoPreset() } else { await action() } }
         } label: {
             HStack {
                 if camera.presetRunning { ProgressView() }
-                Text(camera.presetRunning ? "Applying…" : title)
+                Text(camera.presetRunning ? "Applying…" : on ? "Turn off · put back the settings from before" : title)
             }
             .font(.headline)
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.accent)
+        .tint(on ? Color.green : Theme.accent)
         .disabled(camera.presetRunning || camera.mode != .rec)
     }
 }

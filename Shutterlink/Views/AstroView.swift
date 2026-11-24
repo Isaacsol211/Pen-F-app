@@ -8,7 +8,6 @@ struct AstroView: View {
     @AppStorage("astro.strict") private var strict = true
     @AppStorage("astro.iso") private var iso = 1600
     @State private var trails = false
-    @State private var applied = false
 
     private var plan: AstroPlan {
         AstroPlan(focalLength: focalLength, strict: strict, iso: iso, trails: trails, cropFactor: camera.cropFactor)
@@ -93,16 +92,21 @@ struct AstroView: View {
             }
             // Apply stays reachable without scrolling.
             .safeAreaBar(edge: .bottom) {
+                // Stays on after it's applied; tapping again turns it off and puts the old settings back.
+                let astroOn = camera.isPresetOn(PresetRecipe.astro.id)
                 Button {
                     Task {
+                        if astroOn {
+                            await camera.undoPreset()
+                            return
+                        }
                         await camera.applyAstro(plan)
                         let allGood = camera.presetSteps.allSatisfy {
                             if case .failed = $0.state { return false }
                             return true
                         }
                         if allGood {
-                            withAnimation(.bouncy) { applied = true }
-                            camera.showToast("Astro settings applied")
+                            camera.showToast("Astro is on")
                             try? await Task.sleep(for: .seconds(1.1))
                             dismiss()
                         }
@@ -110,10 +114,10 @@ struct AstroView: View {
                 } label: {
                     HStack {
                         if camera.presetRunning { ProgressView() }
-                        if applied {
-                            Image(systemName: "checkmark.circle.fill").symbolEffect(.bounce, value: applied)
+                        if astroOn {
+                            Image(systemName: "checkmark.circle.fill").symbolEffect(.bounce, value: astroOn)
                         }
-                        Text(applied ? "Applied" : camera.presetRunning ? "Applying…" : "Apply astro settings")
+                        Text(camera.presetRunning ? "Applying…" : astroOn ? "Astro is on · Tap to turn off" : "Apply astro settings")
                             .contentTransition(.interpolate)
                     }
                     .font(.headline)
@@ -121,11 +125,11 @@ struct AstroView: View {
                     .padding(.vertical, 8)
                 }
                 .buttonStyle(.accent)
-                .tint(applied ? Color.green : Theme.accent)
+                .tint(astroOn ? Color.green : Theme.accent)
                 .disabled(camera.presetRunning || camera.mode != .rec)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
-                .sensoryFeedback(.success, trigger: applied)
+                .sensoryFeedback(.success, trigger: astroOn)
             }
             .navigationTitle("Astro")
             .navigationBarTitleDisplayMode(.inline)

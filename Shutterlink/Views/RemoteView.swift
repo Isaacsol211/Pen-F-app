@@ -608,9 +608,16 @@ struct RemoteView: View {
     private var tools: [ToolItem] {
         let all = [
             panelTool(.presets, id: "presets", title: "Presets", feature: "Presets"),
-            ToolItem(id: "astro", icon: "moon.stars.fill", title: "Astro", on: false, opens: true,
+            // Stays on once applied; tapping it then turns it off and puts the old settings back.
+            ToolItem(id: "astro", icon: "moon.stars.fill", title: "Astro", on: camera.isPresetOn(PresetRecipe.astro.id),
+                     opens: !camera.isPresetOn(PresetRecipe.astro.id),
                      locked: !ShutterlinkPro.shared.isUnlocked, action: pro("Astro") {
-                toolsOpen = false; showAstro = true
+                toolsOpen = false
+                if camera.isPresetOn(PresetRecipe.astro.id) {
+                    Task { await camera.undoPreset() }
+                } else {
+                    showAstro = true
+                }
             }),
             panelTool(.interval, id: "interval", title: "Interval", feature: "The interval timer",
                       running: camera.interval.running),
