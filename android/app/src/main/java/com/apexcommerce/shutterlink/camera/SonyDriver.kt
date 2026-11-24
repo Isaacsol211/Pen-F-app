@@ -454,6 +454,10 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
                     val data = attempt { client.fetch(address, timeout = 10.0, log = false) } ?: return@launch
                     decode(data)?.let { camera.lastShot = it.asImageBitmap() }
                 }
+                // Auto-save: the postview, which is the full JPEG when the camera's postview size is Original.
+                camera.autoSave(address.substringAfterLast('/').substringBefore('?')) {
+                    client.fetch(address, timeout = 60.0, log = false)
+                }
             }
         } catch (e: CancellationException) {
             throw e

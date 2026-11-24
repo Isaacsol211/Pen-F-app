@@ -22,6 +22,7 @@ import com.apexcommerce.shutterlink.camera.CameraModel
 import com.apexcommerce.shutterlink.camera.CameraNetwork
 import com.apexcommerce.shutterlink.camera.ConnectionPhase
 import com.apexcommerce.shutterlink.camera.DriverSelfTest
+import com.apexcommerce.shutterlink.camera.connectFromScannedCode
 import com.apexcommerce.shutterlink.ui.ConnectScreen
 import com.apexcommerce.shutterlink.ui.RemoteScreen
 import com.apexcommerce.shutterlink.ui.ShutterlinkTheme
@@ -56,7 +57,8 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Debug builds: `--es selfTest <brand|auto> --es host 10.0.2.2:<port>` runs the driver self-test,
-     * `--es connect <brand|auto> --es host …` just connects. Both only accept the Mac running the mocks.
+     * `--es connect <brand|auto> --es host …` just connects, `--es qr <code> --es host …` scans a code.
+     * All only accept the Mac running the mocks.
      */
     private fun handleDebugIntent(intent: Intent?) {
         if (!BuildConfig.DEBUG || intent == null) return
@@ -68,6 +70,13 @@ class MainActivity : ComponentActivity() {
             val parts = pair.split(":")
             parts.getOrNull(1)?.toFloatOrNull()?.let { parts[0] to it }
         }?.toMap()
+        // `--es qr "<code text>"` acts like scanning that QR code on the home screen.
+        intent.getStringExtra("qr")?.let { code ->
+            if (camera.phase != ConnectionPhase.DISCONNECTED) return
+            camera.host = host
+            if (!camera.connectFromScannedCode(code)) camera.lastError = "Shutterlink can't read this camera's code yet."
+            return
+        }
         intent.getStringExtra("selfTest")?.let { brand ->
             camera.scope.launch { DriverSelfTest.run(camera, brand, host) }
             return

@@ -630,9 +630,20 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
                 val thumb = ptpOrNull { ptp.run(op, listOf(handle), timeout = 10.0).data }
                 val image = thumb?.let { decode(it) }
                 if (image != null) camera.lastShot = image.asImageBitmap()
+                if (camera.autoSaveApplies) autoSave(objects)
                 return
             }
             delay(300)
+        }
+    }
+
+    /** Auto-save: hands the JPEG or HEIF of each new capture (not the NEF) to the save queue. */
+    private suspend fun autoSave(objects: List<Long>) {
+        for (handle in objects) {
+            val data = ptpOrNull { ptp.run(PtpOp.GET_OBJECT_INFO, listOf(handle), timeout = 5.0).data } ?: continue
+            val name = PtpObjectInfo(data).filename
+            if (name.substringAfterLast('.', "").uppercase() !in listOf("JPG", "JPEG", "HIF", "HEIF")) continue
+            camera.autoSave(name) { ptp.run(PtpOp.GET_OBJECT, listOf(handle), timeout = 120.0).data }
         }
     }
 

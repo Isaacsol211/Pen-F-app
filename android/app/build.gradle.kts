@@ -66,4 +66,9 @@ dependencies {
     // Scene suggestions: Google's on-device image labeling with the model bundled in the app
     // (about 5.7 MB; no Google Play services, nothing leaves the phone).
     implementation("com.google.mlkit:image-labeling:17.0.9")
+
+    // Scanning the camera's Wi-Fi QR code: Google's code scanner, which runs in Google Play services
+    // (its own camera screen, so the app needs no camera permission). Without Play services the
+    // network name and password are typed instead.
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 }

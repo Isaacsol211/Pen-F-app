@@ -48,6 +48,39 @@ object FrameMeter {
         val pixels = grey(image, width = 80, height = 60) ?: return null
         return pixels.count { it >= 250 }.toDouble() / pixels.size
     }
+
+    /** Mean colour of the bright, nearly grey parts of a frame (white walls, a white shirt), 0…255 per channel. */
+    fun neutralCast(image: Bitmap): ColourCast? = runCatching {
+        val width = 80
+        val height = 60
+        val small = Bitmap.createScaledBitmap(image, width, height, true)
+        val px = IntArray(width * height)
+        small.getPixels(px, 0, width, 0, 0, width, height)
+        var red = 0.0
+        var green = 0.0
+        var blue = 0.0
+        var count = 0
+        for (p in px) {
+            val r = Color.red(p)
+            val g = Color.green(p)
+            val b = Color.blue(p)
+            val high = maxOf(r, g, b)
+            val low = minOf(r, g, b)
+            // Bright, not blown, and not strongly coloured (a tinted white, not a red shirt).
+            if ((r + g + b) / 3 <= 150 || high >= 250 || high - low >= 60) continue
+            red += r; green += g; blue += b; count++
+        }
+        if (count < width * height * 3 / 100) return null
+        ColourCast(red / count, green / count, blue / count)
+    }.getOrNull()
+}
+
+/** Mean colour of the bright, nearly grey parts of a frame, 0…255 per channel. */
+data class ColourCast(val red: Double, val green: Double, val blue: Double) {
+    /** Above 0: whites come out yellow or orange (warm light the white balance left in). Below 0: blue. */
+    val warmth: Double get() = (red + green) / 2 / maxOf(blue, 1.0) - 1
+    /** Above 0: more orange (lamps) than yellow-green (tubes). */
+    val orange: Double get() = red / maxOf(green, 1.0) - 1
 }
 
 /** Seconds for a shutter as shown or as the camera lists it: `1/250`, `2"`, `2.5"`, `250`, `60"`. */

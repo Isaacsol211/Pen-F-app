@@ -62,6 +62,9 @@ object DriverSelfTest {
             camera.lastError = null
         }
 
+        // This shot is also saved to the gallery (auto-save on just for it; LUMIX saves it when the card opens).
+        val autoSaveWas = camera.autoSaveNewPhotos
+        camera.changeAutoSave(true)
         val shots = camera.shotCounter
         camera.lastShot = null
         camera.shutterPressed()
@@ -72,6 +75,12 @@ object DriverSelfTest {
             waitFor(5.0) { camera.lastShot != null }
             check("last-shot review", camera.lastShot != null)
         }
+        waitFor(20.0) { camera.autoSavedCount > 0 || camera.autoSavePending > 0 }
+        camera.autoSaveChain?.join()
+        check("auto-save", camera.autoSavedCount > 0 || camera.autoSavePending > 0,
+            "saved=${camera.autoSavedCount} pending=${camera.autoSavePending} ${camera.toast ?: ""}")
+        val autoSavePending = camera.autoSavePending
+        camera.changeAutoSave(false)
 
         if (camera.capabilities.movie) {
             if (camera.capabilities.videoSwitch) camera.videoMode = true
@@ -89,9 +98,15 @@ object DriverSelfTest {
         shootingTools(camera)
 
         if (camera.capabilities.cardBrowser) {
+            if (autoSavePending > 0) camera.changeAutoSave(true)
+            val savedBefore = camera.autoSavedCount
             camera.openGallery()
             check("card list", camera.images.isNotEmpty() && camera.galleryError == null,
                 "${camera.images.size} files in ${camera.cardFolders.map { it.name }} ${camera.galleryError ?: ""}")
+            if (autoSavePending > 0) {
+                check("auto-save from card", camera.autoSavedCount > savedBefore && camera.autoSavePending == 0,
+                    "saved=${camera.autoSavedCount - savedBefore} of $autoSavePending")
+            }
             camera.images.firstOrNull { it.fileExtension in setOf("JPG", "JPEG") }?.let { first ->
                 check("thumbnail", camera.thumbnail(first) != null, first.name)
                 try {
@@ -111,6 +126,7 @@ object DriverSelfTest {
             waitFor(8.0) { camera.liveViewRunning && camera.fps > 2 }
             check("live view after card", camera.liveViewRunning && camera.fps > 0, "fps=${camera.fps}")
         }
+        camera.changeAutoSave(autoSaveWas)
 
         camera.disconnect()
         check("disconnect", camera.phase == ConnectionPhase.DISCONNECTED)
@@ -192,6 +208,63 @@ object DriverSelfTest {
         check("scene analysis", camera.sceneSignals != null,
             "ML Kit: " + camera.sceneRawLabels.entries.sortedByDescending { it.value }.take(4).joinToString { "${it.key} ${fmt("%.2f", it.value)}" } +
                 " → ${camera.sceneSignals?.labels?.keys} suggestion=${camera.sceneSuggestion?.id ?: "-"}")
+        camera.sceneSignals?.let { live ->
+            debugLog("SELFTEST INFO scene live motion=${fmt("%.3f", live.motion)} cast=${live.cast?.let { fmt("%.0f/%.0f/%.0f warmth %.2f", it.red, it.green, it.blue, it.warmth) } ?: "-"}" +
+                " shutter=${live.shutter?.let(::shutterText) ?: "-"} focal35=${live.focal35 ?: "-"} iso=${live.iso ?: "-"}")
+        }
+
+        // Blur and white balance (port of today's iOS rules), on made-up signals against this camera's settings.
+        val moving = camera.sceneSuggestions(SceneSignals(brightness = 0.2, motion = 0.1, shutter = 1.0 / 60)).map { it.id }
+        val still = camera.sceneSuggestions(SceneSignals(brightness = 0.2, motion = 0.01, shutter = 1.0 / 60)).map { it.id }
+        val fast = camera.sceneSuggestions(SceneSignals(brightness = 0.2, motion = 0.1, shutter = 1.0 / 1000)).map { it.id }
+        check("scene movement", ("motion" in moving || camera.isOpenEndedShutter) && "motion" !in still && "motion" !in fast,
+            "moving=$moving still=$still fast=$fast")
+        // Camera shake is only suggested in P and A (the camera picks the shutter there).
+        val modeWas = camera.properties["takemode"]?.value
+        camera.settableProperty("takemode")?.options?.firstOrNull { it.uppercase() == "A" }?.let { camera.setProperty("takemode", it) }
+        val shakeSignals = SceneSignals(brightness = 0.2, shutter = 1.0 / 15, focal35 = 100.0, iso = 200)
+        val raised = camera.isoForSteadyShutter(1.0 / 15, 100.0, 200)
+        val pa = camera.properties["takemode"]?.value?.uppercase() in setOf("P", "A")
+        val shake = camera.sceneSuggestions(shakeSignals).firstOrNull { it.id == "shake" }
+        check("scene shake", if (pa && raised != null) shake?.actionTitle == "ISO ${raised.second}" else shake == null,
+            "mode=${camera.properties["takemode"]?.value ?: "-"} raised=${raised?.second ?: "-"} → ${shake?.detail ?: "none"}")
+        if (modeWas != null && camera.properties["takemode"]?.value != modeWas) camera.setProperty("takemode", modeWas)
+        // White balance: Auto for the lamp/tube/shade/cloud rules, then an indoor setting outdoors.
+        val wbWas = camera.properties["wbvalue"]?.value
+        camera.whiteBalanceOption(listOf("auto"))?.let { camera.setProperty("wbvalue", it) }
+        val wb = camera.settableProperty("wbvalue")
+        val wbAuto = wb != null && PropertyFormat.display("wbvalue", wb.value).contains("auto", ignoreCase = true)
+        fun wbTop(s: SceneSignals) = camera.whiteBalanceSuggestions(s).firstOrNull()?.id ?: "-"
+        fun expected(id: String, vararg keywords: String) = if (wbAuto && camera.whiteBalanceOption(keywords.toList()) != null) id else "-"
+        val lamps = wbTop(SceneSignals(mapOf("room" to 0.8f), brightness = 0.1, cast = ColourCast(225.0, 200.0, 175.0)))
+        val tubes = wbTop(SceneSignals(mapOf("room" to 0.8f), brightness = 0.1, cast = ColourCast(205.0, 210.0, 185.0)))
+        val cloudy = wbTop(SceneSignals(mapOf("outdoor" to 0.8f), brightness = 0.3, cast = ColourCast(180.0, 190.0, 215.0)))
+        // Shade needs the sun's position (from a location): without one, a frame this dark doesn't count as daytime.
+        val shade = wbTop(SceneSignals(mapOf("outdoor" to 0.8f), brightness = 0.1, sky = noon, cast = ColourCast(180.0, 190.0, 215.0)))
+        val neutral = wbTop(SceneSignals(mapOf("room" to 0.8f), brightness = 0.1, cast = ColourCast(200.0, 200.0, 200.0)))
+        check("scene white balance", lamps == expected("wb-lamps", "incandescent", "tungsten") && tubes == expected("wb-tubes", "fluorescent") &&
+            cloudy == expected("wb-cloudy", "cloudy", "overcast") && shade == expected("wb-shade", "shade") && neutral == "-",
+            "wb=${wb?.let { PropertyFormat.display("wbvalue", it.value) } ?: "not settable"} lamps=$lamps tubes=$tubes cloudy=$cloudy shade=$shade neutral=$neutral")
+        camera.whiteBalanceOption(listOf("fluorescent"))?.let { tube ->
+            camera.setProperty("wbvalue", tube)
+            val outdoors = wbTop(SceneSignals(mapOf("outdoor" to 0.8f), brightness = 0.3))
+            check("scene white balance outdoors", outdoors == "wb-outdoors", "on ${PropertyFormat.display("wbvalue", tube)}: $outdoors")
+        }
+        if (wbWas != null && camera.properties["wbvalue"]?.value != wbWas) camera.setProperty("wbvalue", wbWas)
+        val lampFrame = android.graphics.Bitmap.createBitmap(80, 60, android.graphics.Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(225, 200, 175))
+        }
+        val redFrame = android.graphics.Bitmap.createBitmap(80, 60, android.graphics.Bitmap.Config.ARGB_8888).apply {
+            eraseColor(android.graphics.Color.rgb(250, 40, 40))
+        }
+        val lampCast = FrameMeter.neutralCast(lampFrame)
+        check("colour cast", lampCast != null && abs(lampCast.red - 225) < 2 && lampCast.warmth > 0.08 && lampCast.orange > 0.04 &&
+            FrameMeter.neutralCast(redFrame) == null, "lamp=$lampCast")
+        val rooms = SceneLabels.fromMlKit(mapOf("Couch" to 0.7f, "Lampshade" to 0.5f), brightness = 0.1)
+        val outside = SceneLabels.fromMlKit(mapOf("Mountain" to 0.8f, "Road" to 0.4f), brightness = 0.3)
+        check("indoor/outdoor labels", rooms["room"] == 0.7f && "outdoor" !in rooms && outside["outdoor"] == 0.8f && outside["mountain"] == 0.8f,
+            "$rooms; $outside")
+        wifiChecks(camera)
 
         // One-tap recipes: every step applies or says why it can't; none is refused.
         for (recipe in PresetRecipe.entries.filter { it != PresetRecipe.ASTRO }) {
@@ -266,5 +339,28 @@ object DriverSelfTest {
 
     private fun finish() {
         debugLog("SELFTEST DONE failures=$failures")
+    }
+
+    /**
+     * One-tap Wi-Fi joining without a camera: the QR formats (the Olympus example is a real PEN-F's code
+     * and the name and password it shows) and the Keystore password store.
+     */
+    private fun wifiChecks(camera: CameraModel) {
+        val penf = WifiQrCode.parse("OIS1,GRI1Q1G1UOIV-YZW%,\$/Y/*Z\$/")
+        val std = WifiQrCode.parse("WIFI:S:My\\;Cam;T:WPA;P:pass:word;;")
+        val sony = WifiQrCode.parse("W01:S:AbCd;P:secret12;C:ILCE-6000;M:00AABBCCDDEE;")
+        check("wifi qr", penf == WifiCredentials("PEN-F-P-BHNA17694", "50703650") &&
+            WifiQrCode.brand("OIS1,GRI1Q1G1UOIV-YZW%,x") == CameraBrand.OLYMPUS &&
+            std == WifiCredentials("My;Cam", "pass:word") && WifiQrCode.brand("WIFI:S:x;;") == null &&
+            sony == WifiCredentials("DIRECT-AbCd", "secret12") && WifiQrCode.brand("W01:S:x;P:y;") == CameraBrand.SONY &&
+            WifiQrCode.parse("https://example.com") == null,
+            "penf=$penf std=$std sony=$sony")
+        val ssid = "SELFTEST-NETWORK"
+        CameraWifiPasswords.save(camera, "p@ss word 123", ssid)
+        val stored = CameraWifiPasswords.password(camera, ssid)
+        val plain = camera.prefs.all.values.any { it.toString().contains("p@ss word 123") }
+        CameraWifiPasswords.delete(camera, ssid)
+        check("wifi password store", stored == "p@ss word 123" && !plain && CameraWifiPasswords.password(camera, ssid) == null,
+            "round trip ${stored == "p@ss word 123"}, stored in plain text $plain")
     }
 }

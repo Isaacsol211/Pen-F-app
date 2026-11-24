@@ -369,12 +369,25 @@ network and would send the app's requests there. On Connect the app asks Android
 useless) and binds the whole app to it with `bindProcessToNetwork`: HTTP, PTP/IP and the UDP live-view socket
 all go over the camera's Wi-Fi. If Android says the network has no internet, choose to stay connected.
 
-**Joining the camera's Wi-Fi from the app.** Add a camera ▸ Join camera Wi-Fi from the app: type the network
-name and password the camera shows. Android asks you to confirm (`WifiNetworkSpecifier`), then keeps the phone
-on that network while the app holds it. Joining it in Settings ▸ Wi-Fi works too.
+**Joining the camera's Wi-Fi from the app.** Add a camera ▸ The camera's Wi-Fi: type the network name and
+password the camera shows, then Join Wi-Fi and Connect. Android asks you to confirm (`WifiNetworkSpecifier`), keeps
+the phone on that network while the app holds it, and lets go on Disconnect. The app waits until the phone has an
+address on that network before its first request. The network is saved with the camera (the password encrypted
+with a key in the Android Keystore), so tapping the camera's card later joins and connects in one go. Joining it in
+Settings ▸ Wi-Fi works too.
+
+**Scanning the camera's QR code.** "Scan the camera's QR code" (top of the home screen and of Add a camera) opens
+Google's code scanner, which runs in Google Play services with its own camera screen, so the app needs no camera
+permission (`play-services-code-scanner`, about 0.4 MB on top of what ML Kit already brings). The scan joins the
+camera's Wi-Fi and connects straight away. Codes are read as on iOS (Olympus/OM `OIS1,…` with its scrambled name
+and password, the standard `WIFI:S:…;P:…;;`, Sony `W01:…`, unverified), and each scanned code goes to the request
+log. A Play Store install fetches the scanner with the app; otherwise Play services downloads it on first use, and
+the button says so meanwhile. Phones without Google Play services don't show the scan buttons: type the name and
+password instead.
 
 **Permissions**, all asked only when needed:
-- **Nearby Wi-Fi devices** (Android 13+; location on Android 10–12): only for joining a camera's Wi-Fi from the app.
+- **Nearby Wi-Fi devices** (Android 13+; location on Android 10–12): only for joining a camera's Wi-Fi from the app
+  (asked the first time Connect or a saved camera has a network to join).
 - **Location**: only to show the Wi-Fi network's name on the Connect screen (Android hides SSIDs without it). Optional.
 - **Photos and media**: none. Saved photos and videos go to Pictures/Shutterlink and Movies/Shutterlink through
   MediaStore; RAW files go to Download/Shutterlink/RAW, since most gallery apps can't show them.
@@ -395,6 +408,9 @@ adb shell am start -n com.apexcommerce.shutterlink/.MainActivity --es selfTest o
 adb logcat -s Shutterlink | grep SELFTEST
 ```
 
+`--es qr "<code text>"` (with `--es host …`) acts like scanning that QR code: `WIFI:S:AndroidWifi;T:nopass;;` makes
+the emulator join its own Wi-Fi through the same "Connect to device" prompt a camera network gets.
+
 **Same features as the iPhone app**, apart from what's listed under "Not ported yet" below:
 - Presets (Astro on every brand with the body's crop factor, Moon, Fireworks, Landscape, Action, Macro, Light trails),
   Undo and My presets.
@@ -408,21 +424,37 @@ adb logcat -s Shutterlink | grep SELFTEST
   "snow" or "ocean" label, so those come from a dark "Sky", "Ice"/"Glacier" and "Beach", and its "Moon" only counts in a
   dark frame (it also calls a low sun a moon). Toggle under ··· ▸ Scene suggestions. ML Kit adds a 3 MB model plus a
   native library of 7–12 MB per CPU type: a Play install gets one, the universal debug APK (~117 MB) carries all four.
+  As on iOS, the assistant also watches for **movement** (over 4% of a 32×24 grid changing between frames a quarter
+  second apart, at a shutter slower than 1/250 s → Shutter priority 1/500 s with Auto ISO, as an undoable preset),
+  **camera shake** (in P or A, a shutter slower than 1/(2 × focal length × crop) → the ISO that gets there, up to 6400)
+  and **white balance** from the colour of near-white surfaces (lamps → Incandescent, tubes → Fluorescent, shade or
+  overcast → Shade or Cloudy, golden hour → Sunny, an indoor setting left on outdoors → Auto). ML Kit's labels are
+  sorted into indoor and outdoor for that. The horizon-tilt hint isn't ported (Android has no light horizon detector).
+- **Save new photos to the gallery** (··· menu): each photo taken goes to Pictures/Shutterlink as it's taken, one at a
+  time and never holding up the shutter: the last JPEG on Olympus/OM, the new JPEG/HEIF on Canon and Nikon, the
+  postview on Sony; LUMIX can't send files during live view, so those are saved the next time the card is opened.
+  Interval, bracket and focus-stack runs are skipped. RAW files stay on the card.
 
 **Status (emulator and mocks only; not yet on a real phone or camera).**
 - All five drivers pass the self-test against their mocks in a Pixel 9a emulator (Android 15): Olympus/OM and
   LUMIX, plus Nikon, Canon and Sony (Beta, as on iOS). The self-test also runs the interval, a bracket, a focus
   stack (LUMIX, Nikon, Canon), Astro and every preset, Undo, a saved preset, the ND setup, the motion trigger, ETTR,
-  sun and moon positions on known dates, the scene rules on fixed labels, and ML Kit looking at live view.
+  sun and moon positions on known dates, the scene rules on fixed labels, and ML Kit looking at live view, plus
+  the movement, shake and white-balance rules, the colour-cast meter, the QR formats (with a real PEN-F's code),
+  the Keystore password store, and auto-save of the self-test's shot (LUMIX: from the card).
   Focus stacking needs the mocks from `feature/testflight` (they simulate a focus position).
 - Checked by hand there:
   - portrait and landscape layouts, the setting dials, mode dial, tools tray, loupe and grid;
   - the card browser with stars, swipe-through viewer, Save, and the RAW download of starred photos;
   - binding to the Wi-Fi network (with the debug `--ez bindWifi true` extra, since the mocks' address
-    normally skips it).
-- Not tried yet:
-  - joining a camera's Wi-Fi from the app (`WifiNetworkSpecifier`) and the permission prompts;
-  - a real phone on a real camera's network.
+    normally skips it);
+  - scan → join → connect with a `WIFI:` code for the emulator's own network (Android's "Connect to device"
+    prompt, then the Sony mock), the camera saved with that network, and its card joining and connecting again
+    after Disconnect; Save new photos to the gallery from the shutter button; the typed Wi-Fi fields.
+- Not tried yet (needs a real phone and camera): joining a real camera's network, how often Android asks to confirm
+  it (the emulator asked every time), the Nearby devices prompt, and the scanner screen itself (the emulator's Google
+  APIs image, with no Play Store or account, never finished downloading the scanner module; the "still downloading"
+  message showed instead).
 - Not ported yet: geotagging, the "Connect to Camera" shortcut, a Wear OS remote, and a tablet layout like the iPad one.
 
 ## Test without the camera (mock cameras)

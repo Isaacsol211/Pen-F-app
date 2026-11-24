@@ -33,7 +33,7 @@ object MediaSaver {
             )
             else -> Quad(
                 MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
-                if (ext == "HEIC" || ext == "HIF") "image/heic" else "image/jpeg",
+                if (ext == "HEIC" || ext == "HIF" || ext == "HEIF") "image/heic" else "image/jpeg",
                 Environment.DIRECTORY_PICTURES + "/Shutterlink", "Pictures ▸ Shutterlink",
             )
         }
