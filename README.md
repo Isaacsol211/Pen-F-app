@@ -292,6 +292,9 @@ what they can't do. One purchase covers iPhone, iPad and Mac (universal purchase
 - **Early users keep Pro:** anyone whose original install was 1.0 (builds 1–4 on iOS) gets Pro. So
   every Pro build must be 5 or later (1.1 (5) is the first). On the Mac the check is "first
   installed before 1.1". This only applies to production installs, not TestFlight or Xcode.
+- **TestFlight:** until the Pro product exists in App Store Connect, TestFlight builds unlock Pro so
+  testers can try the Pro tools. After that, testers use the real trial and purchase in the sandbox,
+  where nothing is charged.
 - Locked tools show a lock and open the Pro screen. The ⋯ menu shows the Pro status. Without Pro
   the Watch says the remote is part of Pro. All of it hangs off `ShutterlinkPro.shared.isUnlocked`
   (`Camera/ShutterlinkPro.swift`).

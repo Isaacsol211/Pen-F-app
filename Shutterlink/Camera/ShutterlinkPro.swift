@@ -11,7 +11,10 @@ import StoreKit
 /// - the 7-day trial: a free non-consumable, the App Review guideline 3.1.1 way to try a one-time
 ///   purchase. The trial runs from its purchase date;
 /// - being an early user: anyone who first installed version 1.0 (builds 1–4), which had everything
-///   free, keeps Pro.
+///   free, keeps Pro;
+/// - testing in TestFlight while the App Store has no Pro product yet (before the in-app purchases are
+///   set up in App Store Connect), so testers can try the Pro tools. Once the products exist, testers
+///   go through the real trial and purchase in the sandbox.
 @MainActor
 @Observable
 final class ShutterlinkPro {
@@ -30,6 +33,10 @@ final class ShutterlinkPro {
     private(set) var trialStarted: Date?
     private(set) var earlyUser = false
     private(set) var products: [String: Product] = [:]
+    /// The App Store answered the products request (with or without products).
+    private(set) var productsLoaded = false
+    /// Where this copy came from: production, sandbox (TestFlight) or Xcode.
+    private(set) var environment: AppStore.Environment?
     private(set) var busy = false
     var message: String?
 
@@ -45,6 +52,11 @@ final class ShutterlinkPro {
     var inTrial: Bool { (trialEnds ?? .distantPast) > Date() }
     var trialUsed: Bool { trialStarted != nil }
 
+    /// TestFlight before the Pro product exists in App Store Connect.
+    var testerUnlock: Bool {
+        environment == .sandbox && productsLoaded && products[Self.proID] == nil
+    }
+
     var isUnlocked: Bool {
         #if DEBUG
         switch override {
@@ -53,13 +65,14 @@ final class ShutterlinkPro {
         default: break
         }
         #endif
-        return purchased || earlyUser || inTrial
+        return purchased || earlyUser || inTrial || testerUnlock
     }
 
     /// For the ⋯ menu and the Pro screen.
     var statusText: String {
         if purchased { return "Unlocked" }
         if earlyUser { return "Unlocked: thanks for being an early user" }
+        if testerUnlock { return "Unlocked for TestFlight testing" }
         if inTrial, let ends = trialEnds {
             let days = max(1, Calendar.current.dateComponents([.day], from: Date(), to: ends).day.map { $0 + 1 } ?? 1)
             return days == 1 ? "Trial: last day" : "Trial: \(days) days left"
@@ -93,6 +106,7 @@ final class ShutterlinkPro {
         do {
             let list = try await Product.products(for: [Self.proID, Self.trialID])
             products = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
+            productsLoaded = true
             if list.isEmpty { debugLog("pro: the App Store returned no products") }
         } catch {
             debugLog("pro: products: \(error.localizedDescription)")
@@ -112,8 +126,15 @@ final class ShutterlinkPro {
         }
         purchased = bought
         trialStarted = trial
-        if !bought, let result = try? await AppTransaction.shared, case .verified(let app) = result {
-            earlyUser = Self.isEarlyUser(app)
+        if let result = try? await AppTransaction.shared {
+            switch result {
+            case .verified(let app):
+                environment = app.environment
+                if !bought { earlyUser = Self.isEarlyUser(app) }
+            case .unverified(let app, _):
+                // Still says where the app came from; early-user status needs a verified one.
+                environment = app.environment
+            }
         }
     }
 

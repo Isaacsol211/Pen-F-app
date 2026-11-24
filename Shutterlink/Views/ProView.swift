@@ -102,7 +102,7 @@ struct ProView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .transition(.blurReplace)
             }
-            if pro.purchased || pro.earlyUser {
+            if pro.purchased || pro.earlyUser || pro.testerUnlock {
                 Button("Done") { dismiss() }
                     .buttonStyle(.accent)
             } else {
