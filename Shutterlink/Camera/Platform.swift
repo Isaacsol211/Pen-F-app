@@ -1,4 +1,3 @@
-import Foundation
 import UIKit
 
 /// The few words and behaviours that differ between the iPhone/iPad app and the Mac app (Mac

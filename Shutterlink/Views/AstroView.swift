@@ -28,7 +28,7 @@ struct AstroView: View {
                     }
                     .pickerStyle(.segmented)
 
-                    card {
+                    card(spacing: 10) {
                         HStack {
                             Text("Lens focal length")
                             Spacer()
@@ -61,7 +61,7 @@ struct AstroView: View {
                         }
                     }
 
-                    card {
+                    card(spacing: 10) {
                         Text("ISO")
                         Picker("ISO", selection: $iso) {
                             ForEach([800, 1600, 3200, 6400], id: \.self) { Text(verbatim: "\($0)").tag($0) }
@@ -69,7 +69,7 @@ struct AstroView: View {
                         .pickerStyle(.segmented)
                     }
 
-                    card {
+                    card(spacing: 10) {
                         Text("Will set").font(.headline)
                         ForEach(camera.presetRunning || !camera.presetSteps.isEmpty
                                 ? camera.presetSteps : camera.astroSteps(for: plan)) { step in
@@ -77,7 +77,7 @@ struct AstroView: View {
                         }
                     }
 
-                    card {
+                    card(spacing: 10) {
                         Label("Before you shoot", systemImage: "lightbulb").font(.headline)
                         tip("Put the camera on a tripod and turn image stabilisation off on the camera.")
                         tip("Focus manually on a bright star: switch the lens to MF and use the camera's magnify view.")
@@ -148,13 +148,6 @@ struct AstroView: View {
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
     }
 
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10, content: content)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .surface(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-    }
-
     private func tip(_ text: String) -> some View {
         Label(text, systemImage: "checkmark.circle")
             .font(.subheadline)
@@ -197,32 +190,6 @@ struct StepResultRow: View {
         switch step.state {
         case .failed(let why), .skipped(let why): why
         default: step.detail
-        }
-    }
-}
-
-/// Countdown shown over live view while a long exposure runs.
-struct ExposureOverlay: View {
-    @Environment(CameraModel.self) private var camera
-
-    var body: some View {
-        if let started = camera.exposureStartedAt {
-            TimelineView(.periodic(from: .now, by: 0.5)) { context in
-                let elapsed = context.date.timeIntervalSince(started)
-                let text: String = if let duration = camera.exposureDuration {
-                    elapsed < duration
-                        ? "Exposing · \(Int((duration - elapsed).rounded(.up))) s left"
-                        : "Processing (noise reduction)…"
-                } else {
-                    "Open exposure · \(Duration.seconds(elapsed).formatted(.time(pattern: .minuteSecond))) · tap shutter to stop"
-                }
-                Label(text, systemImage: "timer")
-                    .font(.subheadline.monospacedDigit().weight(.medium))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .surface(.regular, in: .capsule)
-            }
-            .transition(.blurReplace)
         }
     }
 }

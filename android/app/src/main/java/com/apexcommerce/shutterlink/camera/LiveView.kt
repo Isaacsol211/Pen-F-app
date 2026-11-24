@@ -103,7 +103,6 @@ object LiveInfoParser {
                     fun s16(o: Int) = u32(o).toInt().toShort().toDouble()
                     info = info.copy(afState = u32(d).toInt(), afRect = AfRect(s16(d + 4), s16(d + 8), s16(d + 12), s16(d + 16)))
                 }
-                id == 4 && length >= 4 -> info = info.copy(rotation = u8(b, d + 3))
                 id == 8 && length >= 24 ->   // shutter (OPC spec): min n/d, max n/d, current n/d as full words
                     info = info.copy(shutter = formatShutter(u32(d + 16), u32(d + 20)))
                 id == 8 && length >= 12 -> {   // shutter (PEN-F): min, max, current, each numerator<<16 | denominator
@@ -171,21 +170,9 @@ fun jpegInDatagram(p: ByteArray, n: Int): ByteArray? {
         val offset = 32 + ((u8(p, 30) shl 8) or u8(p, 31))
         if (offset + 2 < n && u8(p, offset) == 0xFF && u8(p, offset + 1) == 0xD8) i = offset
     }
-    while (i + 2 < n) {
-        if (u8(p, i) == 0xFF && u8(p, i + 1) == 0xD8 && u8(p, i + 2) == 0xFF) break
-        i++
-    }
-    if (i + 2 >= n) return null
-    var end = n
-    var j = n - 2
-    while (j > i) {
-        if (u8(p, j) == 0xFF && u8(p, j + 1) == 0xD9) {
-            end = j + 2
-            break
-        }
-        j--
-    }
-    return p.copyOfRange(i, end)
+    val start = (i until n - 2).firstOrNull { u8(p, it) == 0xFF && u8(p, it + 1) == 0xD8 && u8(p, it + 2) == 0xFF } ?: return null
+    val end = (n - 2 downTo start + 1).firstOrNull { u8(p, it) == 0xFF && u8(p, it + 1) == 0xD9 }?.plus(2) ?: n
+    return p.copyOfRange(start, end)
 }
 
 /**
@@ -251,16 +238,7 @@ class LiveViewReceiver(val port: Int, val format: LiveViewFormat) {
     fun submit(jpeg: ByteArray) {
         if (!running) return
         // Some cameras put a header before the JPEG: start at the first FF D8.
-        var start = -1
-        var k = 0
-        while (k < jpeg.size - 1) {
-            if (u8(jpeg, k) == 0xFF && u8(jpeg, k + 1) == 0xD8) {
-                start = k
-                break
-            }
-            k++
-        }
-        if (start < 0) return
+        val start = (0 until jpeg.size - 1).firstOrNull { u8(jpeg, it) == 0xFF && u8(jpeg, it + 1) == 0xD8 } ?: return
         val frame = if (start == 0) jpeg else jpeg.copyOfRange(start, jpeg.size)
         try {
             pushQueue.execute {

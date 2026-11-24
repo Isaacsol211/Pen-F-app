@@ -29,7 +29,6 @@ req_acc_g then req_acc_e (UDN and name as lowercase hex), and every later
 cam.cgi request must carry the session id in an X-SESSION_ID header.
 It also stops streaming if the app stops polling getstate for 10 seconds.
 """
-import argparse
 import datetime
 import math
 import os
@@ -39,14 +38,14 @@ import struct
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlsplit
 from xml.sax.saxutils import escape
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-from mock_penf import load_frames  # noqa: E402  (same live-view frames as the PEN-F mock)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mock_penf import QuietHandler, arguments, load_frames, serve  # noqa: E402  (same frames as the PEN-F mock)
 
+FPS = 30
 UPNP_PORT = 60606
 FILE_PORT = 50001
 NAME = "GH5-MOCK"
@@ -69,6 +68,7 @@ ISO = ["auto", "i_iso", "100", "125", "160", "200", "250", "320", "400", "500", 
 WB = ["auto", "daylight", "cloudy", "shade", "flash", "incandescent", "white_set1", "white_set2",
       "white_set3", "white_set4", "color_temp1"]
 EXPOSURE = [("0" if t == 0 else (f"{t // 3}" if t % 3 == 0 else f"{t}/3")) for t in range(-15, 16)]
+CHOICES = {"iso": ISO, "exposure": EXPOSURE, "whitebalance": WB}   # setsetting types = MockLumix attributes
 
 
 def av_code(f):
@@ -142,7 +142,7 @@ class MockLumix:
         return self.images[-1]["title"]
 
 
-def stream_loop(cam, fps):
+def stream_loop(cam):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # macOS limits datagrams to 9216 bytes unless the send buffer is raised.
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1 << 20)
@@ -173,36 +173,20 @@ def stream_loop(cam, fps):
                     sock.sendto(packet, target)
                 except OSError as e:
                     print(f"  ! UDP send to {target} failed: {e}")
-        time.sleep(max(0.0, 1.0 / fps - (time.time() - started)))
+        time.sleep(max(0.0, 1.0 / FPS - (time.time() - started)))
 
 
 # ---------------------------------------------------------------------------- cam.cgi
 
-class CamHandler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+class CamHandler(QuietHandler):
     cam: MockLumix = None
-    verbose = True
-
-    def log_message(self, fmt, *args):
-        pass
-
-    def reply(self, status=200, body=b"", ctype="text/xml"):
-        if isinstance(body, str):
-            body = body.encode()
-        self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
     def result(self, code="ok", extra=""):
-        if self.verbose or code != "ok":
+        if code != "ok":
             print(f"  -> {code}")
         self.reply(200, f'<?xml version="1.0" encoding="UTF-8"?>\n<camrply><result>{code}</result>{extra}</camrply>')
 
     def csv(self, text):
-        if self.verbose:
-            print(f"  -> {text}")
         self.reply(200, text, "text/plain")
 
     def do_GET(self):
@@ -211,7 +195,7 @@ class CamHandler(BaseHTTPRequestHandler):
         if url.path != "/cam.cgi":
             return self.reply(404, "not found", "text/plain")
         mode = q.get("mode", "")
-        if mode != "getstate" or self.verbose:
+        if mode != "getstate":
             print(f"cam.cgi {url.query}")
         if ENCRYPTED and mode != "accctrl" and self.headers.get("X-SESSION_ID") != SESSION:
             print("  (no or wrong X-SESSION_ID: rejected)")
@@ -223,8 +207,24 @@ class CamHandler(BaseHTTPRequestHandler):
             handler(q)
 
     # -- pairing & info --------------------------------------------------------
-    def mode_accctrl(self, q):
+    def approved(self, key, name):
+        """The camera's Yes/No prompt: answers "under research" twice, then Yes (No with --refuse)."""
         cam = self.cam
+        if key in cam.paired:
+            return True
+        cam.pairing_attempts[key] = cam.pairing_attempts.get(key, 0) + 1
+        if cam.pairing_attempts[key] <= 2:
+            print(f"  (camera shows: Connect to {name}? Yes / No)")
+            self.csv("ok_under_research")
+        elif cam.refuse:
+            cam.pairing_attempts[key] = 0
+            self.result("err_user_refused")
+        else:
+            cam.paired.add(key)
+            return True
+        return False
+
+    def mode_accctrl(self, q):
         if ENCRYPTED:
             return self.encrypted_accctrl(q)
         if q.get("type") != "req_acc":
@@ -232,20 +232,10 @@ class CamHandler(BaseHTTPRequestHandler):
         uuid = q.get("value", "")
         if not uuid.startswith("4D454930-0100-1000-8001-"):
             return self.result("err_unsuitable_app")
-        if uuid not in cam.paired:
-            attempts = cam.pairing_attempts.get(uuid, 0) + 1
-            cam.pairing_attempts[uuid] = attempts
-            if attempts <= 2:
-                print(f"  (camera shows: Connect to {q.get('value2', '?')}? Yes / No)")
-                return self.csv("ok_under_research")
-            if cam.refuse:
-                cam.pairing_attempts[uuid] = 0
-                return self.result("err_user_refused")
-            cam.paired.add(uuid)
-        self.csv(f"ok,{NAME},remote,encrypted")
+        if self.approved(uuid, q.get("value2", "?")):
+            self.csv(f"ok,{NAME},remote,encrypted")
 
     def encrypted_accctrl(self, q):
-        cam = self.cam
         kind = q.get("type")
         if kind == "req_acc_g":
             return self.csv("ok,1a2b3c4d")
@@ -259,17 +249,8 @@ class CamHandler(BaseHTTPRequestHandler):
         if udn != UDN:
             print(f"  (wrong UDN {udn!r})")
             return self.result("err_param")
-        if udn not in cam.paired:
-            attempts = cam.pairing_attempts.get(udn, 0) + 1
-            cam.pairing_attempts[udn] = attempts
-            if attempts <= 2:
-                print(f"  (camera shows: Connect to {name}? Yes / No)")
-                return self.csv("ok_under_research")
-            if cam.refuse:
-                cam.pairing_attempts[udn] = 0
-                return self.result("err_user_refused")
-            cam.paired.add(udn)
-        self.csv(f"ok,{NAME},remote,open,{SESSION}")
+        if self.approved(udn, name):
+            self.csv(f"ok,{NAME},remote,open,{SESSION}")
 
     def mode_getinfo(self, q):
         kind = q.get("type")
@@ -287,20 +268,13 @@ class CamHandler(BaseHTTPRequestHandler):
                                  f'cmd_type="{t}" cmd_value="{v}"/>')
             return self.result("ok", "<menuinfo><mainmenu><photosettings>" + "".join(items) +
                                "</photosettings></mainmenu></menuinfo>")
-        if kind == "curmenu":
-            return self.result("ok", "<menuinfo/>")
         self.result("err_param")
 
     def mode_getstate(self, q):
         cam = self.cam
         cam.last_poll = time.time()
-        rec = "on" if cam.recording else "off"
         self.result("ok", f"<state><batt>{cam.battery}/3</batt><cammode>{cam.mode}</cammode>"
-                          f"<remaincapacity>{2400 - len(cam.images)}</remaincapacity>"
-                          "<sdcardstatus>write_enable</sdcardstatus><sd_memory>set</sd_memory>"
-                          f"<video_remaincapacity>5400</video_remaincapacity><rec>{rec}</rec>"
-                          "<burst_interval_status>off</burst_interval_status><sd_access>off</sd_access>"
-                          "<temperature>normal</temperature><lens>normal</lens></state>")
+                          f"<remaincapacity>{2400 - len(cam.images)}</remaincapacity><temperature>normal</temperature></state>")
 
     # -- settings ----------------------------------------------------------------
     def mode_getsetting(self, q):
@@ -344,18 +318,10 @@ class CamHandler(BaseHTTPRequestHandler):
                 return self.result("err_param")
             cam.shutter = code if code == BULB else snap_thirds(code)
             print("  shutter now " + ("Bulb" if code == BULB else f"{tv_seconds(cam.shutter):.5g} s"))
-        elif kind == "iso":
-            if value not in ISO:
+        elif kind in CHOICES:
+            if value not in CHOICES[kind]:
                 return self.result("err_param")
-            cam.iso = value
-        elif kind == "exposure":
-            if value not in EXPOSURE:
-                return self.result("err_param")
-            cam.exposure = value
-        elif kind == "whitebalance":
-            if value not in WB:
-                return self.result("err_param")
-            cam.whitebalance = value
+            setattr(cam, kind, value)
         else:
             return self.result("err_param")
         self.result()
@@ -460,8 +426,6 @@ DEVICE_DESCRIPTION = """<?xml version="1.0"?>
 <specVersion><major>1</major><minor>0</minor></specVersion>
 <device>
 <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>
-<friendlyName>{name}</friendlyName>
-<manufacturer>Panasonic</manufacturer>
 <modelName>LUMIX</modelName>
 <modelNumber>{model}</modelNumber>
 <UDN>uuid:{udn}</UDN>{capability}
@@ -486,22 +450,10 @@ DEVICE_DESCRIPTION = """<?xml version="1.0"?>
 """
 
 
-class MediaHandler(BaseHTTPRequestHandler):
+class MediaHandler(QuietHandler):
     """Port 60606 (UPnP) and 50001 (files) share this handler; the port decides which paths exist."""
-    protocol_version = "HTTP/1.1"
     cam: MockLumix = None
-
-    def log_message(self, fmt, *args):
-        pass
-
-    def reply(self, status, body=b"", ctype="text/xml; charset=utf-8"):
-        if isinstance(body, str):
-            body = body.encode()
-        self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+    content_type = "text/xml; charset=utf-8"
 
     @property
     def host_ip(self):
@@ -514,7 +466,7 @@ class MediaHandler(BaseHTTPRequestHandler):
             if path == "/Server0/ddd":
                 print("UPnP: device description")
                 capability = "\n<pana:X_CamCapability>0001</pana:X_CamCapability>" if ENCRYPTED else ""
-                return self.reply(200, DEVICE_DESCRIPTION.format(name=NAME, udn=UDN, capability=capability, model=MODEL))
+                return self.reply(200, DEVICE_DESCRIPTION.format(udn=UDN, capability=capability, model=MODEL))
             return self.reply(404, "not found", "text/plain")
         # File server: /DO<id>.JPG original, /DO<id>.RW2 raw, /DT thumbnail, /DL large preview.
         name = path.lstrip("/")
@@ -608,40 +560,26 @@ def didl_for(images, host):
             'xmlns:pana="urn:schemas-panasonic-com:pana">' + "".join(items) + "</DIDL-Lite>")
 
 
-def serve(server):
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-
-
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bind", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
-    ap.add_argument("--port", type=int, default=8082, help="cam.cgi port (default 8082; the real camera uses 80)")
-    ap.add_argument("--fps", type=float, default=30, help="live view frame rate")
+    ap = arguments(__doc__, 8082, 80)
     ap.add_argument("--refuse", action="store_true", help="answer No to the pairing prompt")
-    ap.add_argument("--quiet", action="store_true", help="don't print every command")
     ap.add_argument("--encrypted", action="store_true", help="newer pairing (req_acc_g/req_acc_e + X-SESSION_ID)")
     ap.add_argument("--model", default="DC-GH5", help="model the camera reports, e.g. DC-LX100 or DMC-GH4")
     args = ap.parse_args()
     global ENCRYPTED, MODEL
     ENCRYPTED = args.encrypted
     MODEL = args.model
-    sys.stdout.reconfigure(line_buffering=True)
 
     cam = MockLumix(load_frames(), refuse=args.refuse)
-    CamHandler.cam = cam
-    CamHandler.verbose = not args.quiet
-    MediaHandler.cam = cam
+    CamHandler.cam = MediaHandler.cam = cam
     biggest = max(len(f) for f in cam.frames)
-    threading.Thread(target=stream_loop, args=(cam, args.fps), daemon=True).start()
-    serve(ThreadingHTTPServer((args.bind, UPNP_PORT), MediaHandler))
-    serve(ThreadingHTTPServer((args.bind, FILE_PORT), MediaHandler))
+    threading.Thread(target=stream_loop, args=(cam,), daemon=True).start()
+    serve(ThreadingHTTPServer((args.bind, UPNP_PORT), MediaHandler), background=True)
+    serve(ThreadingHTTPServer((args.bind, FILE_PORT), MediaHandler), background=True)
     server = ThreadingHTTPServer((args.bind, args.port), CamHandler)
     print(f"Mock LUMIX {NAME} on http://{args.bind}:{args.port}/cam.cgi, UPnP :{UPNP_PORT}, files :{FILE_PORT} "
-          f"({len(cam.frames)} frames, largest {biggest // 1024} KB, {args.fps:g} fps, {len(cam.images)} files on card)")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nbye")
+          f"({len(cam.frames)} frames, largest {biggest // 1024} KB, {FPS} fps, {len(cam.images)} files on card)")
+    serve(server)
 
 
 if __name__ == "__main__":

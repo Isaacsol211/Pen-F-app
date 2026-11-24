@@ -22,7 +22,7 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
  * Play services: the scan buttons then stay hidden and the network name and password are typed instead.
  */
 @Composable
-fun rememberQrScanner(onCode: (String) -> Unit, onError: (String) -> Unit = {}): (() -> Unit)? {
+fun rememberQrScanner(onCode: (String) -> Unit, onError: (String) -> Unit): (() -> Unit)? {
     val context = LocalContext.current
     val available = remember {
         runCatching { GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) == ConnectionResult.SUCCESS }
@@ -54,13 +54,8 @@ fun rememberQrScanner(onCode: (String) -> Unit, onError: (String) -> Unit = {}):
                     val downloading = (e as? MlKitException)?.errorCode == MlKitException.UNAVAILABLE ||
                         e.message?.contains("download", ignoreCase = true) == true
                     if (downloading) requestScannerModule(context, scanner)
-                    error(
-                        if (downloading) {
-                            "Google Play services is still downloading the scanner (once only). Try again in a minute, or type the network name and password."
-                        } else {
-                            "Couldn't open the scanner. Type the network name and password instead."
-                        },
-                    )
+                    error(if (downloading) "Google Play services is still downloading the scanner (once only). Try again in a minute, or type the network name and password."
+                        else "Couldn't open the scanner. Type the network name and password instead.")
                 }
             Unit
         }

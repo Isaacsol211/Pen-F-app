@@ -18,7 +18,6 @@ for testing the app's Sony driver without a camera.
 
 In the app: Connect screen > Sony (or Auto) > Advanced > Camera address = 127.0.0.1:8086.
 """
-import argparse
 import datetime
 import json
 import os
@@ -27,13 +26,13 @@ import struct
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-from mock_penf import load_frames  # noqa: E402  (same live-view frames as the PEN-F mock)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mock_penf import QuietHandler, arguments, load_frames, serve  # noqa: E402  (same frames as the PEN-F mock)
 
+FPS = 30
 DESC_PORT = 64321
 MODEL = "ILCE-6000"
 
@@ -50,26 +49,21 @@ WB = ["Auto WB", "Daylight", "Shade", "Cloudy", "Incandescent", "Fluorescent: Wa
       "Fluorescent: Cool White (0)", "Flash", "Color Temperature", "Custom 1"]
 EXPOSURE_MODES = ["Intelligent Auto", "Program Auto", "Aperture", "Shutter", "Manual"]
 
-BEFORE_REC_MODE = ["getVersions", "getMethodTypes", "getApplicationInfo", "getAvailableApiList", "getEvent",
-                   "startRecMode", "stopRecMode"]
+BEFORE_REC_MODE = ["getVersions", "getApplicationInfo", "getAvailableApiList", "getEvent", "startRecMode", "stopRecMode"]
 REC_MODE = BEFORE_REC_MODE + [
     "startLiveview", "stopLiveview", "actTakePicture", "awaitTakePicture", "setTouchAFPosition",
     "cancelTouchAFPosition", "getExposureMode", "getAvailableExposureMode", "getFNumber", "getAvailableFNumber",
     "setFNumber", "getShutterSpeed", "getAvailableShutterSpeed", "setShutterSpeed", "getIsoSpeedRate",
     "getAvailableIsoSpeedRate", "setIsoSpeedRate", "getExposureCompensation", "getAvailableExposureCompensation",
     "setExposureCompensation", "getWhiteBalance", "getAvailableWhiteBalance", "setWhiteBalance",
-    "setShootMode", "getShootMode", "startMovieRec", "stopMovieRec", "setCameraFunction", "getCameraFunction",
+    "setShootMode", "getShootMode", "startMovieRec", "stopMovieRec", "setCameraFunction",
     "startBulbShooting", "stopBulbShooting",
 ]
 
-DESCRIPTION = """<?xml version="1.0"?>
-<root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:av="urn:schemas-sony-com:av">
-<device><deviceType>urn:schemas-upnp-org:device:Basic:1</deviceType>
-<friendlyName>{model}</friendlyName><manufacturer>Sony Corporation</manufacturer><modelName>{model}</modelName>
-<av:X_ScalarWebAPI_DeviceInfo><av:X_ScalarWebAPI_ServiceList>
-<av:X_ScalarWebAPI_Service><av:X_ScalarWebAPI_ServiceType>camera</av:X_ScalarWebAPI_ServiceType>
-<av:X_ScalarWebAPI_ActionList_URL>http://{host}:{port}/sony</av:X_ScalarWebAPI_ActionList_URL>
-</av:X_ScalarWebAPI_Service></av:X_ScalarWebAPI_ServiceList></av:X_ScalarWebAPI_DeviceInfo>
+# /DmsRmtDesc.xml on DESC_PORT; the app reads only the model name from it.
+DESCRIPTION = f"""<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0"><device><deviceType>urn:schemas-upnp-org:device:Basic:1</deviceType>
+<friendlyName>{MODEL}</friendlyName><manufacturer>Sony Corporation</manufacturer><modelName>{MODEL}</modelName>
 </device></root>"""
 
 
@@ -114,19 +108,14 @@ class MockSony:
         if not self.rec_mode:
             return list(BEFORE_REC_MODE)
         if self.function == "Contents Transfer":
-            return BEFORE_REC_MODE + ["setCameraFunction", "getCameraFunction"]
+            return BEFORE_REC_MODE + ["setCameraFunction"]
         return list(REC_MODE)
 
-    def event(self, host):
-        result = [None] * 57
+    def event(self):
+        result = [None] * 57   # fixed positions, each an object (or a list of them) with a "type"
         result[0] = {"type": "availableApiList", "names": self.apis()}
-        result[1] = {"type": "cameraStatus",
-                     "cameraStatus": "MovieRecording" if self.recording else
-                     ("StillCapturing" if self.bulb_since else "IDLE")}
         result[10] = [{"type": "storageInformation", "storageID": "Memory Card 1", "recordTarget": True,
                        "numberOfRecordableImages": 2400 - len(self.images), "recordableTime": -1}]
-        result[12] = {"type": "cameraFunction", "currentCameraFunction": self.function,
-                      "cameraFunctionCandidates": ["Remote Shooting", "Contents Transfer"]}
         result[18] = {"type": "exposureMode", "currentExposureMode": self.exposure_mode,
                       "exposureModeCandidates": [self.exposure_mode]}
         result[25] = {"type": "exposureCompensation", "currentExposureCompensation": self.ev_index,
@@ -148,14 +137,12 @@ class MockSony:
         self.require(method)
         if method == "getVersions":
             return [["1.0", "1.1", "1.2", "1.3"]]
-        if method == "getMethodTypes":
-            return []
         if method == "getApplicationInfo":
             return ["Smart Remote Control", "2.1.4"]
         if method == "getAvailableApiList":
             return [self.apis()]
         if method == "getEvent":
-            return self.event(host)
+            return self.event()
         if method == "startRecMode":
             self.rec_mode = True
             return [0]
@@ -242,8 +229,6 @@ class MockSony:
             self.recording = False
             print("  stopped recording")
             return [""]
-        if method == "getCameraFunction":
-            return [self.function]
         if method == "setCameraFunction":
             if not params or params[0] not in ("Remote Shooting", "Contents Transfer"):
                 raise RPCError(3, "Illegal Argument")
@@ -262,8 +247,6 @@ class MockSony:
     def av_content(self, method, params, host):
         if self.function != "Contents Transfer":
             raise RPCError(1, "Not in Contents Transfer")
-        if method == "getSchemeList":
-            return [[{"scheme": "storage"}]]
         if method == "getSourceList":
             return [[{"source": "storage:memoryCard1"}]]
         if method == "getContentList":
@@ -302,27 +285,14 @@ def liveview_packet(sequence, jpeg):
     return common + payload + jpeg + b"\x00" * padding
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(QuietHandler):
+    """The API port, and DESC_PORT for the description."""
     cam = None
-    fps = 30
-    verbose = True
-    protocol_version = "HTTP/1.1"
-
-    def log_message(self, fmt, *args):
-        pass
+    content_type = "application/json"
 
     @property
     def host(self):
         return self.headers.get("Host") or "127.0.0.1:8086"
-
-    def reply(self, status, body, ctype="application/json"):
-        if isinstance(body, str):
-            body = body.encode()
-        self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
     def do_POST(self):
         path = urlsplit(self.path).path
@@ -332,7 +302,7 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self.reply(400, "{}")
         method, params, rid = request.get("method", ""), request.get("params", []), request.get("id", 1)
-        if method != "getEvent" or self.verbose:
+        if method != "getEvent":
             print(f"{path} {method} {json.dumps(params)}")
         try:
             with self.cam.lock:
@@ -349,6 +319,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
+        if path == "/DmsRmtDesc.xml":
+            return self.reply(200, DESCRIPTION, "text/xml")
         if path == "/liveview/liveviewstream":
             return self.stream()
         parts = path.strip("/").split("/")
@@ -390,56 +362,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
                 sequence += 1
                 index += 1
-                time.sleep(1 / self.fps)
+                time.sleep(1 / FPS)
         except (BrokenPipeError, ConnectionResetError):
             pass
         print("live view stream: closed")
         self.close_connection = True
 
 
-class DescriptionHandler(BaseHTTPRequestHandler):
-    api_port = 8086
-
-    def log_message(self, fmt, *args):
-        pass
-
-    def do_GET(self):
-        if urlsplit(self.path).path != "/DmsRmtDesc.xml":
-            self.send_response(404)
-            self.end_headers()
-            return
-        host = (self.headers.get("Host") or "127.0.0.1").split(":")[0]
-        body = DESCRIPTION.format(model=MODEL, host=host, port=self.api_port).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/xml")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bind", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
-    ap.add_argument("--port", type=int, default=8086, help="API port (default 8086; the real camera uses 8080)")
-    ap.add_argument("--fps", type=float, default=30, help="live view frame rate")
-    ap.add_argument("--quiet", action="store_true", help="don't print every getEvent")
-    args = ap.parse_args()
-    sys.stdout.reconfigure(line_buffering=True)
-
+    args = arguments(__doc__, 8086, 8080).parse_args()
     cam = MockSony(load_frames())
     Handler.cam = cam
-    Handler.fps = args.fps
-    Handler.verbose = not args.quiet
-    DescriptionHandler.api_port = args.port
-    threading.Thread(target=ThreadingHTTPServer((args.bind, DESC_PORT), DescriptionHandler).serve_forever,
-                     daemon=True).start()
+    serve(ThreadingHTTPServer((args.bind, DESC_PORT), Handler), background=True)
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     print(f"Mock Sony {MODEL} on http://{args.bind}:{args.port}/sony/camera, description :{DESC_PORT} "
-          f"({len(cam.frames)} frames, {args.fps:g} fps, {len(cam.images)} files on card)")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nbye")
+          f"({len(cam.frames)} frames, {FPS} fps, {len(cam.images)} files on card)")
+    serve(server)
 
 
 if __name__ == "__main__":

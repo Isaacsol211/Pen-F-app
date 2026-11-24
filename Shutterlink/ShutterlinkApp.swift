@@ -23,8 +23,8 @@ struct ShutterlinkApp: App {
                 .preferredColorScheme(.dark)
         }
         #if targetEnvironment(macCatalyst)
-        // Big enough for the workspace layouts (the iPad ones); see `MacWindow`.
-        .defaultSize(width: MacWindow.defaultSize.width, height: MacWindow.defaultSize.height)
+        // Big enough for the workspace layouts (the iPad ones).
+        .defaultSize(width: 1280, height: 860)
         #endif
         .commands { CameraCommands() }
     }
@@ -46,11 +46,11 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.25), value: camera.phase)
         .background(Theme.background.ignoresSafeArea())
         .overlay { LaunchHandoff() }
-        .onChange(of: scenePhase) { _, newPhase in
-            camera.scenePhaseChanged(newPhase)
-        }
+        .onChange(of: scenePhase) { camera.scenePhaseChanged($1) }
         #if targetEnvironment(macCatalyst)
-        .background(WindowSceneReader { MacWindow.configure($0) })
+        // The Mac window is resizable, but never smaller than the workspace layouts need (a short side of
+        // `Workspace.workspaceSide`), so the Mac always gets the iPad layouts and never the phone ones.
+        .background(WindowSceneReader { $0?.sizeRestrictions?.minimumSize = CGSize(width: 980, height: 740) })
         #else
         .task { WatchBridge.shared.start(camera: camera) }
         #endif
@@ -67,18 +67,6 @@ struct RootView: View {
 }
 
 #if targetEnvironment(macCatalyst)
-/// The Mac window: resizable, but never smaller than the workspace layouts need (a short side of
-/// `Workspace.workspaceSide`), so the Mac always gets the iPad layouts and never the phone ones.
-enum MacWindow {
-    static let defaultSize = CGSize(width: 1280, height: 860)
-    static let minimumSize = CGSize(width: 980, height: 740)
-
-    static func configure(_ scene: UIWindowScene?) {
-        guard let scene else { return }
-        scene.sizeRestrictions?.minimumSize = minimumSize
-    }
-}
-
 /// Trims the menu bar UIKit gives every Mac Catalyst app (SwiftUI's `CommandGroup(replacing:)`
 /// doesn't reach these items there).
 final class MacAppDelegate: UIResponder, UIApplicationDelegate {

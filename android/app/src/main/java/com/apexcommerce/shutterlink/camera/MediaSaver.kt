@@ -20,21 +20,21 @@ object MediaSaver {
     suspend fun save(context: Context, data: ByteArray, image: CameraImage): String = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val ext = image.fileExtension
-        val (collection, mime, folder, label) = when {
-            image.isVideo -> Quad(
+        val (collection, mime, folder) = when {
+            image.isVideo -> Triple(
                 MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
                 if (ext == "MOV") "video/quicktime" else "video/mp4",
-                Environment.DIRECTORY_MOVIES + "/Shutterlink", "Movies ▸ Shutterlink",
+                Environment.DIRECTORY_MOVIES + "/Shutterlink",
             )
-            ext in rawExtensions -> Quad(
+            ext in rawExtensions -> Triple(
                 MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
                 "application/octet-stream",
-                Environment.DIRECTORY_DOWNLOADS + "/Shutterlink/RAW", "Download ▸ Shutterlink ▸ RAW",
+                Environment.DIRECTORY_DOWNLOADS + "/Shutterlink/RAW",
             )
-            else -> Quad(
+            else -> Triple(
                 MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
                 if (ext == "HEIC" || ext == "HIF" || ext == "HEIF") "image/heic" else "image/jpeg",
-                Environment.DIRECTORY_PICTURES + "/Shutterlink", "Pictures ▸ Shutterlink",
+                Environment.DIRECTORY_PICTURES + "/Shutterlink",
             )
         }
         val values = ContentValues().apply {
@@ -49,15 +49,12 @@ object MediaSaver {
         val uri = resolver.insert(collection, values) ?: throw CameraException("The phone refused to save ${image.name}.")
         try {
             resolver.openOutputStream(uri)?.use { it.write(data) } ?: throw CameraException("Couldn't write ${image.name}.")
-            values.clear()
-            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
-            resolver.update(uri, values, null, null)
+            resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
         } catch (e: Exception) {
             resolver.delete(uri, null, null)
             throw e
         }
-        label
+        // "Pictures ▸ Shutterlink", "Download ▸ Shutterlink ▸ RAW"…
+        folder.replace("/", " ▸ ")
     }
-
-    private data class Quad(val a: android.net.Uri, val b: String, val c: String, val d: String)
 }

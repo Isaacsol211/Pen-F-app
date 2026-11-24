@@ -14,19 +14,13 @@ final class XMLNode {
 
     var trimmedText: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    func child(_ name: String) -> XMLNode? { children.first { $0.name == name } }
     func children(_ name: String) -> [XMLNode] { children.filter { $0.name == name } }
 
     /// Trimmed text of the first child element with this name.
-    func value(_ name: String) -> String? { child(name)?.trimmedText }
+    func value(_ name: String) -> String? { children.first { $0.name == name }?.trimmedText }
 
     func descendants(named name: String) -> [XMLNode] {
-        var result: [XMLNode] = []
-        for c in children {
-            if c.name == name { result.append(c) }
-            result += c.descendants(named: name)
-        }
-        return result
+        children.flatMap { ($0.name == name ? [$0] : []) + $0.descendants(named: name) }
     }
 
     func firstDescendant(named names: Set<String>) -> XMLNode? {
@@ -84,9 +78,7 @@ struct CommandList {
     private(set) var cgis: [String: XMLNode] = [:]
     private(set) var version: String?
 
-    init() {}
-
-    init(root: XMLNode?) {
+    init(root: XMLNode? = nil) {
         guard let root else { return }
         version = root.value("version")
         for cgi in root.descendants(named: "cgi") {

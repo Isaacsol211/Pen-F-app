@@ -88,7 +88,6 @@ final class WatchBridge: NSObject, WCSessionDelegate {
         s.cameraName = camera.cameraName
         // The Watch remote is part of Shutterlink Pro.
         guard ShutterlinkPro.shared.isUnlocked else {
-            s.canShoot = false
             s.message = "The Watch remote is part of Shutterlink Pro. Try it free in the iPhone app"
             return s
         }
@@ -202,8 +201,7 @@ final class WatchBridge: NSObject, WCSessionDelegate {
         } else if camera.isOpenEndedShutter {
             await camera.toggleOpenExposure()
         } else if !camera.isShooting {
-            await camera.shutterPressed()
-            await camera.shutterReleased()
+            await camera.shoot()
         }
     }
 

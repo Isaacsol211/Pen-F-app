@@ -17,8 +17,6 @@ need "rec" mode, the card browser needs "play" mode. Wrong mode -> HTTP 520.
 """
 import argparse
 import datetime
-import glob
-import os
 import random
 import re
 import socket
@@ -28,11 +26,13 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-FRAMES_DIR = os.path.join(HERE, "frames")
+HERE = Path(__file__).resolve().parent
+FRAMES_DIR = HERE / "frames"
 ACCEPTED_USER_AGENTS = {"OI.Share v2", "OlympusCameraKit"}
+FPS = 20
 
 SHUTTER = ['livecomp', 'livetime', 'livebulb', '60"', '50"', '40"', '30"', '25"', '20"', '15"', '13"', '10"', '8"', '6"', '5"', '4"',
            '3.2"', '2.5"', '2"', '1.6"', '1.3"', '1"', '1.3', '1.6', '2', '2.5', '3', '4', '5', '6',
@@ -62,6 +62,7 @@ ENUMS = {
     'colortone': COLORTONE,
 }
 
+# Like the real list it also offers exec_shutter (not served here): bodies with starttake must still use it.
 COMMAND_LIST = """<?xml version="1.0" encoding="Shift-JIS"?>
 <oishare>
  <version>mock-1.0</version>
@@ -126,21 +127,54 @@ COMMAND_LIST = """<?xml version="1.0" encoding="Shift-JIS"?>
 """
 
 
-# What get_caminfo reports; --model changes it to try other bodies.
-MODEL = "PEN-F"
-
 def load_frames():
-    paths = sorted(glob.glob(os.path.join(FRAMES_DIR, "*.jpg")))
-    if not paths:
+    if not any(FRAMES_DIR.glob("*.jpg")):
         print("Rendering live-view frames (first run only)...")
-        subprocess.run(["swift", os.path.join(HERE, "make_frames.swift"), FRAMES_DIR], check=True)
-        paths = sorted(glob.glob(os.path.join(FRAMES_DIR, "*.jpg")))
-    frames = []
-    for p in paths:
-        with open(p, "rb") as f:
-            frames.append(f.read())
-    return frames
+        subprocess.run(["swift", str(HERE / "make_frames.swift"), str(FRAMES_DIR)], check=True)
+    return [p.read_bytes() for p in sorted(FRAMES_DIR.glob("*.jpg"))]
 
+
+# ---- shared by all the mocks ------------------------------------------------------------------
+
+class QuietHandler(BaseHTTPRequestHandler):
+    """Keep-alive HTTP/1.1 like the cameras, without the default per-request log line."""
+    protocol_version = "HTTP/1.1"
+    content_type = "text/xml"
+
+    def log_message(self, fmt, *args):
+        pass
+
+    def reply(self, status=200, body=b"", ctype=None):
+        if isinstance(body, str):
+            body = body.encode()
+        self.send_response(status)
+        if body:
+            self.send_header("Content-Type", ctype or self.content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def arguments(doc, port, real_port):
+    """--bind and --port, which every mock has; each adds its own flags before parse_args()."""
+    sys.stdout.reconfigure(line_buffering=True)
+    ap = argparse.ArgumentParser(description=doc, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--bind", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
+    ap.add_argument("--port", type=int, default=port, help=f"port (default {port}; the real camera uses {real_port})")
+    return ap
+
+
+def serve(server, background=False):
+    """Serves until Ctrl-C, or on a daemon thread (a mock's extra ports)."""
+    if background:
+        return threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nbye")
+
+
+# ---- PEN-F -----------------------------------------------------------------------------------
 
 def fat_datetime(dt):
     d = ((dt.year - 1980) << 9) | (dt.month << 5) | dt.day
@@ -215,8 +249,6 @@ class MockCamera:
         for name, options in ENUMS.items():
             parts.append(f"<desc><propname>{name}</propname><attribute>{self.attribute(name)}</attribute>"
                          f"<value>{self.values[name]}</value><enum>{' '.join(options)}</enum></desc>")
-        parts.append("<desc><propname>batterylevel</propname><attribute>get</attribute>"
-                     "<value>full</value></desc>")
         parts.append('</desclist>')
         return "\n".join(parts)
 
@@ -246,7 +278,7 @@ class MockCamera:
         ])
 
 
-def live_view_loop(cam, fps):
+def live_view_loop(cam):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     ssrc = random.getrandbits(32)
     seq = 0
@@ -275,30 +307,12 @@ def live_view_loop(cam, fps):
                     break
                 seq += 1
             timestamp += 1
-        time.sleep(max(0.0, 1.0 / fps - (time.time() - started)))
+        time.sleep(max(0.0, 1.0 / FPS - (time.time() - started)))
 
 
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+class Handler(QuietHandler):
     cam: MockCamera = None
-    verbose = True
-
-    def log_message(self, fmt, *args):
-        pass
-
-    # -- response helpers ----------------------------------------------------
-    def reply(self, status=200, body=b"", ctype="text/xml"):
-        if isinstance(body, str):
-            body = body.encode()
-        self.send_response(status)
-        if body:
-            self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        if body:
-            self.wfile.write(body)
-        if self.verbose:
-            print(f"  -> {status} ({len(body)} bytes)")
+    model = "PEN-F"
 
     def refuse(self, why):
         print(f"  ! refused: {why}")
@@ -309,19 +323,14 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, '<?xml version="1.0"?>' + body)
 
     # -- dispatch -------------------------------------------------------------
-    def do_GET(self):
-        self.handle_request("GET", b"")
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        self.handle_request("POST", self.rfile.read(length) if length else b"")
-
-    def handle_request(self, method, body):
+    def handle_request(self):
         cam = self.cam
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
         parts = urlsplit(self.path)
         query = dict(parse_qsl(parts.query, keep_blank_values=True))
         ua = self.headers.get("User-Agent", "")
-        print(f"{method} {self.path}   [mode={cam.mode}] ua={ua!r}")
+        print(f"{self.command} {self.path}   [mode={cam.mode}] ua={ua!r}")
 
         if not self.headers.get("Host"):
             return self.reply(400)
@@ -340,19 +349,21 @@ class Handler(BaseHTTPRequestHandler):
         with cam.lock:
             handler(query, body)
 
+    do_GET = do_POST = handle_request
+
     # -- commands -------------------------------------------------------------
     def cmd_get_connectmode(self, q, body):
         self.xml("<connectmode>private</connectmode>")
 
     def cmd_get_caminfo(self, q, body):
-        self.xml(f"<caminfo><model>{MODEL} (mock)</model></caminfo>")
+        self.xml(f"<caminfo><model>{self.model} (mock)</model></caminfo>")
 
     def cmd_get_commandlist(self, q, body):
         self.reply(200, COMMAND_LIST)
 
     def cmd_switch_cammode(self, q, body):
         mode = q.get("mode")
-        if mode not in ("rec", "play", "shutter"):
+        if mode not in ("rec", "play"):
             return self.reply(400)
         self.cam.mode = mode
         if mode != "rec":
@@ -433,14 +444,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200)
         self.reply(200)
 
-    def cmd_exec_shutter(self, q, body):
-        if self.cam.mode != "shutter":
-            return self.refuse("exec_shutter needs shutter mode")
-        if q.get("com") in ("1st2ndpush", "2ndpush"):
-            name = self.cam.add_image(self.cam.frames[self.cam.frame_index % len(self.cam.frames)])
-            print(f"  * click -> {name}")
-        self.reply(200)
-
     def cmd_get_camprop(self, q, body):
         cam = self.cam
         if cam.mode != "rec":
@@ -448,8 +451,6 @@ class Handler(BaseHTTPRequestHandler):
         com, name = q.get("com"), q.get("propname")
         if com == "desc" and name == "desclist":
             return self.reply(200, cam.desclist())
-        if com in ("get", "desc") and name in cam.values:
-            return self.xml(f"<get><value>{cam.values[name]}</value></get>")
         self.reply(400)
 
     def cmd_set_camprop(self, q, body):
@@ -504,8 +505,7 @@ class Handler(BaseHTTPRequestHandler):
         data = self.find_image(path)
         self.reply(200, data, "image/jpeg") if data else self.reply(404)
 
-    def cmd_get_resizeimg(self, q, body):
-        self.cmd_get_thumbnail(q, body)
+    cmd_get_resizeimg = cmd_get_thumbnail
 
     def file(self, path):
         data = self.find_image(path)
@@ -525,28 +525,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bind", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
-    ap.add_argument("--port", type=int, default=8080, help="HTTP port (default 8080; the real camera uses 80)")
-    ap.add_argument("--fps", type=float, default=20, help="live view frame rate")
-    ap.add_argument("--quiet", action="store_true", help="don't print every response")
+    ap = arguments(__doc__, 8080, 80)
     ap.add_argument("--model", default="PEN-F",
                     help="model name get_caminfo reports, e.g. E-M10MarkIII or AIR-A01 (default PEN-F)")
     args = ap.parse_args()
-    global MODEL
-    MODEL = args.model
-    sys.stdout.reconfigure(line_buffering=True)
-
     cam = MockCamera(load_frames())
-    Handler.cam = cam
-    Handler.verbose = not args.quiet
-    threading.Thread(target=live_view_loop, args=(cam, args.fps), daemon=True).start()
+    Handler.cam, Handler.model = cam, args.model
+    threading.Thread(target=live_view_loop, args=(cam,), daemon=True).start()
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
-    print(f"Mock PEN-F listening on http://{args.bind}:{args.port}  ({len(cam.frames)} frames, {args.fps:g} fps)")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nbye")
+    print(f"Mock PEN-F listening on http://{args.bind}:{args.port}  ({len(cam.frames)} frames, {FPS} fps)")
+    serve(server)
 
 
 if __name__ == "__main__":

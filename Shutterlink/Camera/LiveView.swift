@@ -1,5 +1,3 @@
-import Darwin
-import Foundation
 import UIKit
 
 // Live view arrives as RTP over UDP: after `exec_takemisc.cgi?com=startliveview&port=N`
@@ -16,7 +14,6 @@ struct LiveInfo: Equatable {
     var afState = 0
     /// AF frame in live-view coordinates (e.g. 0…639 × 0…479).
     var afRect: CGRect = .zero
-    var rotation = 1
     var shutter: String?
     var aperture: String?
     /// Lens aperture limits (e.g. 1.8…22), nil if the lens reports none (manual lens).
@@ -103,7 +100,6 @@ struct LiveViewStats {
     var dropped = 0
     var skippedByUI = 0
     var jpegBytes = 0
-    var functionIDs = Set<Int>()
     var frameSize = CGSize.zero
     var lastExtension: Data?
     var since = CACurrentMediaTime()
@@ -157,8 +153,6 @@ enum LiveInfoParser {
                 func s16(_ o: Int) -> Double { Double(Int16(truncatingIfNeeded: u32(o))) }
                 info.afState = Int(u32(d))
                 info.afRect = CGRect(x: s16(d + 4), y: s16(d + 8), width: s16(d + 12), height: s16(d + 16))
-            case 4 where length >= 4:
-                info.rotation = Int(b[d + 3])
             case 8 where length >= 24: // shutter (OPC spec): min n/d, max n/d, current n/d as full words
                 info.shutter = formatShutter(numerator: u32(d + 16), denominator: u32(d + 20))
             case 8 where length >= 12: // shutter (PEN-F): min, max, current, each packed numerator<<16 | denominator
@@ -324,16 +318,8 @@ final class LiveViewReceiver: @unchecked Sendable {
     /// with the previous frame.
     func submit(jpeg: Data) {
         guard isRunning else { return }
-        let start = jpeg.firstIndex(of: 0xFF).flatMap { i -> Data.Index? in
-            // Some cameras put a header before the JPEG: start at the first FF D8.
-            var k = i
-            while k < jpeg.endIndex - 1 {
-                if jpeg[k] == 0xFF && jpeg[k + 1] == 0xD8 { return k }
-                k = jpeg[(k + 1)...].firstIndex(of: 0xFF) ?? jpeg.endIndex
-            }
-            return nil
-        }
-        guard let start else { return }
+        // Some cameras put a header before the JPEG: start at the first FF D8.
+        guard let start = jpeg.range(of: Data([0xFF, 0xD8]))?.lowerBound else { return }
         let frame = start == jpeg.startIndex ? jpeg : jpeg[start...]
         pushQueue.async { [self] in
             stats.packets += 1
@@ -369,10 +355,10 @@ final class LiveViewReceiver: @unchecked Sendable {
                 case .frame(let jpeg, let ext)?:
                     stats.completed += 1
                     stats.jpegBytes += jpeg.count
-                    if let ext { noteExtension(ext) }
+                    if let ext { stats.lastExtension = ext }
                     deliver(jpeg: jpeg, ext: ext)
                 case .infoOnly(let ext)?:
-                    noteExtension(ext)
+                    stats.lastExtension = ext
                     deliver(jpeg: nil, ext: ext)
                 case .dropped?:
                     stats.dropped += 1
@@ -386,16 +372,6 @@ final class LiveViewReceiver: @unchecked Sendable {
             }
         }
         close(fd)
-    }
-
-    private func noteExtension(_ ext: Data) {
-        stats.lastExtension = ext
-        let b = [UInt8](ext)
-        var i = 0
-        while i + 4 <= b.count {
-            stats.functionIDs.insert(Int(b[i]) << 8 | Int(b[i + 1]))
-            i += 4 + (Int(b[i + 2]) << 8 | Int(b[i + 3])) * 4
-        }
     }
 
     private func deliver(jpeg: Data?, ext: Data?) {
@@ -448,17 +424,7 @@ final class LiveViewReceiver: @unchecked Sendable {
 
     /// 64-bin luminance histogram from a small greyscale copy of the frame, normalised to 0…1.
     static func histogram(of image: CGImage, bins: Int = 64) -> [Float] {
-        let width = 80, height = 60
-        var pixels = [UInt8](repeating: 0, count: width * height)
-        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
-            guard let ctx = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                                      bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
-                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
-            ctx.interpolationQuality = .low
-            ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
-        }
-        guard drawn else { return [] }
+        guard let pixels = grey(image, width: 80, height: 60, quality: .low) else { return [] }
         var counts = [Float](repeating: 0, count: bins)
         for p in pixels { counts[Int(p) * bins / 256] += 1 }
         let peak = max(counts.max() ?? 1, 1)
@@ -473,16 +439,7 @@ final class LiveViewReceiver: @unchecked Sendable {
             .integral.intersection(CGRect(x: 0, y: 0, width: w, height: h))
         guard crop.width >= 8, crop.height >= 8, let part = image.cropping(to: crop) else { return nil }
         let width = min(Int(crop.width), 200), height = min(Int(crop.height), 150)
-        var pixels = [UInt8](repeating: 0, count: width * height)
-        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
-            guard let ctx = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                                      bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
-                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
-            ctx.interpolationQuality = .medium
-            ctx.draw(part, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
-        }
-        guard drawn else { return nil }
+        guard let pixels = grey(part, width: width, height: height, quality: .medium) else { return nil }
         var sum = 0.0
         for y in 0..<(height - 1) {
             let row = y * width
@@ -494,5 +451,19 @@ final class LiveViewReceiver: @unchecked Sendable {
             }
         }
         return sum / Double((width - 1) * (height - 1))
+    }
+
+    /// `image` scaled into an 8-bit greyscale bitmap of this size.
+    private static func grey(_ image: CGImage, width: Int, height: Int, quality: CGInterpolationQuality) -> [UInt8]? {
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+            guard let ctx = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+            ctx.interpolationQuality = quality
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        return drawn ? pixels : nil
     }
 }

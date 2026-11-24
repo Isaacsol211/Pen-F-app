@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import com.apexcommerce.shutterlink.camera.SceneSuggestion
 import com.apexcommerce.shutterlink.camera.applySceneSuggestion
 import com.apexcommerce.shutterlink.camera.runSceneAssistant
@@ -58,13 +57,11 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -199,25 +196,9 @@ fun RemoteScreen(camera: CameraModel) {
         else -> {}
     }
 
-    if (confirmPowerOff) {
-        AlertDialog(
-            onDismissRequest = { confirmPowerOff = false },
-            title = { Text("Turn the camera off?") },
-            text = { Text("You'll need to switch it on and start Wi-Fi on the camera again to reconnect.") },
-            confirmButton = { TextButton({ confirmPowerOff = false; scope.launch { camera.powerOff() } }) { Text("Turn off", color = Theme.red) } },
-            dismissButton = { TextButton({ confirmPowerOff = false }) { Text("Cancel") } },
-            containerColor = Theme.surfaceRaised,
-        )
-    }
-    if (confirmDisconnect) {
-        AlertDialog(
-            onDismissRequest = { confirmDisconnect = false },
-            title = { Text("Disconnect from the camera?") },
-            confirmButton = { TextButton({ confirmDisconnect = false; scope.launch { camera.disconnect() } }) { Text("Disconnect", color = Theme.red) } },
-            dismissButton = { TextButton({ confirmDisconnect = false }) { Text("Cancel") } },
-            containerColor = Theme.surfaceRaised,
-        )
-    }
+    if (confirmPowerOff) ConfirmDialog("Turn the camera off?", "Turn off", { confirmPowerOff = false },
+        text = { Text("You'll need to switch it on and start Wi-Fi on the camera again to reconnect.") }) { scope.launch { camera.powerOff() } }
+    if (confirmDisconnect) ConfirmDialog("Disconnect from the camera?", "Disconnect", { confirmDisconnect = false }) { scope.launch { camera.disconnect() } }
 }
 
 /** Red night-vision mode keeps your eyes dark-adapted under the stars. */
@@ -274,7 +255,7 @@ private fun PortraitLayout(
         if (camera.properties["takemode"] != null) ModeCarousel(camera)
         Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(84.dp), contentAlignment = Alignment.Center) {
-                LastShotButton(camera, enabled = !camera.isBusyExposing && !camera.interval.running && camera.capabilities.cardBrowser, onClick = openGallery)
+                LastShotButton(camera, openGallery)
             }
             Spacer(Modifier.weight(1f))
             ShutterButton(camera)
@@ -306,19 +287,19 @@ private fun LandscapeLayout(
                     StatusPill(camera)
                     Banners(camera, Modifier.widthIn(max = 460.dp))
                 }
-                if (!motionOpen) {
-                    // Above the readouts when they're drawn over the picture.
-                    SuggestionOverlay(camera, showLoupe, applySuggestion, Modifier.align(Alignment.BottomCenter)
-                        .padding(start = 10.dp, end = 10.dp, bottom = if (!readoutsBelow && !showLoupe) 84.dp else 10.dp))
-                }
                 if (motionOpen) {
                     Box(Modifier.align(Alignment.BottomEnd).padding(10.dp).widthIn(max = 360.dp)) {
                         MotionPanel(camera, closeMotion, maxHeight = imageHeight - 20.dp)
                     }
-                } else if (!readoutsBelow && !showLoupe) {
-                    Column(Modifier.align(Alignment.BottomCenter).padding(10.dp).widthIn(max = 620.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OptionPanelFor(camera, activeSetting) { selectSetting(null) }
-                        ExposureStrip(camera, activeSetting, selectSetting, compact = true)
+                } else {
+                    // Above the readouts when they're drawn over the picture.
+                    SuggestionOverlay(camera, showLoupe, applySuggestion, Modifier.align(Alignment.BottomCenter)
+                        .padding(start = 10.dp, end = 10.dp, bottom = if (!readoutsBelow && !showLoupe) 84.dp else 10.dp))
+                    if (!readoutsBelow && !showLoupe) {
+                        Column(Modifier.align(Alignment.BottomCenter).padding(10.dp).widthIn(max = 620.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OptionPanelFor(camera, activeSetting) { selectSetting(null) }
+                            ExposureStrip(camera, activeSetting, selectSetting, compact = true)
+                        }
                     }
                 }
                 androidx.compose.animation.AnimatedVisibility(toolsOpen, Modifier.align(Alignment.BottomCenter).padding(10.dp).widthIn(max = 620.dp).floatUp(),
@@ -340,7 +321,7 @@ private fun LandscapeLayout(
             }
             ShutterButton(camera)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                LastShotButton(camera, enabled = !camera.isBusyExposing && !camera.interval.running && camera.capabilities.cardBrowser, onClick = openGallery)
+                LastShotButton(camera, openGallery)
                 ToolsButton(camera, toolsOpen, toggleTools)
             }
         }
@@ -379,16 +360,10 @@ private fun CameraMenu(camera: CameraModel, open: (RemotePage) -> Unit, disconne
                 leadingIcon = { Icon(Icons.Filled.Refresh, null) })
             DropdownMenuItem({ Text("Scene suggestions") }, { camera.changeSceneAssistant(!camera.sceneAssistantOn) },
                 leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) },
-                trailingIcon = {
-                    Switch(camera.sceneAssistantOn, { camera.changeSceneAssistant(it) },
-                        colors = SwitchDefaults.colors(checkedTrackColor = Theme.accent, checkedThumbColor = Color.Black))
-                })
+                trailingIcon = { Switch(camera.sceneAssistantOn, { camera.changeSceneAssistant(it) }) })
             DropdownMenuItem({ Text("Save new photos to the gallery") }, { camera.changeAutoSave(!camera.autoSaveNewPhotos) },
                 leadingIcon = { Icon(Icons.Filled.Download, null) },
-                trailingIcon = {
-                    Switch(camera.autoSaveNewPhotos, { camera.changeAutoSave(it) },
-                        colors = SwitchDefaults.colors(checkedTrackColor = Theme.accent, checkedThumbColor = Color.Black))
-                })
+                trailingIcon = { Switch(camera.autoSaveNewPhotos, { camera.changeAutoSave(it) }) })
             HorizontalDivider(color = Theme.stroke)
             if (camera.capabilities.highResShot) {
                 DropdownMenuItem({ Text("High Res Shot helper") }, { expanded = false; open(RemotePage.HIGH_RES) }, leadingIcon = { Icon(Icons.Filled.Apps, null) })
@@ -418,7 +393,14 @@ private fun buildTools(
     toggleGrid: () -> Unit, closeTools: () -> Unit,
 ): List<ToolItem> {
     val caps = camera.capabilities
-    val all = mutableListOf(
+    return listOfNotNull(
+        // Video is a switch here when the camera's photo/video mode can't be read.
+        ToolItem("video", Icons.Filled.Videocam, "Video", camera.videoMode) {
+            if (!camera.isRecordingMovie) {
+                camera.videoMode = !camera.videoMode
+                closeTools()
+            }
+        }.takeIf { caps.videoSwitch && caps.movie },
         ToolItem("presets", Icons.Filled.AutoFixHigh, "Presets", false, opens = true) { open(RemotePage.PRESETS) },
         ToolItem("astro", Icons.Filled.NightsStay, "Astro", false, opens = true) { open(RemotePage.ASTRO) },
         ToolItem("interval", Icons.Filled.Timer, "Interval", camera.interval.running, opens = true) { open(RemotePage.INTERVAL) },
@@ -433,25 +415,9 @@ private fun buildTools(
         ToolItem("pocket", Icons.Filled.Bedtime, "Pocket", false, opens = true) { open(RemotePage.POCKET) },
         ToolItem("tap", Icons.Filled.TouchApp, if (camera.touchShutter) "Tap shoots" else "Tap AF", camera.touchShutter) {
             camera.touchShutter = !camera.touchShutter
-        },
-        ToolItem("highres", Icons.Filled.Apps, "High Res", false, opens = true) { open(RemotePage.HIGH_RES) },
-    ).filter { item ->
-        when (item.id) {
-            "highres" -> caps.highResShot
-            "tap" -> caps.tapToFocus
-            else -> true
-        }
-    }.toMutableList()
-    if (caps.videoSwitch && caps.movie) {
-        // Video is a switch here when the camera's photo/video mode can't be read.
-        all.add(0, ToolItem("video", Icons.Filled.Videocam, "Video", camera.videoMode) {
-            if (!camera.isRecordingMovie) {
-                camera.videoMode = !camera.videoMode
-                closeTools()
-            }
-        })
-    }
-    return all
+        }.takeIf { caps.tapToFocus },
+        ToolItem("highres", Icons.Filled.Apps, "High Res", false, opens = true) { open(RemotePage.HIGH_RES) }.takeIf { caps.highResShot },
+    )
 }
 
 /** The scene assistant's suggestion over the bottom of live view (not while the loupe is open). */

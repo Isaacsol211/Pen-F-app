@@ -13,7 +13,6 @@ struct SceneSuggestion: Equatable, Identifiable {
         case setting(property: String, value: String)
         case exposeToTheRight
         case openND
-        case openMotion
         /// Shutter priority at 1/500 s with Auto ISO (a small preset, so Undo puts it back).
         case freezeMotion
         /// Turns on the live-view grid, to level the camera by.
@@ -58,6 +57,7 @@ struct SceneSignals: Equatable {
 
     var isDaylight: Bool { sky.map { $0.sunAltitude > 0 } ?? (brightness > 0.08) }
     var isDark: Bool { sky.map { $0.sunAltitude < -6 } ?? (brightness < 0.03) }
+    var isGoldenHour: Bool { (sky.map { (-4...6).contains($0.sunAltitude) } ?? false) || score("sunset_sunrise") >= 0.3 }
 }
 
 /// Mean colour of the bright, nearly grey parts of a frame (white walls, a white shirt), 0…255 per channel.
@@ -164,8 +164,7 @@ extension CameraModel {
                                        detail: "Snow fools the meter into grey: brighten it",
                                        actionTitle: change.label, action: .setting(property: change.property, value: change.value)))
         }
-        let goldenHour = s.sky.map { (-4...6).contains($0.sunAltitude) } ?? false
-        if s.score("sunset_sunrise") >= 0.3 || goldenHour, s.clipped > 0.003, let change = exposureChange(thirds: -1) {
+        if s.isGoldenHour, s.clipped > 0.003, let change = exposureChange(thirds: -1) {
             out.append(SceneSuggestion(id: "golden", icon: "sun.horizon.fill", title: "Golden hour",
                                        detail: "A little less exposure keeps the colour in the sky",
                                        actionTitle: change.label, action: .setting(property: change.property, value: change.value)))
@@ -194,14 +193,13 @@ extension CameraModel {
         let outdoor = s.score("sky", "blue_sky", "cloudy", "tree", "mountain", "beach", "land", "grass", "plant",
                               "street", "building", "field", "forest", "hill", "sunset_sunrise", "outdoor") >= 0.3
         let sunUp = s.sky.map { $0.sunAltitude > 0 } ?? (s.brightness > 0.15)
-        let golden = (s.sky.map { (-4...6).contains($0.sunAltitude) } ?? false) || s.score("sunset_sunrise") >= 0.3
         func suggest(_ id: String, _ icon: String, _ title: String, _ detail: String, _ keywords: [String]) -> [SceneSuggestion] {
             guard let value = whiteBalanceOption(keywords), value != wb.value else { return [] }
             let name = PropertyFormat.display("wbvalue", value)
             return [SceneSuggestion(id: id, icon: icon, title: title, detail: detail,
                                     actionTitle: "\(name) WB", action: .setting(property: "wbvalue", value: value))]
         }
-        if isAuto, outdoor, golden {
+        if isAuto, outdoor, s.isGoldenHour {
             return suggest("wb-golden", "sun.horizon.fill", "Golden light",
                            "Auto white balance cools the warm glow. Sunny keeps it", ["sunny", "daylight", "fine"])
         }
@@ -239,11 +237,10 @@ extension CameraModel {
     func isoForSteadyShutter(_ shutter: Double, focal35: Double, iso: Int) -> (value: String, iso: Int)? {
         let target = Double(iso) * shutter * 2 * focal35
         let numeric = (settableProperty("isospeedvalue")?.options ?? [])
-            .compactMap { option in Int(option).map { (option, $0) } }
-            .filter { $0.1 > iso && $0.1 <= 6400 }
-            .sorted { $0.1 < $1.1 }
-        guard let pick = numeric.first(where: { Double($0.1) >= target * 0.9 }) ?? numeric.last else { return nil }
-        return (pick.0, pick.1)
+            .compactMap { option in Int(option).map { (value: option, iso: $0) } }
+            .filter { $0.iso > iso && $0.iso <= 6400 }
+            .sorted { $0.iso < $1.iso }
+        return numeric.first { Double($0.iso) >= target * 0.9 } ?? numeric.last
     }
 
     static func shutterText(_ seconds: Double) -> String {
@@ -294,10 +291,8 @@ extension CameraModel {
             let tilt = await Self.horizonTilt(frame)
             guard !Task.isCancelled else { return }
             var signals = SceneSignals(labels: labels, brightness: FrameMeter.brightness(frame) ?? 0.2,
-                                       clipped: FrameMeter.clipped(frame) ?? 0)
-            signals.motion = motion
-            signals.tilt = tilt
-            signals.cast = FrameMeter.neutralCast(frame)
+                                       clipped: FrameMeter.clipped(frame) ?? 0, motion: motion, tilt: tilt,
+                                       cast: FrameMeter.neutralCast(frame))
             signals.shutter = liveInfo.shutter.flatMap(PropertyFormat.seconds(fromDisplay:))
                 ?? properties["shutspeedvalue"].flatMap { PropertyFormat.seconds(fromShutter: $0.value) }
             signals.focal35 = liveInfo.focalLength.map { Double($0) * cropFactor }
@@ -368,12 +363,7 @@ extension CameraModel {
         let now = Date()
         sceneSnoozed = sceneSnoozed.filter { $0.value > now }
         let best = suggestions.first { sceneSnoozed[$0.id] == nil }
-        if let best, best.id == sceneSuggestion?.id {
-            sceneSuggestion = best
-            sceneMisses = 0
-            return
-        }
-        if let best, best.id == sceneCandidate {
+        if let best, best.id == sceneSuggestion?.id || best.id == sceneCandidate {
             sceneSuggestion = best
             sceneMisses = 0
         } else {
@@ -395,9 +385,9 @@ extension CameraModel {
     func applySceneSuggestion(_ suggestion: SceneSuggestion) async {
         sceneSuggestion = nil
         sceneCandidate = nil
+        sceneSnoozed[suggestion.id] = Date().addingTimeInterval(600)
         switch suggestion.action {
         case .recipe(let recipe):
-            sceneSnoozed[suggestion.id] = Date().addingTimeInterval(600)
             _ = await apply(recipe)
         case .setting(let property, let value):
             // Give the new exposure time to reach live view before judging it again.
@@ -408,10 +398,9 @@ extension CameraModel {
         case .exposeToTheRight:
             sceneSnoozed[suggestion.id] = Date().addingTimeInterval(120)
             await exposeToTheRight()
-        case .openND, .openMotion:
-            sceneSnoozed[suggestion.id] = Date().addingTimeInterval(600)
+        case .openND:
+            break
         case .freezeMotion:
-            sceneSnoozed[suggestion.id] = Date().addingTimeInterval(600)
             await runPreset(id: "freeze", title: "Freeze movement") {
                 let (mode, inS) = modeStep("S", why: "You pick the shutter, the camera the aperture")
                 return [
@@ -423,7 +412,6 @@ extension CameraModel {
                 ]
             }
         case .showGrid:
-            sceneSnoozed[suggestion.id] = Date().addingTimeInterval(600)
             UserDefaults.standard.set(true, forKey: "ui.grid")
         }
     }

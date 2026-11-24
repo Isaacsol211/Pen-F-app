@@ -35,7 +35,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import com.apexcommerce.shutterlink.camera.FocusStepSize
 import com.apexcommerce.shutterlink.camera.PresetRecipe
 import com.apexcommerce.shutterlink.camera.canFocusStack
@@ -106,19 +105,19 @@ fun Sheet(title: String, onDismiss: () -> Unit, footer: (@Composable () -> Unit)
 }
 
 @Composable
-private fun Chip(text: String, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+fun Chip(text: String, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     Text(text, color = if (on) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
         modifier = Modifier.background(if (on) Theme.accent else Theme.surfaceRaised, Pill)
             .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 14.dp, vertical = 9.dp))
 }
 
 @Composable
-private fun Stepper(label: String, value: String, onMinus: () -> Unit, onPlus: () -> Unit) {
+fun Stepper(label: String, value: String, onMinus: () -> Unit, onPlus: () -> Unit, less: String = "Less", more: String = "More") {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(label, fontSize = 16.sp, modifier = Modifier.weight(1f))
         Text(value, style = monoStyle(16.sp), color = Theme.secondary)
-        SurfaceButton(onClick = onMinus, circle = true) { Icon(Icons.Filled.Remove, "Less", Modifier.size(18.dp)) }
-        SurfaceButton(onClick = onPlus, circle = true) { Icon(Icons.Filled.Add, "More", Modifier.size(18.dp)) }
+        SurfaceButton(onClick = onMinus, circle = true) { Icon(Icons.Filled.Remove, less, Modifier.size(18.dp)) }
+        SurfaceButton(onClick = onPlus, circle = true) { Icon(Icons.Filled.Add, more, Modifier.size(18.dp)) }
     }
 }
 
@@ -195,8 +194,7 @@ fun IntervalSheet(camera: CameraModel, onDismiss: () -> Unit) {
                         Text("Follow the light", fontSize = 16.sp)
                         Text("Day to night (or night to day)", color = Theme.secondary, fontSize = 13.sp)
                     }
-                    Switch(ramp && camera.canRampExposure, { ramp = it; save() }, enabled = camera.canRampExposure,
-                        colors = SwitchDefaults.colors(checkedTrackColor = Theme.accent, checkedThumbColor = Color.Black))
+                    Switch(ramp && camera.canRampExposure, { ramp = it; save() }, enabled = camera.canRampExposure)
                 }
                 if (ramp && camera.canRampExposure) {
                     CapsLabel("Highest ISO")
@@ -487,8 +485,8 @@ fun HighResSheet(camera: CameraModel, onDismiss: () -> Unit) {
 // MARK: - Pocket mode
 
 /**
- * A black screen with a dim red countdown for long night sessions. The screen stays on (Android,
- * like iOS, cuts the app's network when it's backgrounded for long). Double-tap to leave.
+ * A black screen with a dim red countdown for long night sessions. The screen stays on, as always while
+ * connected (Android, like iOS, cuts the app's network when it's backgrounded for long). Double-tap to leave.
  */
 @Composable
 fun PocketMode(camera: CameraModel, onDismiss: () -> Unit) {
@@ -501,7 +499,6 @@ fun PocketMode(camera: CameraModel, onDismiss: () -> Unit) {
         val window = activity?.window
         val saved = window?.attributes?.screenBrightness
         window?.let { w -> w.attributes = w.attributes.also { it.screenBrightness = 0.02f } }
-        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
             window?.let { w -> w.attributes = w.attributes.also { it.screenBrightness = saved ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE } }
         }

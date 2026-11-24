@@ -79,26 +79,21 @@ func drawMark(_ ctx: CGContext, center c: CGPoint, scale k: CGFloat, variant: Va
     ctx.setLineWidth(30 * k)
     ctx.strokeEllipse(in: CGRect(x: c.x - 312 * k, y: c.y - 312 * k, width: 624 * k, height: 624 * k))
 
+    // Blades and opening: filled, with black seams.
     let iris = Iris(center: c, outer: 276 * k, inner: 112 * k, rotation: .pi / 12)
+    ctx.setStrokeColor(seam)
+    ctx.setLineWidth(12 * k)
+    ctx.setLineJoin(.round)
     for i in 0..<6 {
         // Two flat tones, alternating, so the blades read as separate leaves.
         let tone: UInt32 = tinted ? (i % 2 == 0 ? 0x6E6E6E : 0x5A5A5A) : (i % 2 == 0 ? 0xF2F3F5 : 0xCDD1D9)
-        ctx.addPath(iris.blade(i))
         ctx.setFillColor(rgb(tone))
-        ctx.fillPath()
         ctx.addPath(iris.blade(i))
-        ctx.setStrokeColor(seam)
-        ctx.setLineWidth(12 * k)
-        ctx.setLineJoin(.round)
-        ctx.strokePath()
+        ctx.drawPath(using: .fillStroke)
     }
-    ctx.addPath(iris.opening)
     ctx.setFillColor(amber)
-    ctx.fillPath()
     ctx.addPath(iris.opening)
-    ctx.setStrokeColor(seam)
-    ctx.setLineWidth(12 * k)
-    ctx.strokePath()
+    ctx.drawPath(using: .fillStroke)
 
     // Two thick Wi-Fi arcs off the ring's top-right: the link.
     let origin = CGPoint(x: c.x + 250 * k, y: c.y + 250 * k)
@@ -114,8 +109,6 @@ func drawMark(_ ctx: CGContext, center c: CGPoint, scale k: CGFloat, variant: Va
 func render(_ variant: Variant, size: Int) -> CGImage {
     let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    ctx.setShouldAntialias(true)
-    ctx.interpolationQuality = .high
     let S = CGFloat(size)
     // Pure black behind the light icon; dark, tinted and the launch mark are transparent
     // (iOS supplies the backdrop).

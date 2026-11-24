@@ -7,20 +7,17 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
-import kotlin.math.ln
+import kotlin.math.log2
 import kotlin.math.pow
 
 // Interval timer, timed Bulb, exposure bracketing, the Astro preset, stars and RAW download.
 // Port of Features.swift, Extras.swift and Astro.swift.
 
-private fun log2(x: Double) = ln(x) / ln(2.0)
-
 // MARK: - Interval timer
 
 fun CameraModel.startInterval(plan: IntervalPlan) {
     if (interval.running || mode != CameraMode.REC || isOpenEndedShutter) return
-    val now = System.currentTimeMillis()
-    interval = IntervalState(running = true, done = 0, total = plan.count, nextShotAt = now, startedAt = now)
+    interval = IntervalState(running = true, done = 0, total = plan.count, nextShotAt = System.currentTimeMillis())
     val rampTarget = if (plan.ramp) recentFrame?.let { FrameMeter.brightness(it) } else null
     val baseIso = properties["isospeedvalue"]?.value?.toIntOrNull()
     if (plan.ramp && rampTarget == null) interval = interval.copy(rampNote = "No live view to follow the light: ramping is off")
@@ -76,63 +73,44 @@ fun CameraModel.bracketProperty(target: BracketTarget): String = when (target) {
 }
 
 /** Offsets in thirds of a stop, in the usual camera order: 0, −1, +1, −2, +2… */
-fun bracketOffsets(frames: Int, thirds: Int): List<Int> {
-    val result = mutableListOf(0)
-    var k = 1
-    while (result.size < frames) {
-        result.add(-k * thirds)
-        if (result.size < frames) result.add(k * thirds)
-        k++
-    }
-    return result
+fun bracketOffsets(frames: Int, thirds: Int): List<Int> = List(maxOf(frames, 1)) { i ->
+    val k = (i + 1) / 2
+    if (i % 2 == 1) -k * thirds else k * thirds
 }
 
 /** What a plan would shoot, or why it can't run with the current settings. */
 fun CameraModel.bracketSet(plan: BracketPlan): Result<BracketSet> {
     val name = bracketProperty(plan.target)
+    val isEv = name == "expcomp"
     val property = properties[name] ?: return Result.failure(CameraException(
-        "This camera doesn't offer ${if (name == "expcomp") "exposure compensation" else "shutter speed"} over Wi-Fi."))
+        "This camera doesn't offer ${if (isEv) "exposure compensation" else "shutter speed"} over Wi-Fi."))
     if (!property.settable) {
         val mode = PropertyFormat.display("takemode", properties["takemode"]?.value ?: "")
-        return Result.failure(CameraException(if (name == "expcomp")
+        return Result.failure(CameraException(if (isEv)
             "Exposure compensation is locked in $mode. Use P, A or S, or bracket the shutter in M."
         else "The shutter speed is locked in $mode. Use S or M, or bracket EV instead."))
     }
     val offsets = bracketOffsets(plan.frames, plan.thirds)
-    val values = mutableListOf<String>()
+    val number: (String) -> Double? = if (isEv) String::toDoubleOrNull else PropertyFormat::seconds
+    val options = property.options.mapNotNull { o -> number(o)?.let { o to it } }
+    val base = number(property.value)
+    if (base == null || options.isEmpty()) return Result.failure(CameraException(if (isEv)
+        "Couldn't read the current exposure compensation." else "Bracketing needs a timed shutter speed, not Bulb or Live modes."))
+    // How far a value is from a frame's target, in stops. A positive offset means more light: a longer exposure.
+    fun miss(value: Double, offset: Int) = abs(if (isEv) value - (base + offset / 3.0) else log2(value / (base * 2.0.pow(offset / 3.0))))
     var clamped = false
-    if (name == "expcomp") {
-        val options = property.options.mapNotNull { o -> o.toDoubleOrNull()?.let { o to it } }
-        val base = property.value.toDoubleOrNull()
-        if (base == null || options.isEmpty()) return Result.failure(CameraException("Couldn't read the current exposure compensation."))
-        for (offset in offsets) {
-            val target = base + offset / 3.0
-            val best = options.minByOrNull { abs(it.second - target) } ?: continue
-            if (abs(best.second - target) > 0.17) clamped = true
-            values.add(best.first)
-        }
-    } else {
-        val options = property.options.mapNotNull { o -> PropertyFormat.seconds(o)?.let { o to it } }
-        val base = PropertyFormat.seconds(property.value)
-        if (base == null || options.isEmpty()) return Result.failure(CameraException("Bracketing needs a timed shutter speed, not Bulb or Live modes."))
-        for (offset in offsets) {
-            // A positive offset means more light: a longer exposure.
-            val target = base * 2.0.pow(offset / 3.0)
-            val best = options.minByOrNull { abs(log2(it.second / target)) } ?: continue
-            if (abs(log2(best.second / target)) > 0.17) clamped = true
-            values.add(best.first)
-        }
+    val values = offsets.map { offset ->
+        val best = options.minBy { miss(it.second, offset) }
+        if (miss(best.second, offset) > 0.17) clamped = true
+        best.first
     }
     return Result.success(BracketSet(name, values, offsets, clamped))
 }
 
 fun offsetLabel(thirds: Int): String {
     if (thirds == 0) return "±0"
-    val sign = if (thirds > 0) "+" else "−"
     val whole = abs(thirds) / 3
-    val rest = abs(thirds) % 3
-    val fraction = when (rest) { 0 -> ""; 1 -> "⅓"; else -> "⅔" }
-    return "$sign${if (whole > 0) "$whole" else ""}$fraction"
+    return (if (thirds > 0) "+" else "−") + (if (whole > 0) "$whole" else "") + listOf("", "⅓", "⅔")[abs(thirds) % 3]
 }
 
 val CameraModel.canBracket: Boolean
@@ -208,7 +186,7 @@ val CameraModel.canFocusStack: Boolean get() = capabilities.focusDrive && canBra
 fun CameraModel.startFocusStack(frames: Int, step: FocusStepSize) {
     val driver = driver ?: return
     if (!canFocusStack || frames <= 0) return
-    bracket = BracketState(running = true, done = 0, total = frames, isFocusStack = true)
+    bracket = BracketState(running = true, done = 0, total = frames)
     bracketJob = scope.launch {
         var reachedEnd = false
         var failure: String? = null
@@ -284,17 +262,9 @@ fun CameraModel.rawCompanion(image: CameraImage): CameraImage? {
 /** Fetches the RAW of every starred photo and saves it to Download/Shutterlink/RAW. */
 fun CameraModel.downloadStarredRaws() {
     if (rawImportJob != null) return
-    val raws = mutableListOf<CameraImage>()
-    var withoutRaw = 0
-    for (image in images) {
-        if (!isStarred(image) || image.isVideo) continue
-        val raw = rawCompanion(image)
-        if (raw != null) {
-            if (raw !in raws) raws.add(raw)
-        } else {
-            withoutRaw++
-        }
-    }
+    val companions = images.filter { isStarred(it) && !it.isVideo }.map { rawCompanion(it) }
+    val raws = companions.filterNotNull().distinct()
+    val withoutRaw = companions.count { it == null }
     if (raws.isEmpty()) {
         rawImport = RawImportProgress(message = if (withoutRaw > 0)
             "None of the starred photos has a RAW file next to it. Shoot RAW+JPEG to use this."
@@ -313,8 +283,7 @@ fun CameraModel.downloadStarredRaws() {
             }
             rawImport = rawImport?.copy(current = raw.name)
             try {
-                val data = downloadOriginal(raw)
-                MediaSaver.save(context, data, raw)
+                saveOriginal(raw)
                 saved++
             } catch (e: CancellationException) {
                 cancelled = true
@@ -369,5 +338,3 @@ fun CameraModel.stripValue(name: String, property: CameraProperty?): String {
     if (property == null) return "–"
     return PropertyFormat.display(name, property.value)
 }
-
-fun CameraModel.stripValue(name: String): String = stripValue(name, properties[name]?.let { dialOptions(it) })

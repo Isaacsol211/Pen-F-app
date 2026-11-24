@@ -1,9 +1,8 @@
 import SwiftUI
 
 /// How a setting is presented on the main screen.
-struct SettingSpec: Identifiable {
+struct SettingSpec {
     enum Style { case dial, grid }
-    var id: String { name }
     let name: String
     let title: String
     let icon: String
@@ -46,113 +45,6 @@ struct SettingSpec: Identifiable {
         default:
             return nil
         }
-    }
-}
-
-/// The row of setting icons. Tapping one opens its options in an `OptionPanel`.
-struct SettingsDock: View {
-    @Environment(CameraModel.self) private var camera
-    @Binding var active: String?
-    var axis: Axis = .horizontal
-
-    private var specs: [SettingSpec] {
-        SettingSpec.all.filter { spec in
-            guard camera.properties[spec.name] != nil else { return false }
-            // Movie exposure only matters in movie mode.
-            return spec.name != "exposemovie" || camera.isMovieMode
-        }
-    }
-
-    var body: some View {
-        Group {
-            if axis == .horizontal {
-                GlassEffectContainer(spacing: 6) {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                        tiles
-                    }
-                    .padding(.horizontal, 12)
-                }
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    GlassEffectContainer(spacing: 6) {
-                        VStack(spacing: 8) { tiles }
-                            .padding(.vertical, 4)
-                    }
-                }
-                .scrollClipDisabled()
-            }
-        }
-        .animation(.bouncy(duration: 0.4), value: specs.map(\.name))
-        .sensoryFeedback(.selection, trigger: active)
-        .overlay {
-            if camera.properties.isEmpty && camera.mode == .rec && !camera.isSwitchingMode {
-                Text("Reading camera settings…").font(.footnote).foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-extension SettingsDock {
-    @ViewBuilder fileprivate var tiles: some View {
-        ForEach(specs) { spec in
-            if let property = camera.properties[spec.name] {
-                SettingTile(spec: spec,
-                            value: PropertyFormat.display(spec.name, camera.dialOptions(for: property).value),
-                            locked: !property.settable,
-                            selected: active == spec.name,
-                            fixedWidth: axis == .vertical) {
-                    withAnimation(.bouncy(duration: 0.35)) {
-                        active = active == spec.name ? nil : spec.name
-                    }
-                }
-                .transition(.scale(scale: 0.8).combined(with: .opacity))
-            }
-        }
-    }
-}
-
-struct SettingTile: View {
-    let spec: SettingSpec
-    let value: String
-    let locked: Bool
-    let selected: Bool
-    var fixedWidth = true
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: spec.icon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(selected ? Theme.accent : (locked ? Color.secondary : Color.white))
-                    .symbolEffect(.bounce, value: selected)
-                    .overlay(alignment: .topTrailing) {
-                        if locked {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(.secondary)
-                                .offset(x: 8, y: -4)
-                        }
-                    }
-                Text(value)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(locked ? .secondary : .primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .contentTransition(.numericText())
-            }
-            .frame(maxWidth: fixedWidth ? 66 : .infinity)
-            .frame(width: fixedWidth ? 66 : nil, height: 56)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .surface(selected ? .regular.tint(Theme.accent.opacity(0.4)).interactive() : .regular.interactive(),
-                     in: .rect(cornerRadius: 18, style: .continuous))
-        .animation(.snappy, value: value)
-        .accessibilityLabel("\(spec.title): \(value)\(locked ? ", set by the camera" : "")")
-        .accessibilityHint("Shows the options")
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -253,7 +145,7 @@ struct OptionGrid: View {
                         .foregroundStyle(selected ? Color.black : Color.white)
                     }
                     .buttonStyle(.plain)
-                    .surface(selected ? .regular.tint(Theme.accent).interactive() : .regular.interactive(),
+                    .surface(selected ? .regular.tint(Theme.accent) : .regular,
                                  in: .rect(cornerRadius: 14, style: .continuous))
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }

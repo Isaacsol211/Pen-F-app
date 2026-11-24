@@ -79,10 +79,10 @@ private fun icon(name: String): ImageVector = when (name) {
  * button. Nothing changes until that button is tapped; the cross keeps it away for a while.
  */
 @Composable
-fun SceneSuggestionPill(camera: CameraModel, suggestion: SceneSuggestion, onApply: () -> Unit, modifier: Modifier = Modifier) {
+fun SceneSuggestionPill(camera: CameraModel, suggestion: SceneSuggestion, onApply: () -> Unit) {
     val enabled = !camera.presetRunning && !camera.isShooting
     Row(
-        modifier.widthIn(max = 520.dp).fillMaxWidth().surface(RoundedCornerShape(22.dp), overImage = true)
+        Modifier.widthIn(max = 520.dp).fillMaxWidth().surface(RoundedCornerShape(22.dp), overImage = true)
             .padding(start = 8.dp, end = 4.dp)
             .semantics { contentDescription = "${suggestion.title}. ${suggestion.detail}" },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),

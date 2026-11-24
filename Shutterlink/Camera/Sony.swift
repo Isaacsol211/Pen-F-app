@@ -1,4 +1,3 @@
-import Foundation
 import UIKit
 
 // Sony Camera Remote API (JSON-RPC over HTTP), as used by PlayMemories Mobile with the
@@ -43,9 +42,6 @@ final class SonyDriver: CameraDriver {
     private var eventTask: Task<Void, Never>?
     /// UI value → Sony value, per property.
     private var valueMap: [String: [String: String]] = [:]
-    /// Exposure compensation index step: 1 = ⅓ EV, 2 = ½ EV.
-    private var evStep = 1
-    private var bulbRunning = false
 
     init(camera: CameraModel) {
         self.camera = camera
@@ -55,11 +51,9 @@ final class SonyDriver: CameraDriver {
     var liveViewFormat: LiveViewFormat { .pushed }
 
     var capabilities: CameraCapabilities {
-        CameraCapabilities(liveViewSizes: [], tapToFocus: apis.contains("setTouchAFPosition") || apis.isEmpty,
-                           openEndedExposure: apis.contains("startBulbShooting"),
-                           movie: apis.contains("startMovieRec") || apis.contains("setShootMode"),
-                           videoSwitch: true, lastShotReview: true, clockSync: false, highResShot: false,
-                           cardBrowser: apis.contains("setCameraFunction"), powerOff: false)
+        CameraCapabilities(tapToFocus: apis.contains("setTouchAFPosition") || apis.isEmpty,
+                           movie: apis.contains("startMovieRec") || apis.contains("setShootMode"), videoSwitch: true,
+                           lastShotReview: true, cardBrowser: apis.contains("setCameraFunction"))
     }
 
     // MARK: - JSON-RPC
@@ -80,21 +74,7 @@ final class SonyDriver: CameraDriver {
     // MARK: - Connect
 
     func connect() async throws {
-        var failure: Error?
-        for attempt in 1...3 {
-            do {
-                _ = try await call("getVersions", timeout: 5)
-                failure = nil
-                break
-            } catch {
-                failure = error
-                guard attempt < 3, error is URLError else { break }
-                camera.status = "No answer yet, retrying (\(attempt + 1)/3)…"
-                try? await Task.sleep(for: .milliseconds(1500))
-            }
-        }
-        if let failure { throw failure }
-
+        try await camera.retryingConnect { try await call("getVersions", timeout: 5) }
         camera.status = "Reading camera info…"
         camera.cameraName = await deviceName() ?? "Sony"
         if let info = try? await call("getApplicationInfo") {
@@ -327,9 +307,9 @@ final class SonyDriver: CameraDriver {
            let reply = try? await call("getAvailableExposureCompensation", log: false), reply.count >= 4,
            let current = reply[0] as? Int, let maxIndex = reply[1] as? Int, let minIndex = reply[2] as? Int,
            let step = reply[3] as? Int, maxIndex > minIndex {
-            evStep = step == 2 ? 2 : 1
-            let label = { (i: Int) in self.evStep == 2 ? (i == 0 ? "0.0" : String(format: "%+.1f", Double(i) / 2))
-                                                         : ExposureText.ev(thirds: i) }
+            // Index step: 1 = ⅓ EV, 2 = ½ EV.
+            let label = { (i: Int) in step == 2 ? (i == 0 ? "0.0" : String(format: "%+.1f", Double(i) / 2))
+                                                : ExposureText.ev(thirds: i) }
             var map: [String: String] = [:]
             let options = (minIndex...maxIndex).map { i -> String in
                 let text = label(i)
@@ -366,18 +346,11 @@ final class SonyDriver: CameraDriver {
             if reportErrors { camera.lastError = "This setting can't be changed on a Sony camera from the app." }
             return false
         }
-        let previous = camera.properties[name]?.value
-        camera.properties[name]?.value = value
-        do {
+        let ok = await camera.optimisticallySet(name, to: value, reportErrors: reportErrors) {
             try await call(request.0, request.1)
-        } catch {
-            if let previous { camera.properties[name]?.value = previous }
-            if reportErrors { camera.report(error) }
-            await refreshProperties()
-            return false
         }
         await refreshProperties()
-        return true
+        return ok
     }
 
     static func modeLabel(_ sony: String) -> String? {
@@ -427,17 +400,8 @@ final class SonyDriver: CameraDriver {
     }
 
     func shutterPressed() async {
-        camera.isShooting = true
-        let seconds = PropertyFormat.seconds(fromShutter: camera.properties["shutspeedvalue"]?.value ?? "") ?? 0
-        if seconds >= 1 {
-            camera.exposureStartedAt = Date()
-            camera.exposureDuration = seconds
-        }
-        defer {
-            camera.isShooting = false
-            camera.exposureStartedAt = nil
-            camera.exposureDuration = nil
-        }
+        let seconds = camera.beginShot()
+        defer { camera.endShot() }
         do {
             var result: [Any]
             do {
@@ -486,9 +450,7 @@ final class SonyDriver: CameraDriver {
     func toggleMovie() async {
         if camera.isRecordingMovie {
             _ = try? await call("stopMovieRec")
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = nil
-            camera.shotCounter += 1
+            camera.setRecordingMovie(false)
             if apis.contains("setShootMode") || apis.contains("getShootMode") {
                 _ = try? await call("setShootMode", ["still"])
             }
@@ -497,8 +459,7 @@ final class SonyDriver: CameraDriver {
         do {
             _ = try? await call("setShootMode", ["movie"])
             try await call("startMovieRec", timeout: 15)
-            camera.isRecordingMovie = true
-            camera.movieStartedAt = Date()
+            camera.setRecordingMovie(true)
         } catch {
             _ = try? await call("setShootMode", ["still"])
             camera.report(error)
@@ -558,21 +519,7 @@ final class SonyDriver: CameraDriver {
         }
     }
 
-    func thumbnail(for image: CameraImage) async -> UIImage? {
-        guard let urls = image.urls,
-              let data = try? await client.fetch(urls.thumbnail ?? urls.preview ?? urls.original, log: false) else { return nil }
-        return UIImage(data: data)
-    }
-
-    func preview(for image: CameraImage) async throws -> UIImage {
-        guard let urls = image.urls else { throw CameraError("The camera gave no address for this file.") }
-        let data = try await client.fetch(urls.preview ?? urls.thumbnail ?? urls.original)
-        guard let picture = UIImage(data: data) else { throw CameraError("Couldn't decode the preview.") }
-        return picture
-    }
-
-    func downloadOriginal(_ image: CameraImage) async throws -> Data {
-        guard let urls = image.urls else { throw CameraError("The camera gave no address for this file.") }
-        return try await client.fetch(urls.original, timeout: 300)
-    }
+    func thumbnail(for image: CameraImage) async -> UIImage? { await client.thumbnail(for: image) }
+    func preview(for image: CameraImage) async throws -> UIImage { try await client.preview(for: image) }
+    func downloadOriginal(_ image: CameraImage) async throws -> Data { try await client.fetch(image.urls?.original, timeout: 300) }
 }

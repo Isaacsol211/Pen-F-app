@@ -5,7 +5,7 @@ import android.graphics.Color
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.math.ln
+import kotlin.math.log2
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -31,11 +31,15 @@ object FrameMeter {
             if (right - left < 2 || bottom - top < 2) return null
             source = Bitmap.createBitmap(image, left, top, right - left, bottom - top)
         }
-        val small = Bitmap.createScaledBitmap(source, width, height, true)
-        val px = IntArray(width * height)
-        small.getPixels(px, 0, width, 0, 0, width, height)
+        val px = scaledPixels(source, width, height)
         IntArray(px.size) { (Color.red(px[it]) * 299 + Color.green(px[it]) * 587 + Color.blue(px[it]) * 114) / 1000 }
     }.getOrNull()
+
+    private fun scaledPixels(image: Bitmap, width: Int, height: Int): IntArray =
+        IntArray(width * height).also { Bitmap.createScaledBitmap(image, width, height, true).getPixels(it, 0, width, 0, 0, width, height) }
+
+    /** Share of `grey` cells that clearly changed: a small subject counts as much as a big one moving slightly; JPEG noise doesn't. */
+    fun change(before: IntArray, after: IntArray): Double = before.indices.count { abs(before[it] - after[it]) > 16 }.toDouble() / before.size
 
     /** Mean linear brightness, 0…1. */
     fun brightness(image: Bitmap): Double? {
@@ -51,11 +55,7 @@ object FrameMeter {
 
     /** Mean colour of the bright, nearly grey parts of a frame (white walls, a white shirt), 0…255 per channel. */
     fun neutralCast(image: Bitmap): ColourCast? = runCatching {
-        val width = 80
-        val height = 60
-        val small = Bitmap.createScaledBitmap(image, width, height, true)
-        val px = IntArray(width * height)
-        small.getPixels(px, 0, width, 0, 0, width, height)
+        val px = scaledPixels(image, 80, 60)
         var red = 0.0
         var green = 0.0
         var blue = 0.0
@@ -70,7 +70,7 @@ object FrameMeter {
             if ((r + g + b) / 3 <= 150 || high >= 250 || high - low >= 60) continue
             red += r; green += g; blue += b; count++
         }
-        if (count < width * height * 3 / 100) return null
+        if (count < px.size * 3 / 100) return null
         ColourCast(red / count, green / count, blue / count)
     }.getOrNull()
 }
@@ -90,14 +90,9 @@ fun secondsFromDisplay(text: String): Double? {
     return PropertyFormat.seconds(t)
 }
 
-private fun log2(x: Double) = ln(x) / ln(2.0)
-
 /** The latest live-view frame, if one arrived in the last few seconds. */
 val CameraModel.recentFrame: Bitmap?
-    get() {
-        val at = lastFrameAt ?: return null
-        return if (System.currentTimeMillis() - at < 3000) latestBitmap else null
-    }
+    get() = lastFrameAt?.takeIf { System.currentTimeMillis() - it < 3000 }?.let { latestBitmap }
 
 /** One step brighter or darker for `name`: the next EV option, shutter speed or ISO. */
 fun CameraModel.adjacentValue(name: String, brighter: Boolean): String? {
@@ -139,18 +134,12 @@ val CameraModel.meteredExposure: NDMeter?
 
 fun ndSeconds(metered: Double, stops: Int): Double = metered * 2.0.pow(stops)
 
-/** Bulb, or the Live mode that works like it, for exposures longer than the camera's timed ones. */
-val CameraModel.bulbShutter: String?
-    get() {
-        val options = properties["shutspeedvalue"]?.options ?: return null
-        return listOf("bulb", "livetime", "livebulb").firstNotNullOfOrNull { wanted -> options.firstOrNull { it.lowercase() == wanted } }
-    }
-
-/** The shutter the ND exposure needs: a timed speed when the camera has one long enough, else Bulb. */
+/** The shutter the ND exposure needs: a timed speed when the camera has one long enough, else Bulb (or the Live mode that works like it). */
 fun CameraModel.ndShutter(seconds: Double): Pair<String?, Boolean> {
     val longest = timedShutters.maxOfOrNull { it.second } ?: 0.0
     if (seconds <= longest * 1.12) return shutter(seconds) to false
-    bulbShutter?.let { return it to true }
+    val options = properties["shutspeedvalue"]?.options ?: emptyList()
+    listOf("bulb", "livetime", "livebulb").firstNotNullOfOrNull { wanted -> options.firstOrNull { it.lowercase() == wanted } }?.let { return it to true }
     return timedShutters.maxByOrNull { it.second }?.first to false
 }
 
@@ -260,15 +249,11 @@ fun CameraModel.analyzeMotion(image: Bitmap) {
     val previous = motionPrevious
     motionPrevious = pixels
     if (previous == null || previous.size != pixels.size) return
-    // The share of cells that clearly changed: a small subject counts as much as a big one moving slightly,
-    // and JPEG noise (a few levels) doesn't count at all.
-    var changed = 0
-    for (i in pixels.indices) if (abs(previous[i] - pixels[i]) > 16) changed++
-    val change = changed.toDouble() / pixels.size
+    val change = FrameMeter.change(previous, pixels)
     if (abs(change - motionLevel) > 0.005) motionLevel = change
     if (!motion.armed || mode != CameraMode.REC || isShooting || bracket.running || interval.running ||
         now < motionQuietUntil || change <= motion.threshold) return
-    motion = motion.copy(shots = motion.shots + 1, lastTrigger = now)
+    motion = motion.copy(shots = motion.shots + 1)
     // Live view hiccups around a capture; don't let that count as movement.
     motionQuietUntil = now + (maxOf(1.5, motion.cooldown) * 1000).toLong()
     motionPrevious = null

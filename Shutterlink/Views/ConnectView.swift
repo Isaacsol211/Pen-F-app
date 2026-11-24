@@ -21,23 +21,11 @@ struct ConnectView: View {
                 if workspace {
                     workspaceContent(width: geo.size.width)
                 } else {
-                    VStack(alignment: .leading, spacing: 24) {
-                        if camera.savedCameras.isEmpty {
-                            cover(compact: geo.size.height < 600)
-                            scanToConnect
-                            emptyState
-                        } else {
-                            BrandLockup(markSize: 40)
-                                .padding(.top, 20)
-                            scanToConnect
-                            cameraList(grid: false)
-                            tip
-                        }
-                    }
-                    .frame(maxWidth: 560, alignment: .leading)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 24)
+                    cameras(grid: false, compactCover: geo.size.height < 600)
+                        .frame(maxWidth: 560, alignment: .leading)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 24)
                 }
             }
             .scrollEdgeEffectStyle(.soft, for: .top)
@@ -66,24 +54,31 @@ struct ConnectView: View {
     /// Widest the two-pane home gets, so lines stay readable on a 13-inch screen.
     static let workspaceMaxWidth: CGFloat = 1180
 
+    /// Your cameras with Scan to connect, or on first run the cover. `grid`: the workspace home, where
+    /// the cards go side by side and the tip sits under the guide instead.
+    private func cameras(grid: Bool, compactCover: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 24) {
+            if camera.savedCameras.isEmpty {
+                cover(compact: compactCover)
+                scanToConnect
+                emptyState
+            } else {
+                BrandLockup(markSize: grid ? 44 : 40)
+                    .padding(.top, grid ? 28 : 20)
+                scanToConnect
+                cameraList(grid: grid)
+                if !grid { tip }
+            }
+        }
+    }
+
     /// Two panes: your cameras as a grid of cards, and beside them the connection guide that is
     /// otherwise a sheet away.
     private func workspaceContent(width: CGFloat) -> some View {
         let guideWidth = min(440, max(330, (width * 0.36).rounded()))
         return HStack(alignment: .top, spacing: 32) {
-            VStack(alignment: .leading, spacing: 24) {
-                if camera.savedCameras.isEmpty {
-                    cover(compact: false)
-                    scanToConnect
-                    emptyState
-                } else {
-                    BrandLockup(markSize: 44)
-                        .padding(.top, 28)
-                    scanToConnect
-                    cameraList(grid: true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            cameras(grid: true, compactCover: false)
+                .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .leading, spacing: 20) {
                 guide
                 if !camera.savedCameras.isEmpty { tip }
@@ -114,14 +109,7 @@ struct ConnectView: View {
             }
             .scrollIndicators(.hidden)
             .scrollClipDisabled()
-            ForEach(Array(Self.steps(for: brand).enumerated()), id: \.offset) { index, step in
-                StepRow(number: index + 1, title: step.title, detail: step.detail)
-            }
-            if let note = brand?.supportNote {
-                Label(note, systemImage: "flask")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.secondary)
-            }
+            Self.stepRows(for: brand)
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -270,15 +258,11 @@ struct ConnectView: View {
                 .padding(.bottom, 4)
             if grid {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), spacing: 12)], spacing: 12) {
-                    ForEach(camera.savedCameras) { saved in
-                        card(saved)
-                    }
+                    ForEach(camera.savedCameras) { card($0) }
                     addButton(minHeight: 84)
                 }
             } else {
-                ForEach(camera.savedCameras) { saved in
-                    card(saved)
-                }
+                ForEach(camera.savedCameras) { card($0) }
                 addButton(minHeight: 60)
             }
         }
@@ -410,6 +394,18 @@ struct ConnectView: View {
         .background(Theme.background)
     }
 
+    /// A brand's setup steps, numbered, then its support note.
+    @ViewBuilder static func stepRows(for brand: CameraBrand?) -> some View {
+        ForEach(Array(steps(for: brand).enumerated()), id: \.offset) { index, step in
+            StepRow(number: index + 1, title: step.title, detail: step.detail)
+        }
+        if let note = brand?.supportNote {
+            Label(note, systemImage: "flask")
+                .font(.footnote)
+                .foregroundStyle(Theme.secondary)
+        }
+    }
+
     /// Setup steps for a brand; nil = auto-detect.
     static func steps(for brand: CameraBrand?) -> [(title: String, detail: String)] {
         switch brand {
@@ -465,7 +461,6 @@ struct ConnectView: View {
             ]
         }
     }
-
 }
 
 /// New camera: pick the brand (or Automatic), follow its steps, connect. The camera is saved the
@@ -557,8 +552,7 @@ struct AddCameraSheet: View {
                     row(brand)
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+            .surface(.regular, in: .rect(cornerRadius: 20, style: .continuous))
             .disabled(camera.phase != .disconnected)
         }
     }
@@ -601,18 +595,10 @@ struct AddCameraSheet: View {
     private var stepsCard: some View {
         VStack(alignment: .leading, spacing: 16) {
             CapsLabel("How to connect", color: Theme.accent)
-            ForEach(Array(ConnectView.steps(for: selection).enumerated()), id: \.offset) { index, step in
-                StepRow(number: index + 1, title: step.title, detail: step.detail)
-            }
-            if let note = selection?.supportNote {
-                Label(note, systemImage: "flask")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.secondary)
-            }
+            ConnectView.stepRows(for: selection)
         }
         .padding(18)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+        .surface(.regular, in: .rect(cornerRadius: 20, style: .continuous))
         .animation(.smooth, value: selection)
     }
 
@@ -699,29 +685,26 @@ struct AddCameraSheet: View {
                     .foregroundStyle(Theme.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 VStack(spacing: 0) {
-                    TextField("Network name", text: $camera.wifiSSID)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.body.monospaced())
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: Theme.target)
-                        .accessibilityLabel("Camera network name")
+                    wifiField("Network name", $camera.wifiSSID, label: "Camera network name")
                     Rectangle().fill(Theme.stroke).frame(height: 1).padding(.leading, 14)
-                    TextField("Password", text: $camera.wifiPassword)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.body.monospaced())
-                        .padding(.horizontal, 14)
-                        .frame(minHeight: Theme.target)
-                        .accessibilityLabel("Camera network password")
+                    wifiField("Password", $camera.wifiPassword, label: "Camera network password")
                 }
                 .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.surfaceRaised))
                 .disabled(camera.phase != .disconnected)
             }
             .padding(18)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+            .surface(.regular, in: .rect(cornerRadius: 20, style: .continuous))
         }
+    }
+
+    private func wifiField(_ title: String, _ text: Binding<String>, label: String) -> some View {
+        TextField(title, text: text)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .font(.body.monospaced())
+            .padding(.horizontal, 14)
+            .frame(minHeight: Theme.target)
+            .accessibilityLabel(label)
     }
 
     @ViewBuilder private var advanced: some View {

@@ -41,10 +41,8 @@ extension CameraModel {
         } else {
             saved.ssid = savedCameras.first { $0.id == saved.id }?.ssid
         }
-        var list = savedCameras.filter { $0.id != saved.id }
-        list.insert(saved, at: 0)
-        savedCameras = list
-        SavedCamera.save(list)
+        savedCameras = [saved] + savedCameras.filter { $0.id != saved.id }
+        SavedCamera.save(savedCameras)
     }
 
     func forget(_ saved: SavedCamera) {

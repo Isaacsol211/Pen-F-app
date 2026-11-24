@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -110,21 +111,10 @@ fun GalleryScreen(camera: CameraModel, onDone: () -> Unit) {
                     CircularProgressIndicator(color = Theme.accent)
                     Text("Reading the card…", color = Theme.secondary)
                 }
-                error != null && camera.images.isEmpty() -> Centered {
-                    Icon(Icons.Filled.SdCard, null, Modifier.size(40.dp), tint = Theme.secondary)
-                    Text("Couldn't read the card", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text(error, color = Theme.secondary, textAlign = TextAlign.Center)
-                }
-                camera.images.isEmpty() -> Centered {
-                    Icon(Icons.Filled.PhotoLibrary, null, Modifier.size(40.dp), tint = Theme.secondary)
-                    Text("No photos", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text("Nothing on the card yet.", color = Theme.secondary)
-                }
-                starredOnly && starredCount == 0 -> Centered {
-                    Icon(Icons.Filled.StarBorder, null, Modifier.size(40.dp), tint = Theme.secondary)
-                    Text("No starred photos", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text("Tap and hold a photo to star it, or use the star when viewing it.", color = Theme.secondary, textAlign = TextAlign.Center)
-                }
+                error != null && camera.images.isEmpty() -> EmptyState(Icons.Filled.SdCard, "Couldn't read the card", error)
+                camera.images.isEmpty() -> EmptyState(Icons.Filled.PhotoLibrary, "No photos", "Nothing on the card yet.")
+                starredOnly && starredCount == 0 ->
+                    EmptyState(Icons.Filled.StarBorder, "No starred photos", "Tap and hold a photo to star it, or use the star when viewing it.")
                 else -> LazyVerticalGrid(GridCells.Adaptive(104.dp), Modifier.fillMaxSize(),
                     horizontalArrangement = Arrangement.spacedBy(3.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     for (folder in camera.cardFolders) {
@@ -155,6 +145,13 @@ fun GalleryScreen(camera: CameraModel, onDone: () -> Unit) {
 private fun Centered(content: @Composable () -> Unit) {
     Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically)) { content() }
+}
+
+@Composable
+private fun EmptyState(icon: ImageVector, title: String, detail: String) = Centered {
+    Icon(icon, null, Modifier.size(40.dp), tint = Theme.secondary)
+    Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+    Text(detail, color = Theme.secondary, textAlign = TextAlign.Center)
 }
 
 @Composable

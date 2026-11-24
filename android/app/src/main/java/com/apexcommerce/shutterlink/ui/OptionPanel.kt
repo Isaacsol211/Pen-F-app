@@ -17,15 +17,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BurstMode
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CropSquare
@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.filled.WbAuto
@@ -102,7 +101,6 @@ data class SettingSpec(val name: String, val title: String, val dial: Boolean) {
 
         /** Icon for an individual option in a grid or on the WB dial. */
         fun optionIcon(name: String, value: String): ImageVector? = when (name) {
-            "takemode" -> if (value.lowercase() == "iauto") Icons.Filled.AutoAwesome else if (value.lowercase() == "movie") Icons.Filled.Videocam else null
             "wbvalue" -> when (value) {
                 "0" -> Icons.Filled.WbAuto
                 "18" -> Icons.Filled.WbSunny
@@ -193,7 +191,7 @@ fun OptionGrid(property: CameraProperty, onSelect: (String) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        itemsIndexed(property.options) { _, option ->
+        items(property.options) { option ->
             val selected = option == property.value
             Column(
                 Modifier.heightIn(min = 52.dp)
@@ -219,12 +217,12 @@ fun OptionGrid(property: CameraProperty, onSelect: (String) -> Unit) {
 @Composable
 fun ShutterOptions(camera: CameraModel, property: CameraProperty) {
     val scope = rememberCoroutineScope()
-    val lastTimed = remember { mutableStateOf(camera.prefs.getString("lastTimedShutter", "250") ?: "250") }
+    var lastTimed by remember { mutableStateOf(camera.prefs.getString("lastTimedShutter", "250") ?: "250") }
     val liveModes = property.options.filter { PropertyFormat.isOpenEnded(it) }
     val timedOptions = property.options.filter { !PropertyFormat.isOpenEnded(it) }
     val timedValue = when {
         property.value in timedOptions -> property.value
-        lastTimed.value in timedOptions -> lastTimed.value
+        lastTimed in timedOptions -> lastTimed
         else -> timedOptions.firstOrNull() ?: property.value
     }
     val timed = property.copy(options = timedOptions, value = timedValue)
@@ -249,7 +247,7 @@ fun ShutterOptions(camera: CameraModel, property: CameraProperty) {
         }
         if (current == "timed") {
             ValueDial(timed) { value ->
-                lastTimed.value = value
+                lastTimed = value
                 camera.prefs.edit().putString("lastTimedShutter", value).apply()
                 scope.launch { camera.setProperty("shutspeedvalue", value) }
             }
@@ -293,7 +291,7 @@ fun BulbTimerControl(camera: CameraModel) {
  * every step crossed. The value is sent to the camera when scrolling stops.
  */
 @Composable
-fun ValueDial(property: CameraProperty, showsTitle: Boolean = true, onCommit: (String) -> Unit) {
+fun ValueDial(property: CameraProperty, onCommit: (String) -> Unit) {
     val usesIcons = property.name == "wbvalue"
     val spacing: Dp = if (usesIcons) 46.dp else if (property.name == "shutspeedvalue") 13.dp else 11.dp
     val options = property.options
@@ -305,13 +303,7 @@ fun ValueDial(property: CameraProperty, showsTitle: Boolean = true, onCommit: (S
     val scope = rememberCoroutineScope()
 
     // The item under the centre marker.
-    val centeredIndex by remember(options) {
-        derivedStateOf {
-            val info = state.layoutInfo
-            val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
-            info.visibleItemsInfo.minByOrNull { abs(it.offset + it.size / 2 - center) }?.index ?: startIndex
-        }
-    }
+    val centeredIndex by remember(options) { derivedStateOf { state.itemAtCenter() ?: startIndex } }
     val current = options.getOrNull(centeredIndex) ?: property.value
 
     // Haptic per step, firmer on full stops.
@@ -344,7 +336,7 @@ fun ValueDial(property: CameraProperty, showsTitle: Boolean = true, onCommit: (S
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (showsTitle) CapsLabel(PropertyFormat.title(property.name), color = Theme.secondary, size = 10.sp)
+            CapsLabel(PropertyFormat.title(property.name), color = Theme.secondary, size = 10.sp)
             Text(PropertyFormat.display(property.name, current), color = Theme.accent, style = monoStyle(14.sp))
         }
         BoxWithConstraints(Modifier.fillMaxWidth().height(if (usesIcons) 40.dp else 30.dp)) {
@@ -376,6 +368,13 @@ fun ValueDial(property: CameraProperty, showsTitle: Boolean = true, onCommit: (S
                 .background(Theme.accent, Pill))
         }
     }
+}
+
+/** The item nearest the middle of the list: the one under a dial's centre marker. */
+fun LazyListState.itemAtCenter(): Int? {
+    val info = layoutInfo
+    val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
+    return info.visibleItemsInfo.minByOrNull { abs(it.offset + it.size / 2 - center) }?.index
 }
 
 @Composable

@@ -75,18 +75,12 @@ enum CameraBrand: String, CaseIterable, Identifiable {
     var defaultCapabilities: CameraCapabilities {
         switch self {
         case .olympus:
-            CameraCapabilities(liveViewSizes: defaultLiveViewSizes, openEndedExposure: true, movie: true,
-                               lastShotReview: true, clockSync: true, highResShot: true, powerOff: true,
-                               userAgentChoice: true)
+            CameraCapabilities(liveViewSizes: defaultLiveViewSizes, movie: true, lastShotReview: true, clockSync: true,
+                               highResShot: true, powerOff: true)
         case .panasonic:
-            CameraCapabilities(liveViewSizes: defaultLiveViewSizes, openEndedExposure: true, movie: true,
-                               videoSwitch: true, powerOff: true)
-        case .nikon:
-            CameraCapabilities(tapToFocus: true)
-        case .canon:
-            CameraCapabilities(tapToFocus: true, movie: true, videoSwitch: true)
-        case .sony:
-            CameraCapabilities(tapToFocus: true, movie: true, videoSwitch: true)
+            CameraCapabilities(liveViewSizes: defaultLiveViewSizes, movie: true, videoSwitch: true, powerOff: true)
+        case .nikon: CameraCapabilities()
+        case .canon, .sony: CameraCapabilities(movie: true, videoSwitch: true)
         }
     }
 
@@ -104,8 +98,7 @@ enum CameraBrand: String, CaseIterable, Identifiable {
     /// How far the app gets with this brand, shown on the Connect screen.
     var supportNote: String? {
         switch self {
-        case .olympus: nil
-        case .panasonic: nil
+        case .olympus, .panasonic: nil
         case .nikon: "Newer in Shutterlink. What you can change depends on the body; if something doesn't work with yours, please tell us."
         case .canon: "Needs Canon's CCAPI unlocked on the camera first. Newer in Shutterlink; if something doesn't work with your body, please tell us."
         case .sony: "Bodies with Smart Remote Control, up to about 2019. Newer in Shutterlink; if something doesn't work with yours, please tell us."

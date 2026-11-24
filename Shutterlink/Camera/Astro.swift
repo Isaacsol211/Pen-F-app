@@ -38,12 +38,8 @@ struct AstroPlan {
 extension CameraModel {
     /// Slowest available shutter that still keeps stars round (or Live Composite for trails).
     func astroShutter(for plan: AstroPlan) -> String? {
-        guard let options = properties["shutspeedvalue"]?.options else { return nil }
-        if plan.trails { return options.first { $0.lowercased() == "livecomp" } }
-        return options
-            .compactMap { option in PropertyFormat.seconds(fromShutter: option).map { (option, $0) } }
-            .filter { $0.1 <= plan.maxSeconds }
-            .max { $0.1 < $1.1 }?.0
+        if plan.trails { return properties["shutspeedvalue"]?.options.first { $0.lowercased() == "livecomp" } }
+        return timedShutters.filter { $0.1 <= plan.maxSeconds }.max { $0.1 < $1.1 }?.0
     }
 
     var widestAperture: String? {
@@ -91,28 +87,15 @@ extension CameraModel {
         case .sony:
             // a7 / a9 / a1 (ILCE-7…, -9, -1) and RX1 are full frame; RX100 and RX10 have 1-inch sensors.
             let name = m.replacingOccurrences(of: "SONY", with: "")
-            if ["ILCE7", "ILCE9", "ILCE1", "A7", "A9", "A1", "DSCRX1", "RX1"].contains(where: { name.hasPrefix($0) })
-                && !["DSCRX10", "RX10"].contains(where: { name.hasPrefix($0) }) { return 1 }
             if ["DSCRX10", "RX10"].contains(where: { name.hasPrefix($0) }) { return 2.7 }
+            if ["ILCE7", "ILCE9", "ILCE1", "A7", "A9", "A1", "DSCRX1", "RX1"].contains(where: { name.hasPrefix($0) }) { return 1 }
             return 1.5
         }
     }
 
     func astroSteps(for plan: AstroPlan) -> [PresetStep] {
-        /// Only properties the app can change take part; the others get a reason instead of a value.
-        func settable(_ name: String) -> CameraProperty? { properties[name].flatMap { $0.settable ? $0 : nil } }
-
-        let mode = settable("takemode")?.options.first { $0.uppercased() == "M" }
-        let modeOnCamera = properties["takemode"]?.value.uppercased() == "M"
         // In A, S or P the camera locks aperture or shutter; once the preset has switched to M they open up.
-        let willBeManual = mode != nil || modeOnCamera
-        func exposure(_ name: String) -> CameraProperty? {
-            settable(name) ?? (willBeManual ? properties[name] : nil)
-        }
-        let modeStep = PresetStep(title: "Manual mode", detail: "So aperture and shutter can be set", property: "takemode",
-                                  value: mode ?? (modeOnCamera ? "M" : nil),
-                                  unavailable: "Turn the camera's mode dial to M: the app can't change the mode on this camera")
-
+        let (mode, inM) = modeStep("M", why: "So aperture and shutter can be set")
         let hasLiveComposite = properties["shutspeedvalue"]?.options.contains { $0.lowercased() == "livecomp" } ?? false
         let shutterDetail: String = plan.trails
             ? "Live Composite: stacks only new light, so stars draw trails"
@@ -123,7 +106,7 @@ extension CameraModel {
 
         // About 4000 K keeps the night sky a neutral blue. Fluorescent is the nearest preset on most
         // bodies; LUMIX has none, so it falls back to Incandescent (about 3200 K, a cooler blue).
-        let wbOptions = settable("wbvalue")?.options ?? []
+        let wbOptions = settableProperty("wbvalue")?.options ?? []
         let wbStep: PresetStep = if wbOptions.contains("35") {
             PresetStep(title: "White balance ≈ 4000 K", detail: "Neutral-blue night sky (Fluorescent preset)",
                        property: "wbvalue", value: "35")
@@ -136,27 +119,16 @@ extension CameraModel {
                        unavailable: "Set about 4000 K on the camera, or shoot RAW and set it afterwards")
         }
 
-        let drive = settable("drivemode")?.options.first { $0 == "lowvib-normal" }
-        var aperture = PresetStep(title: "Widest aperture", detail: "Gather as much starlight as possible",
-                                  property: "focalvalue", value: exposure("focalvalue") == nil ? nil : widestAperture)
-        var shutter = PresetStep(title: "Shutter", detail: shutterDetail, property: "shutspeedvalue",
-                                 value: exposure("shutspeedvalue") == nil ? nil : astroShutter(for: plan),
-                                 unavailable: shutterUnavailable)
-        // In A, S or P the camera picks aperture or shutter itself; the mode dial is the likely cause.
-        if !willBeManual {
-            aperture.hint = "Is the camera's mode dial on M?"
-            shutter.hint = "Is the camera's mode dial on M?"
-        }
         return [
-            modeStep,
-            aperture,
-            shutter,
-            PresetStep(title: "ISO", detail: "Bright enough for faint stars without too much noise", property: "isospeedvalue",
-                       value: settable("isospeedvalue") == nil ? nil : nearestISO(to: plan.iso)),
+            mode,
+            presetStep("Widest aperture", "Gather as much starlight as possible", "focalvalue", widestAperture,
+                       mode: "M", inMode: inM),
+            presetStep("Shutter", shutterDetail, "shutspeedvalue", astroShutter(for: plan), mode: "M", inMode: inM,
+                       unavailable: shutterUnavailable),
+            presetStep("ISO", "Bright enough for faint stars without too much noise", "isospeedvalue",
+                       nearestISO(to: plan.iso)),
             wbStep,
-            PresetStep(title: "Anti-shock drive", detail: "Avoids shutter-shock blur on a tripod", property: "drivemode",
-                       value: drive,
-                       unavailable: "Use the camera's electronic shutter or a 2 s self-timer instead"),
+            antiShockStep(unavailable: "Use the camera's electronic shutter or a 2 s self-timer instead"),
         ]
     }
 

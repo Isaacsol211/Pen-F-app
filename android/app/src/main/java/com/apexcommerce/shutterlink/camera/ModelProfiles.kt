@@ -49,11 +49,8 @@ data class ModelProfile(
             var s = text.uppercase()
             val paren = s.indexOf('(')
             if (paren >= 0) s = s.substring(0, paren)
-            for (prefix in listOf("OLYMPUS ", "OM SYSTEM ", "OMSYSTEM ", "PANASONIC ", "LUMIX ", "DMC-", "DC-")) {
-                if (s.startsWith(prefix)) s = s.removePrefix(prefix)
-            }
-            s = s.replace("MARK", "")
-            return s.filter { it.isLetterOrDigit() }
+            for (prefix in listOf("OLYMPUS ", "OM SYSTEM ", "OMSYSTEM ", "PANASONIC ", "LUMIX ", "DMC-", "DC-")) s = s.removePrefix(prefix)
+            return s.replace("MARK", "").filter { it.isLetterOrDigit() }
         }
     }
 }

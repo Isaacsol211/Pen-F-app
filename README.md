@@ -442,7 +442,6 @@ the emulator join its own Wi-Fi through the same "Connect to device" prompt a ca
   sun and moon positions on known dates, the scene rules on fixed labels, and ML Kit looking at live view, plus
   the movement, shake and white-balance rules, the colour-cast meter, the QR formats (with a real PEN-F's code),
   the Keystore password store, and auto-save of the self-test's shot (LUMIX: from the card).
-  Focus stacking needs the mocks from `feature/testflight` (they simulate a focus position).
 - Checked by hand there:
   - portrait and landscape layouts, the setting dials, mode dial, tools tray, loupe and grid;
   - the card browser with stars, swipe-through viewer, Save, and the RAW download of starred photos;

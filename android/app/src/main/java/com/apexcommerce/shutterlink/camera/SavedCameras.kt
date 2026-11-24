@@ -24,26 +24,21 @@ data class SavedCamera(
 object SavedCameras {
     private const val KEY = "savedCameras"
 
-    fun load(prefs: SharedPreferences): List<SavedCamera> {
-        val text = prefs.getString(KEY, null) ?: return emptyList()
-        return runCatching {
-            val array = JSONArray(text)
-            (0 until array.length()).mapNotNull { i ->
-                val o = array.getJSONObject(i)
-                val brand = CameraBrand.fromId(o.optString("brand")) ?: return@mapNotNull null
-                SavedCamera(brand, o.optString("name"), o.optString("host"), o.optLong("lastUsed"),
-                    o.optString("ssid").takeIf { it.isNotEmpty() })
-            }.sortedByDescending { it.lastUsed }
-        }.getOrDefault(emptyList())
-    }
+    fun load(prefs: SharedPreferences): List<SavedCamera> = runCatching {
+        val array = JSONArray(prefs.getString(KEY, null) ?: return emptyList())
+        (0 until array.length()).mapNotNull { i ->
+            val o = array.getJSONObject(i)
+            val brand = CameraBrand.fromId(o.optString("brand")) ?: return@mapNotNull null
+            SavedCamera(brand, o.optString("name"), o.optString("host"), o.optLong("lastUsed"),
+                o.optString("ssid").takeIf { it.isNotEmpty() })
+        }.sortedByDescending { it.lastUsed }
+    }.getOrDefault(emptyList())
 
     fun save(prefs: SharedPreferences, cameras: List<SavedCamera>) {
-        val array = JSONArray()
-        cameras.forEach {
-            val o = JSONObject().put("brand", it.brand.id).put("name", it.name).put("host", it.host).put("lastUsed", it.lastUsed)
-            it.ssid?.let { ssid -> o.put("ssid", ssid) }
-            array.put(o)
-        }
+        val array = JSONArray(cameras.map {
+            // putOpt leaves out a null ssid.
+            JSONObject().put("brand", it.brand.id).put("name", it.name).put("host", it.host).put("lastUsed", it.lastUsed).putOpt("ssid", it.ssid)
+        })
         prefs.edit().putString(KEY, array.toString()).apply()
     }
 }
@@ -52,15 +47,11 @@ object SavedCameras {
 fun CameraModel.rememberConnectedCamera() {
     val name = cameraName?.takeIf { it.isNotEmpty() } ?: brand.title
     val address = activeHost ?: host
-    var saved = SavedCamera(brand, name, if (address == brand.defaultHost) "" else address, System.currentTimeMillis())
     val network = joinedNetwork
-    saved = if (network != null) {
-        // The Keystore can take a second or two: not on the main thread.
-        scope.launch(Dispatchers.IO) { CameraWifiPasswords.save(this@rememberConnectedCamera, network.password, network.ssid) }
-        saved.copy(ssid = network.ssid)
-    } else {
-        saved.copy(ssid = savedCameras.firstOrNull { it.id == saved.id }?.ssid)
-    }
+    // The Keystore can take a second or two: not on the main thread.
+    if (network != null) scope.launch(Dispatchers.IO) { CameraWifiPasswords.save(this@rememberConnectedCamera, network.password, network.ssid) }
+    val saved = SavedCamera(brand, name, if (address == brand.defaultHost) "" else address, System.currentTimeMillis())
+        .let { s -> s.copy(ssid = network?.ssid ?: savedCameras.firstOrNull { it.id == s.id }?.ssid) }
     val list = listOf(saved) + savedCameras.filter { it.id != saved.id }
     savedCameras = list
     SavedCameras.save(prefs, list)
@@ -83,11 +74,5 @@ suspend fun CameraModel.connect(saved: SavedCamera) {
     autoDetectBrand = false
     host = saved.host.ifEmpty { saved.brand.defaultHost }
     capabilities = saved.brand.defaultCapabilities
-    val network = savedNetwork(saved)
-    if (network != null) {
-        if (!join(network)) return
-        connect(waitUntil = System.currentTimeMillis() + 30_000)
-    } else {
-        connect()
-    }
+    joinAndConnect(savedNetwork(saved))
 }

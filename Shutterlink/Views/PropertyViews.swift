@@ -1,95 +1,17 @@
 import SwiftUI
 
-/// Horizontal row of glass chips for the main exposure settings. Tapping one opens its dial.
-struct PropertyStrip: View {
-    @Environment(CameraModel.self) private var camera
-    @Binding var active: String?
-    let onMore: () -> Void
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            GlassEffectContainer(spacing: 4) {
-                HStack(spacing: 8) {
-                    ForEach(PropertyFormat.featured, id: \.name) { item in
-                        if let property = camera.properties[item.name] {
-                            PropertyChip(title: item.title,
-                                         value: PropertyFormat.display(property.name, property.value),
-                                         enabled: property.settable && !property.options.isEmpty,
-                                         selected: active == item.name) {
-                                withAnimation(.snappy) { active = active == item.name ? nil : item.name }
-                            }
-                        }
-                    }
-                    PropertyChip(title: "All", value: "\(camera.properties.count) ›", enabled: true, selected: false, action: onMore)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 2)
-            }
-        }
-        .scrollClipDisabled()
-        .overlay {
-            if camera.properties.isEmpty && camera.mode == .rec && !camera.isSwitchingMode {
-                Text("No settings read yet. Use ··· ▸ Reload settings.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-struct PropertyChip: View {
-    let title: String
-    let value: String
-    let enabled: Bool
-    let selected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 4) {
-                    Text(title.uppercased())
-                        .font(.system(size: 10, weight: .semibold))
-                        .tracking(1)
-                    if !enabled {
-                        Image(systemName: "lock.fill").font(.system(size: 8))
-                    }
-                }
-                .foregroundStyle(enabled ? Theme.accent : .secondary)
-                Text(value)
-                    .font(.system(.callout, design: .monospaced).weight(.semibold))
-                    .foregroundStyle(enabled ? .white : .secondary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .frame(minWidth: 72, alignment: .leading)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .surface(selected ? .regular.tint(Theme.accent.opacity(0.45)).interactive() : .regular.interactive(),
-                     in: .rect(cornerRadius: 16, style: .continuous))
-        .disabled(!enabled)
-        .accessibilityLabel("\(title): \(value)")
-        .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-}
-
-/// A camera-style dial: swipe through a property's values; the one under the marker is applied
 /// iPhone Camera–style exposure ruler: fine ticks for every step, taller labelled ticks on full
 /// stops, a fixed centre marker, the live value above, and a haptic tick for every step crossed
 /// (a firmer one on full stops). The value is sent to the camera when scrolling stops.
 struct ValueDial: View {
     let property: CameraProperty
-    var showsTitle = true
     let onCommit: (String) -> Void
 
     @State private var centered: String?
     @State private var committed: String
 
-    init(property: CameraProperty, showsTitle: Bool = true, onCommit: @escaping (String) -> Void) {
+    init(property: CameraProperty, onCommit: @escaping (String) -> Void) {
         self.property = property
-        self.showsTitle = showsTitle
         self.onCommit = onCommit
         _centered = State(initialValue: property.value)
         _committed = State(initialValue: property.value)
@@ -102,12 +24,10 @@ struct ValueDial: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack(spacing: 6) {
-                if showsTitle {
-                    Text(PropertyFormat.title(for: property.name).uppercased())
-                        .font(.system(size: 10, weight: .semibold))
-                        .tracking(1)
-                        .foregroundStyle(.secondary)
-                }
+                Text(PropertyFormat.title(for: property.name).uppercased())
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(1)
+                    .foregroundStyle(.secondary)
                 Text(PropertyFormat.display(property.name, current))
                     .font(.system(size: 14, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Theme.accent)

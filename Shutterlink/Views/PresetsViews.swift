@@ -1,36 +1,5 @@
 import SwiftUI
 
-// MARK: - Shared
-
-private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: 12, content: content)
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .surface(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-}
-
-/// A tool's sheet on a phone: its panel in a scroll view with a Done button.
-private struct ToolSheet<Content: View>: View {
-    let title: String
-    @ViewBuilder var content: () -> Content
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                content().padding(16)
-            }
-            .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
 /// "1/250", "4 s", "2 min 8 s".
 func shutterLabel(seconds: Double) -> String {
     if seconds < 0.75 { return "1/\(Int((1 / seconds).rounded()))" }
@@ -43,15 +12,6 @@ func shutterLabel(seconds: Double) -> String {
 }
 
 // MARK: - Presets
-
-struct PresetsView: View {
-    var openAstro: () -> Void
-    var openFocusStack: () -> Void
-
-    var body: some View {
-        ToolSheet(title: "Presets") { PresetsPanel(openAstro: openAstro, openFocusStack: openFocusStack) }
-    }
-}
 
 /// One-tap recipes, Undo, the user's own presets, and expose-to-the-right.
 struct PresetsPanel: View {
@@ -247,12 +207,6 @@ struct PresetsPanel: View {
 
 // MARK: - ND filter calculator
 
-struct NDView: View {
-    var body: some View {
-        ToolSheet(title: "ND filter") { NDPanel() }
-    }
-}
-
 /// Meter without the filter, pick its strength, and the app sets M, works out the exposure and times
 /// Bulb when it's longer than the camera's own speeds.
 struct NDPanel: View {
@@ -365,12 +319,6 @@ struct NDPanel: View {
 }
 
 // MARK: - Motion trigger
-
-struct MotionView: View {
-    var body: some View {
-        ToolSheet(title: "Motion trigger") { MotionPanel() }
-    }
-}
 
 /// Shoots when something moves in a box on live view: bird feeders, wildlife, a door opening.
 struct MotionPanel: View {

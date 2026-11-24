@@ -51,8 +51,7 @@ fun CameraModel.autoSave(name: String, fetch: suspend () -> ByteArray) {
 
 /** A photo was just taken but the camera can't send it during live view: save it from the card later. */
 fun CameraModel.autoSaveLater() {
-    if (!autoSaveApplies) return
-    autoSavePending += 1
+    if (autoSaveApplies) autoSavePending += 1
 }
 
 private val autoSaveExtensions = setOf("JPG", "JPEG", "HIF", "HEIF", "HEIC")
@@ -83,11 +82,8 @@ suspend fun CameraModel.savePendingAutoSaves() {
 }
 
 /** JPEG starts FF D8; HEIF has "ftyp" at byte 4. */
-fun isPhotoFile(data: ByteArray): Boolean {
-    if (data.size > 3 && data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte()) return true
-    if (data.size > 12 && String(data, 4, 4, Charsets.US_ASCII) == "ftyp") return true
-    return false
-}
+fun isPhotoFile(data: ByteArray): Boolean =
+    (data.size > 3 && data[0] == 0xFF.toByte() && data[1] == 0xD8.toByte()) || (data.size > 12 && String(data, 4, 4, Charsets.US_ASCII) == "ftyp")
 
 /** A name for a photo the camera sends without its card file name (Olympus' last JPEG). */
 fun CameraModel.autoSaveName(ext: String = "JPG"): String {

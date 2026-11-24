@@ -18,14 +18,8 @@ class XmlNode(val name: String, val attributes: Map<String, String>) {
     /** Trimmed text of the first child element with this name. */
     fun value(name: String): String? = child(name)?.trimmedText
 
-    fun descendants(name: String): List<XmlNode> {
-        val result = mutableListOf<XmlNode>()
-        for (c in children) {
-            if (c.name == name) result.add(c)
-            result.addAll(c.descendants(name))
-        }
-        return result
-    }
+    fun descendants(name: String): List<XmlNode> =
+        children.flatMap { c -> listOfNotNull(c.takeIf { it.name == name }) + c.descendants(name) }
 
     fun firstDescendant(vararg names: String): XmlNode? {
         for (c in children) {
@@ -96,15 +90,8 @@ object MiniXml {
  * Shape: <oishare><cgi name="exec_takemotion"><http_method type="get"><cmd1 name="com"><param1 name="starttake">…
  */
 class CommandList(root: XmlNode? = null) {
-    val cgis: Map<String, XmlNode>
-    val version: String?
-
-    init {
-        val map = HashMap<String, XmlNode>()
-        root?.descendants("cgi")?.forEach { cgi -> cgi.attributes["name"]?.let { map[it] = cgi } }
-        cgis = map
-        version = root?.value("version")
-    }
+    val cgis: Map<String, XmlNode> =
+        root?.descendants("cgi")?.mapNotNull { cgi -> cgi.attributes["name"]?.let { it to cgi } }?.toMap() ?: emptyMap()
 
     val isEmpty: Boolean get() = cgis.isEmpty()
 

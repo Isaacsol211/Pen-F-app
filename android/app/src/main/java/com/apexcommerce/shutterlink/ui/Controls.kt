@@ -1,7 +1,6 @@
 package com.apexcommerce.shutterlink.ui
 
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -85,7 +84,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -248,13 +246,7 @@ fun ModeCarousel(camera: CameraModel, vertical: Boolean = false) {
     val haptics = LocalHapticFeedback.current
     var committed by remember { mutableStateOf(current) }
     val itemSize = if (vertical) Theme.target else 70.dp
-    val centered by remember(options) {
-        derivedStateOf {
-            val info = state.layoutInfo
-            val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
-            info.visibleItemsInfo.minByOrNull { abs(it.offset + it.size / 2 - center) }?.index
-        }
-    }
+    val centered by remember(options) { derivedStateOf { state.itemAtCenter() } }
     fun commit(mode: String) {
         if (mode == committed || mode == current) return
         committed = mode
@@ -405,8 +397,8 @@ fun ToolsButton(camera: CameraModel, open: Boolean, onToggle: () -> Unit) {
 
 /** The latest capture as a thumbnail (opens the card browser); a card icon before the first shot. */
 @Composable
-fun LastShotButton(camera: CameraModel, enabled: Boolean, onClick: () -> Unit) {
-    val scale by animateFloatAsState(1f, label = "shot")
+fun LastShotButton(camera: CameraModel, onClick: () -> Unit) {
+    val enabled = !camera.isBusyExposing && !camera.interval.running && camera.capabilities.cardBrowser
     Box(
         Modifier.size(58.dp).surface(RoundedCornerShape(17.dp)).clickable(enabled = enabled, onClick = onClick)
             .alpha(if (enabled) 1f else 0.4f).padding(3.dp)
@@ -415,7 +407,7 @@ fun LastShotButton(camera: CameraModel, enabled: Boolean, onClick: () -> Unit) {
     ) {
         val shot = camera.lastShot
         if (shot != null) {
-            Image(shot, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().scale(scale).clip(RoundedCornerShape(14.dp)))
+            Image(shot, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)))
         } else {
             Icon(Icons.Filled.PhotoLibrary, null, Modifier.size(24.dp))
         }
@@ -508,7 +500,7 @@ fun ShutterButton(camera: CameraModel) {
                 started != null && duration != null -> {
                     val left = ceil(duration - (now - started) / 1000.0).toInt().coerceAtLeast(0)
                     Text(
-                        if (left >= 60) String.format(java.util.Locale.US, "%d:%02d", left / 60, left % 60) else if (left > 0) "$left" else "NR",
+                        if (left >= 60) clock(left * 1000L) else if (left > 0) "$left" else "NR",
                         color = Theme.accent, style = monoStyle(if (left >= 600) 18.sp else if (left >= 60) 22.sp else 28.sp),
                         textAlign = TextAlign.Center,
                     )

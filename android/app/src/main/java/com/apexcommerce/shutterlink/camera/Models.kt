@@ -1,6 +1,5 @@
 package com.apexcommerce.shutterlink.camera
 
-import java.util.Calendar
 import java.util.UUID
 
 enum class ConnectionPhase { DISCONNECTED, CONNECTING, CONNECTED }
@@ -47,17 +46,13 @@ data class CameraImage(
 }
 
 /** AF frame in live-view pixels; signed (the box can hang off the frame edge). */
-data class AfRect(val x: Double = 0.0, val y: Double = 0.0, val w: Double = 0.0, val h: Double = 0.0) {
-    val midX get() = x + w / 2
-    val midY get() = y + h / 2
-}
+data class AfRect(val x: Double = 0.0, val y: Double = 0.0, val w: Double = 0.0, val h: Double = 0.0)
 
 /** What the camera reports with each live-view frame (Olympus) or polls (others). */
 data class LiveInfo(
     /** 0 = no AF, 1 = focused, 2 = failed. */
     val afState: Int = 0,
     val afRect: AfRect = AfRect(),
-    val rotation: Int = 1,
     val shutter: String? = null,
     val aperture: String? = null,
     /** Lens aperture limits (e.g. 1.8…22), null if the lens reports none (manual lens). */
@@ -80,16 +75,11 @@ data class LogEntry(
     val status: Int?,
     val millis: Long,
     val summary: String,
-    val id: String = UUID.randomUUID().toString(),
 ) {
     val ok: Boolean get() = status != null && status in 200..204
 
-    val line: String
-        get() {
-            val c = Calendar.getInstance().apply { timeInMillis = date }
-            val time = fmt("%02d:%02d:%02d", c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE), c.get(Calendar.SECOND))
-            return "$time $method $path → ${status?.toString() ?: "ERR"} ($millis ms) $summary"
-        }
+    /** `%tT`: the local time as HH:MM:SS. */
+    val line: String get() = "${fmt("%tT", date)} $method $path → ${status?.toString() ?: "ERR"} ($millis ms) $summary"
 }
 
 /** An error the app explains in its own words. */
@@ -112,7 +102,6 @@ data class IntervalState(
     val done: Int = 0,
     val total: Int = 0,
     val nextShotAt: Long? = null,
-    val startedAt: Long? = null,
     /** The last exposure change ramping made. */
     val rampNote: String? = null,
 )
@@ -132,8 +121,6 @@ data class BracketState(
     val total: Int = 0,
     /** What the frame being shot is set to, e.g. "−1 EV · 1/500". */
     val label: String? = null,
-    /** A focus stack rather than an exposure bracket. */
-    val isFocusStack: Boolean = false,
 )
 
 /** The settings a bracket will shoot, worked out before it starts. */
@@ -164,7 +151,6 @@ data class PresetStep(
     /** Added to "The camera refused …" when the likely cause is a setting the app can't see. */
     val hint: String? = null,
     val state: State = State.Pending,
-    val id: String = UUID.randomUUID().toString(),
 ) {
     sealed class State {
         data object Pending : State()
@@ -218,10 +204,7 @@ data class SavedPreset(
 )
 
 /** A rectangle normalised to the live-view frame (0…1). */
-data class NRect(val x: Double, val y: Double, val w: Double, val h: Double) {
-    val midX get() = x + w / 2
-    val midY get() = y + h / 2
-}
+data class NRect(val x: Double, val y: Double, val w: Double, val h: Double)
 
 /** The motion trigger: shoots when part of a box on live view changes. */
 data class MotionTrigger(
@@ -233,16 +216,16 @@ data class MotionTrigger(
     /** Seconds to wait after a shot before firing again. */
     val cooldown: Double = 3.0,
     val shots: Int = 0,
-    val lastTrigger: Long? = null,
     /** The panel is open: show the box on live view even while disarmed, so it can be placed. */
     val editing: Boolean = false,
 ) {
     /** Share of the box (0…1) that has to change between frames: 1 % at the most sensitive, 15 % at the least. */
     val threshold: Double get() = 0.01 + (1 - sensitivity) * 0.14
 
+    /** A square box of side `scale` around the same centre. */
     fun resized(scale: Double): MotionTrigger {
-        val x = (region.midX - scale / 2).coerceIn(0.0, 1 - scale)
-        val y = (region.midY - scale / 2).coerceIn(0.0, 1 - scale)
+        val x = (region.x + region.w / 2 - scale / 2).coerceIn(0.0, 1 - scale)
+        val y = (region.y + region.h / 2 - scale / 2).coerceIn(0.0, 1 - scale)
         return copy(region = NRect(x, y, scale, scale))
     }
 }

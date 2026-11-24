@@ -1,27 +1,7 @@
 import SwiftUI
 
-/// High Res Shot can't be switched on over Wi-Fi, so this walks through it and helps verify the result.
-struct HighResView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                HighResPanel()
-                    .padding(16)
-            }
-            .navigationTitle("High Res Shot")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-/// The High Res walkthrough: in a sheet on a phone, in the inspector on a large canvas.
+/// High Res Shot can't be switched on over Wi-Fi, so this walks through it and helps verify the
+/// result: in a sheet on a phone, in the inspector on a large canvas.
 struct HighResPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -36,20 +16,20 @@ struct HighResPanel: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
             }
-            card {
+            card(spacing: 10) {
                 Label("Turn it on at the camera", systemImage: "camera")
                     .font(.headline)
                 Text("Olympus cameras don't accept this setting over Wi-Fi. On the camera, open MENU ▸ Shooting Menu 2 ▸ High Res Shot ▸ On (or press the button you've assigned to it). A 0 s delay is fine when you shoot from the phone.")
                     .font(.subheadline).foregroundStyle(.secondary)
             }
-            card {
+            card(spacing: 10) {
                 Label("Then", systemImage: "list.number").font(.headline)
                 step(1, "Tripod, and nothing moving in the scene: wind, water and people smear.")
                 step(2, "The camera limits High Res to slower ISOs and shorter exposures; check its screen.")
                 step(3, "Tap the shutter here. The camera takes about a second to capture, then a few more to merge. The app waits for it.")
                 step(4, "Open Card: High Res files show a 50 MP badge.")
             }
-            card {
+            card(spacing: 10) {
                 Label("For the night sky", systemImage: "moon.stars")
                     .font(.headline)
                 Text("Stars move between the 8 frames, so High Res suits landscapes and still subjects, not long star exposures. For astro, use the Astro preset and the interval timer to stack instead.")
@@ -67,13 +47,6 @@ struct HighResPanel: View {
                 .background(Theme.accent, in: Circle())
             Text(text).font(.subheadline).foregroundStyle(.secondary)
         }
-    }
-
-    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10, content: content)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .surface(.regular, in: .rect(cornerRadius: 22, style: .continuous))
     }
 }
 

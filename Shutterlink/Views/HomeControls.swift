@@ -114,7 +114,10 @@ struct ExposureStrip: View {
     @Namespace private var selection
     @ScaledMetric(relativeTo: .title3) private var valueSize: CGFloat = 18
 
-    private var items: [String] {
+    private var items: [String] { Self.items(camera) }
+
+    /// The values that get a cell, here and in the workspace's `ExposureGrid`.
+    static func items(_ camera: CameraModel) -> [String] {
         var names = ["focalvalue", "shutspeedvalue", "isospeedvalue", "expcomp", "wbvalue", "drivemode"]
         if camera.isMovieMode { names.append("exposemovie") }
         return names.filter { camera.properties[$0] != nil }
@@ -147,14 +150,14 @@ struct ExposureStrip: View {
         } label: {
             VStack(spacing: 3) {
                 // AUTO replaces the label when the camera is choosing this value itself (e.g. shutter in P).
-                CapsLabel(auto ? "Auto" : label(name),
+                CapsLabel(auto ? "Auto" : ExposureGrid.label(name),
                           color: selected ? Theme.accent : (auto ? Theme.accent.opacity(0.85) : Theme.tertiary))
                 Group {
                     if name == "drivemode" {
                         Image(systemName: SettingSpec.optionIcon(name, property?.value ?? "") ?? "square")
                             .font(.system(size: valueSize * 0.9, weight: .semibold))
                     } else {
-                        Text(value(name, property))
+                        Text(camera.stripValue(name, property))
                             .font(.system(size: valueSize, weight: .semibold, design: .monospaced))
                             .contentTransition(.numericText())
                     }
@@ -176,26 +179,9 @@ struct ExposureStrip: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(SettingSpec.spec(for: name)?.title ?? name): \(value(name, property))\(auto ? ", automatic" : "")")
+        .accessibilityLabel("\(SettingSpec.spec(for: name)?.title ?? name): \(camera.stripValue(name, property))\(auto ? ", automatic" : "")")
         .accessibilityHint("Shows the options")
         .accessibilityAddTraits(selected ? .isSelected : [])
-    }
-
-    private func label(_ name: String) -> String {
-        switch name {
-        case "focalvalue": "F-stop"
-        case "shutspeedvalue": "Shutter"
-        case "isospeedvalue": "ISO"
-        case "expcomp": "EV"
-        case "wbvalue": "WB"
-        case "drivemode": "Drive"
-        case "exposemovie": "Video"
-        default: name
-        }
-    }
-
-    private func value(_ name: String, _ property: CameraProperty?) -> String {
-        camera.stripValue(name, property)
     }
 }
 
@@ -266,18 +252,11 @@ struct ModeCarousel: View {
                 }
                 // The dial's index mark: the mode under it is the one set.
                 .overlay(alignment: axis == .horizontal ? .bottom : .leading) {
-                    if axis == .horizontal {
-                        Image(systemName: "triangle.fill")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundStyle(Theme.accent)
-                            .offset(y: 4)
-                    } else {
-                        Image(systemName: "triangle.fill")
-                            .font(.system(size: 7, weight: .bold))
-                            .rotationEffect(.degrees(90))
-                            .foregroundStyle(Theme.accent)
-                            .offset(x: -2)
-                    }
+                    Image(systemName: "triangle.fill")
+                        .font(.system(size: 7, weight: .bold))
+                        .rotationEffect(.degrees(axis == .horizontal ? 0 : 90))
+                        .foregroundStyle(Theme.accent)
+                        .offset(x: axis == .horizontal ? 0 : -2, y: axis == .horizontal ? 4 : 0)
                 }
                 .accessibilityHidden(true)
             }

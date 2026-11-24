@@ -40,7 +40,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -215,14 +214,11 @@ fun PresetsSheet(camera: CameraModel, openAstro: () -> Unit, openFocusStack: () 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Mode, aperture, shutter, ISO, exposure, white balance and drive: whatever the camera lets the app set.",
                         color = Theme.secondary, fontSize = 13.sp)
-                    OutlinedTextField(newName, { newName = it }, label = { Text("Name") }, singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Theme.accent, cursorColor = Theme.accent,
-                            focusedLabelColor = Theme.accent))
+                    OutlinedTextField(newName, { newName = it }, label = { Text("Name") }, singleLine = true)
                 }
             },
             confirmButton = { TextButton({ naming = false; camera.saveCurrentSettings(newName) }) { Text("Save", color = Theme.accent) } },
             dismissButton = { TextButton({ naming = false }) { Text("Cancel") } },
-            containerColor = Theme.surfaceRaised,
         )
     }
 }
@@ -274,12 +270,7 @@ fun NDSheet(camera: CameraModel, onDismiss: () -> Unit) {
                     }
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Strength", fontSize = 16.sp, modifier = Modifier.weight(1f))
-                Text("$stops stops", style = monoStyle(16.sp), color = Theme.secondary)
-                SurfaceButton(onClick = { setStops(stops - 1) }, circle = true) { Icon(Icons.Filled.Remove, "Weaker", Modifier.size(18.dp)) }
-                SurfaceButton(onClick = { setStops(stops + 1) }, circle = true) { Icon(Icons.Filled.Add, "Stronger", Modifier.size(18.dp)) }
-            }
+            Stepper("Strength", "$stops stops", { setStops(stops - 1) }, { setStops(stops + 1) }, less = "Weaker", more = "Stronger")
             val m = meter
             if (m != null && seconds != null) {
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -361,7 +352,7 @@ fun MotionPanel(camera: CameraModel, onClose: () -> Unit, maxHeight: androidx.co
             CapsLabel("Sensitivity", modifier = Modifier.width(96.dp))
             Slider(motion.sensitivity.toFloat(), { camera.motion = camera.motion.copy(sensitivity = it.toDouble()) },
                 modifier = Modifier.weight(1f),
-                colors = SliderDefaults.colors(thumbColor = Theme.accent, activeTrackColor = Theme.accent, inactiveTrackColor = Theme.surfaceRaised))
+                colors = SliderDefaults.colors(inactiveTrackColor = Theme.surfaceRaised))
         }
         MotionMeter(camera.motionLevel, motion.threshold)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
