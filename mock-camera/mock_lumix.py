@@ -396,7 +396,8 @@ class CamHandler(QuietHandler):
             # can't record RAW.
             cam = self.cam
             four_k = cam.extras["drivemode"][0] == "4k_photo"
-            rows = ['<item id="menu_item_id_crtv_ctrl" enable="no" />',
+            rows = ['<item id="menu_item_id_recmode" enable="yes" value="manual_exposure" />',
+                    '<item id="menu_item_id_crtv_ctrl" enable="no" />',
                     f'<item id="menu_item_id_filter_set" enable="yes" value="{cam.extras["filter_setting"][0]}" />']
             for v in ("raw_fine", "raw_standard", "raw"):
                 rows.append(f'<item id="menu_item_id_quality_{v}" enable="{"no" if four_k else "yes"}" />')

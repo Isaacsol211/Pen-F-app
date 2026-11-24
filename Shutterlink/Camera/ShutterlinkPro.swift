@@ -42,7 +42,8 @@ final class ShutterlinkPro {
 
     @ObservationIgnored private var updates: Task<Void, Never>?
     #if DEBUG
-    /// `-pro locked|unlocked|trial` pins the state, for trying the locks and the Pro screen.
+    /// Builds from Xcode or the Mac have Pro unlocked. `-pro locked|trial` pins a state to try the
+    /// locks and the Pro screen; `-pro store` uses the App Store logic (e.g. with Shutterlink.storekit).
     @ObservationIgnored private let override = UserDefaults.standard.string(forKey: "pro")
     #endif
 
@@ -52,17 +53,21 @@ final class ShutterlinkPro {
     var inTrial: Bool { (trialEnds ?? .distantPast) > Date() }
     var trialUsed: Bool { trialStarted != nil }
 
-    /// TestFlight before the Pro product exists in App Store Connect.
+    /// TestFlight before the Pro product exists in App Store Connect. Remembered, because the App
+    /// Store can't be reached while the phone is on a camera's Wi-Fi.
     var testerUnlock: Bool {
-        environment == .sandbox && productsLoaded && products[Self.proID] == nil
+        if environment == .production { return false }
+        guard environment == .sandbox, productsLoaded else { return UserDefaults.standard.bool(forKey: Self.testerKey) }
+        return products[Self.proID] == nil
     }
+    private static let testerKey = "pro.testerUnlock"
 
     var isUnlocked: Bool {
         #if DEBUG
         switch override {
         case "locked": return false
-        case "unlocked", "trial": return true
-        default: break
+        case "store": break
+        default: return true
         }
         #endif
         return purchased || earlyUser || inTrial || testerUnlock
@@ -70,6 +75,13 @@ final class ShutterlinkPro {
 
     /// For the ⋯ menu and the Pro screen.
     var statusText: String {
+        #if DEBUG
+        switch override {
+        case "trial": return "Trial: 6 days left (debug)"
+        case "locked", "store": break
+        default: return "Unlocked (developer build)"
+        }
+        #endif
         if purchased { return "Unlocked" }
         if earlyUser { return "Unlocked: thanks for being an early user" }
         if testerUnlock { return "Unlocked for TestFlight testing" }
@@ -77,10 +89,6 @@ final class ShutterlinkPro {
             let days = max(1, Calendar.current.dateComponents([.day], from: Date(), to: ends).day.map { $0 + 1 } ?? 1)
             return days == 1 ? "Trial: last day" : "Trial: \(days) days left"
         }
-        #if DEBUG
-        if override == "unlocked" { return "Unlocked (debug)" }
-        if override == "trial" { return "Trial: 6 days left (debug)" }
-        #endif
         return trialUsed ? "Trial ended" : "Try it free for \(Self.trialDays) days"
     }
 
@@ -107,6 +115,7 @@ final class ShutterlinkPro {
             let list = try await Product.products(for: [Self.proID, Self.trialID])
             products = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
             productsLoaded = true
+            if environment == .sandbox { UserDefaults.standard.set(products[Self.proID] == nil, forKey: Self.testerKey) }
             if list.isEmpty { debugLog("pro: the App Store returned no products") }
         } catch {
             debugLog("pro: products: \(error.localizedDescription)")

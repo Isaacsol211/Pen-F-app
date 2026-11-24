@@ -224,6 +224,8 @@ final class CameraModel {
     var wifiPassword = ""
     /// The network joined for this connection, remembered with the camera once it answers.
     @ObservationIgnored var joinedNetwork: CameraNetwork?
+    /// The home-screen camera being reconnected to, to tell whether a different one answered.
+    @ObservationIgnored var connectingTo: SavedCamera?
     /// Save each new photo to Photos as it's taken.
     var autoSaveNewPhotos = UserDefaults.standard.bool(forKey: "autoSave") {
         didSet { UserDefaults.standard.set(autoSaveNewPhotos, forKey: "autoSave") }
@@ -423,7 +425,7 @@ final class CameraModel {
             try startReceiver(format: driver.liveViewFormat)
             phase = .connected
             UserDefaults.standard.set(true, forKey: "hasConnected")
-            rememberConnectedCamera()
+            await rememberConnectedCamera()
             KeepAwake.set(true)
             status = nil
             updateLocationLogging()

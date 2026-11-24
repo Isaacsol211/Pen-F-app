@@ -70,6 +70,8 @@ final class PanasonicSession {
     /// What the app last set, for settings the camera won't report back.
     var lastSet: [String: String] = [:]
     var loggedSettings = false
+    /// Whether getsetting&type=recmode answers (asked once; bodies differ).
+    var recmodeReadable = true
     var contentDirectory: URL?
     var lastStreamKick = Date.distantPast
 
@@ -252,28 +254,46 @@ final class PanasonicDriver: CameraDriver {
         camera.status = "Reading camera info…"
         _ = try? await lumixCommand([("mode", "setsetting"), ("type", "device_name"), ("value", PanasonicSession.deviceName)])
         var info = ""
+        var model = description.model
         if let capability = try? await lumixCommand([("mode", "getinfo"), ("type", "capability")]) {
             info += "CAPABILITY\n\(capability)\n\n"
-            if camera.profile == nil, let model = MiniXML.parse(Data(capability.utf8))?.firstDescendant(named: ["model_name", "modelname"])?.trimmedText {
-                camera.profile = ModelProfiles.find(.panasonic, reported: model)
+            // The G7 says <modelname>, newer bodies <model_name>.
+            if let name = MiniXML.parse(Data(capability.utf8))?.firstDescendant(named: ["model_name", "modelname"])?.trimmedText {
+                model = name
+                if camera.profile == nil { camera.profile = ModelProfiles.find(.panasonic, reported: name) }
             }
         }
         if let lens = try? await lumixCommand([("mode", "getinfo"), ("type", "lens")]) {
             info += "LENS\n\(lens)\n\n"
             applyLumixLens(lens)
         }
-        if let allmenu = try? await lumixCommand([("mode", "getinfo"), ("type", "allmenu")], timeout: 15) {
-            camera.rawCommandList = allmenu
-            parseLumixMenu(allmenu)
-        }
+        var version: String?
         if let state = try? await lumixCommand([("mode", "getstate")]) {
             info += "STATE\n\(state)\n"
             applyLumixState(state)
+            version = MiniXML.parse(Data(state.utf8))?.firstDescendant(named: ["version"])?.trimmedText
+        }
+        if let allmenu = await lumixMenu(model: model, version: version) {
+            camera.rawCommandList = allmenu
+            parseLumixMenu(allmenu)
         }
         camera.rawDescList = info
         debugLog("LUMIX connected: \(camera.cameraName ?? "?")\n\(info)")
         camera.cameraName = camera.profile?.name ?? camera.cameraName ?? "LUMIX"
         startKeepAlive()
+    }
+
+    /// getinfo&type=allmenu: about 150 KB on a G7, which can take over 20 s on the camera's Wi-Fi. It
+    /// only changes with firmware, so a copy is kept per model and version.
+    private func lumixMenu(model: String?, version: String?) async -> String? {
+        let key = [model, version].compactMap { $0 }.joined(separator: "-")
+            .replacingOccurrences(of: "[^A-Za-z0-9.-]", with: "_", options: .regularExpression)
+        let file = key.isEmpty ? nil : URL.cachesDirectory.appending(path: "lumix-allmenu-\(key).xml")
+        if let file, let saved = try? String(contentsOf: file, encoding: .utf8) { return saved }
+        camera.status = "Reading the camera's menus (first time only)…"
+        guard let menu = try? await lumixCommand([("mode", "getinfo"), ("type", "allmenu")], timeout: 60) else { return nil }
+        if let file, menu.contains("<menuset") { try? menu.write(to: file, atomically: true, encoding: .utf8) }
+        return menu
     }
 
     /// Reads the camera's UPnP device description on port 60606: its UDN, whether it advertises the
@@ -390,7 +410,6 @@ final class PanasonicDriver: CameraDriver {
     /// now (curmenu: options greyed out in this mode are left out, and a heading that is switched
     /// off locks its setting).
     private func readLumixSettings() async {
-        guard !lumix.settings.isEmpty || lumix.kelvin != nil else { return }
         lumix.settingsReadAt = Date()
         var dump = ""
         var menuState: [String: LumixMenuState] = [:]
@@ -426,6 +445,19 @@ final class PanasonicDriver: CameraDriver {
                                                               settable: enabled([kelvin.itemID].compactMap { $0 }),
                                                               value: value, options: kelvin.options)
         }
+        // The mode dial can't be turned from an app, but showing it tells the user (and the presets)
+        // which of aperture and shutter the camera is choosing. curmenu has it on some bodies,
+        // getsetting&type=recmode on others.
+        var dial = menuState["menu_item_id_recmode"]?.value
+        if dial == nil, lumix.recmodeReadable {
+            let reading = await readLumixSetting("recmode")
+            if !lumix.loggedSettings { dump += "GETSETTING recmode: \(reading.raw ?? "no answer")\n" }
+            dial = reading.value
+            lumix.recmodeReadable = reading.raw != nil
+        }
+        if let mode = dial.flatMap(Self.lumixMode) {
+            properties["takemode"] = CameraProperty(name: "takemode", settable: false, value: mode, options: [mode])
+        }
         lumix.settingProperties = properties
         debugLog("LUMIX settings: " + properties.values.sorted { $0.name < $1.name }
             .map { "\($0.name)=\($0.value)\($0.settable ? "" : " (locked)")" }.joined(separator: " "))
@@ -433,6 +465,20 @@ final class PanasonicDriver: CameraDriver {
             // Kept with the connection info (Request log ▸ Settings) to check a new body against.
             camera.rawDescList += "\n" + dump
             lumix.loggedSettings = true
+        }
+    }
+
+    /// LUMIX Rec Mode → the app's mode names; others (C1, Creative Control…) as the camera says them.
+    static func lumixMode(_ value: String) -> String? {
+        switch value {
+        case "": nil
+        case "program_ae": "P"
+        case "aperture_ae": "A"
+        case "shutter_ae": "S"
+        case "manual_exposure": "M"
+        case "intelligent_auto", "iauto": "iAuto"
+        case "creative_movie": "movie"
+        default: LumixMenu.words(value)
         }
     }
 
@@ -640,6 +686,11 @@ final class PanasonicDriver: CameraDriver {
         }
         if lumix.settingsReadAt.map({ Date().timeIntervalSince($0) > 15 }) ?? true { await readLumixSettings() }
         for (name, property) in lumix.settingProperties where result[name] == nil { result[name] = property }
+        // The dial decides which of these the camera sets itself.
+        if let mode = result["takemode"]?.value {
+            if ["P", "iAuto", "A"].contains(mode) { result["shutspeedvalue"]?.settable = false }
+            if ["P", "iAuto", "S"].contains(mode) { result["focalvalue"]?.settable = false }
+        }
         camera.properties = result
     }
 

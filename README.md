@@ -302,7 +302,7 @@ what they can't do. One purchase covers iPhone, iPad and Mac (universal purchase
 **Testing.**
 - **In Xcode:** Product ▸ Scheme ▸ Edit Scheme ▸ Run ▸ Options ▸ StoreKit Configuration ▸
   `Shutterlink.storekit` tests the trial, the purchase and Restore without App Store Connect.
-- **Debug builds:** launch with `-pro locked`, `-pro unlocked` or `-pro trial` to pin the state.
+- **Debug builds** (from Xcode or installed from the Mac) have Pro unlocked. Launch with `-pro locked` or `-pro trial` to try the locks, or `-pro store` for the App Store logic (e.g. with Shutterlink.storekit).
 
 **Before release.**
 1. The Account Holder accepts the Paid Apps Agreement and adds banking and tax.

@@ -18,6 +18,17 @@ struct CameraNetwork: Equatable, Sendable {
 enum CameraWiFi {
     static let canJoin = !Platform.isMac
 
+    /// The Wi-Fi network the phone is on and whether it has a password; nil when iOS won't say
+    /// (it tells apps only about networks they joined themselves, or with location access).
+    static func current() async -> (ssid: String, secure: Bool)? {
+        #if targetEnvironment(macCatalyst)
+        return nil
+        #else
+        guard let network = await NEHotspotNetwork.fetchCurrent() else { return nil }
+        return (network.ssid, network.isSecure)
+        #endif
+    }
+
     static func join(_ network: CameraNetwork) async throws {
         #if targetEnvironment(macCatalyst)
         throw CameraError("Join the camera's Wi-Fi in System Settings ▸ Wi-Fi.")
