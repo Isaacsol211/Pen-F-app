@@ -65,10 +65,137 @@ BULB = 16384
 ISO = ["auto", "i_iso", "100", "125", "160", "200", "250", "320", "400", "500", "640", "800",
        "1000", "1250", "1600", "2000", "2500", "3200", "4000", "5000", "6400", "8000", "10000",
        "12800", "16000", "20000", "25600"]
-WB = ["auto", "daylight", "cloudy", "shade", "flash", "incandescent", "white_set1", "white_set2",
+WB = ["auto", "daylight", "cloudy", "shade", "flash", "incandescent", "halogen", "white_set1", "white_set2",
       "white_set3", "white_set4", "color_temp1"]
 EXPOSURE = [("0" if t == 0 else (f"{t // 3}" if t % 3 == 0 else f"{t}/3")) for t in range(-15, 16)]
 CHOICES = {"iso": ISO, "exposure": EXPOSURE, "whitebalance": WB}   # setsetting types = MockLumix attributes
+STICKY_DRIVE = False   # --sticky-drive: answer ok to drive mode changes but keep the old one (seen on a GM1S)
+
+# The extra settings, shaped like the real DMC-G7's allmenu (captured Nov 2026): headings with a
+# title id, choices whose sub-items carry value2, cmd_value2="__value__" where the app fills in a
+# number, and English names in a titlelist.
+DRIVE = [  # (item id, title, cmd_value, [(value2, title)])
+    ("1shoot", "Single", "normal", []),
+    ("burst", "Burst Shooting", "burst", [("sh", "SH"), ("h", "H"), ("m", "M"), ("l", "L")]),
+    ("4kphoto", "4K PHOTO", "4k_photo", [("burst", "4K Burst"), ("start_stop", "4K Burst(S/S)"),
+                                         ("pre_burst", "4K Pre-Burst")]),
+    ("autobracket", "Auto Bracket", "autobracket", [("3shot_1/3ev", "3 1/3"), ("5shot_2/3ev", "5 2/3"),
+                                                    ("7shot_1ev", "7 1")]),
+    ("selftimer", "Self Timer", "selftimer", [("10sec", "10sec."), ("10sec3shot", "10s / 3pictures"),
+                                              ("2sec", "2sec.")]),
+    ("stopmotion_interval", "Time Lapse/Animation", "stopmotion_interval",
+     [("interval", "Time Lapse Shot"), ("stop_motion", "Animation")]),
+]
+HEADINGS = [  # (item id, title, cmd_type, [(value, title)], value2 placeholder)
+    ("crtv_ctrl", "Creative Control", "creativectrl",
+     [("pop", "Expressive"), ("retro", "Retro"), ("monochro", "Monochrome"), ("bleach_bypass", "Bleach Bypass"),
+      ("diorama", "Miniature Effect")], False),
+    ("ph_sty", "Photo Style", "colormode",
+     [("standard", "Standard"), ("vivid", "Vivid"), ("natural", "Natural"), ("bw", "Monochrome"),
+      ("scenery", "Scenery"), ("portrait", "Portrait"), ("cinelike_d", "Cinelike D"), ("cinelike_v", "Cinelike V")], True),
+    ("filter_set", "Filter Select", "filter_setting",
+     [("noeffect", "No Effect"), ("pop", "Expressive"), ("retro", "Retro"), ("monochro", "Monochrome"),
+      ("bleach_bypass", "Bleach Bypass")], False),
+    ("asprat", "Aspect Ratio", "aspectratio", [("4:3", "4:3"), ("3:2", "3:2"), ("16:9", "16:9"), ("1:1", "1:1")], False),
+    ("quality", "Quality", "quality",
+     [("fine", "Fine"), ("standard", "Standard"), ("raw_fine", "RAW+Fine"), ("raw_standard", "RAW+Standard"),
+      ("raw", "RAW")], False),
+    ("lightmet", "Metering Mode", "lightmetering",
+     [("multi", "Multi Metering"), ("center", "Center Weighted"), ("spot", "Spot")], False),
+    ("flash", "Flash Mode", "flash",
+     [("forcedflashon", "Forced Flash On"), ("slowsync", "Slow Sync."), ("forcedflashoff", "Forced Flash Off")], False),
+    ("videoformat", "Rec Format", "videoformat", [("avchd", "AVCHD"), ("mp4", "MP4")], False),
+    ("v_quality", "Video Rec Quality", "videoquality",
+     [("mp4_30p_100mbps_4k", "MP4(3840x2160)30p 100Mbps"), ("mp4_60p_28mbps", "MP4(1920x1080)60p 28Mbps"),
+      ("mp4_30p_20mbps", "MP4(1920x1080)30p 20Mbps")], False),
+]
+AF_MODES = [("facedetection", "Face/Eye Detection"), ("aftracking", "Tracking"), ("49area", "49-Area"),
+            ("1area", "1-Area"), ("pinpoint", "Pinpoint")]
+CUSTOM_MULTI = [("vertical", "Vertical Pattern"), ("horizontal", "Horizontal Pattern")]
+PEAKING = [("off", "Off"), ("low", "Low"), ("high", "High")]
+KELVIN = (2500, 10000, 100)
+
+
+def extra_defaults():
+    return {"drivemode": ("normal", ""), "creativectrl": ("pop", ""), "colormode": ("standard", ""),
+            "filter_setting": ("noeffect", ""), "aspectratio": ("4:3", ""), "quality": ("fine", ""),
+            "lightmetering": ("multi", ""), "flash": ("forcedflashoff", ""), "videoformat": ("mp4", ""),
+            "videoquality": ("mp4_30p_100mbps_4k", ""), "afmode": ("1area", ""), "peaking": ("off", ""),
+            "pictsize": ("16m", "")}
+
+
+G7_MENU = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "dmc-g7-allmenu.xml")
+
+
+def allmenu_body():
+    """The <menuset> served for getinfo&type=allmenu: the real G7's menu for --model DMC-G7,
+    otherwise one built in the same shape."""
+    if "G7" in MODEL.upper() and os.path.exists(G7_MENU):
+        with open(G7_MENU, encoding="utf-8") as f:
+            return "".join(line for line in f if not line.startswith("<!--"))
+    items = "".join(f'<item id="menu_item_id_iso_{v}" func_type="select" cmd_mode="setsetting" '
+                    f'cmd_type="iso" cmd_value="{v}"/>' for v in ISO)
+    extras, titles = menu_items()
+    return (f'<menuset model="{MODEL}"><mainmenu><photosettings>{items}</photosettings></mainmenu>'
+            + extras + titles + "</menuset>")
+
+
+def menu_rules():
+    """From the served menu: cmd_type -> allowed (value, value2), and the colour temperature range."""
+    import xml.etree.ElementTree as ET
+    allowed, kelvin = {}, KELVIN
+    for item in ET.fromstring(allmenu_body()).iter("item"):
+        kind, value = item.get("cmd_type"), item.get("cmd_value")
+        if not kind or not value or value == "__value__":
+            continue
+        if kind == "whitebalance" and value == "color_temp" and item.get("min_val"):
+            kelvin = (int(item.get("min_val")), int(item.get("max_val")), int(item.get("step_val") or 100))
+            continue
+        value2 = item.get("cmd_value2") or ""
+        allowed.setdefault(kind, set()).add((value, "" if value2 == "__value__" else value2))
+    return allowed, kelvin
+
+
+def menu_items():
+    """The allmenu body for the extra settings, and the titles it refers to."""
+    titles = {}
+
+    def item(item_id, title, attrs="", inner=""):
+        titles[f"title_{item_id}"] = title
+        body = f"<group>{inner}</group>" if inner else ""
+        return f'<item id="menu_item_id_{item_id}" title_id="title_{item_id}" {attrs}>{body}</item>'
+
+    def setting(kind, value, value2=None):
+        extra = f' cmd_value2="{escape(value2)}"' if value2 is not None else ""
+        return f'cmd_mode="setsetting" cmd_type="{kind}" cmd_value="{escape(value)}"{extra}'
+
+    photo = []
+    for item_id, title, kind, options, placeholder in HEADINGS:
+        inner = "".join(item(f"{item_id}_{v}".replace(":", "_"), t, setting(kind, v, "__value__" if placeholder else None))
+                        for v, t in options)
+        photo.append(item(item_id, title, f'func_type="select"', inner))
+    lo, hi, step = KELVIN
+    wb = "".join(item(f"whitebalance_{v}", v.title(), setting("whitebalance", v)) for v in WB if v != "color_temp1")
+    wb += item("whitebalance_color_temp", "Color Temperature",
+               f'min_val="{lo}" max_val="{hi}" step_val="{step}" ' + setting("whitebalance", "color_temp", "__value__"))
+    quick = [item("whitebalance", "White Balance", 'func_type="sp_embeded_whitebalance"', wb)]
+    afs = "".join(item(f"afmode_{v}", t, setting("afmode", v)) for v, t in AF_MODES[:3])
+    afs += item("afmode_custom_multi", "Custom Multi", 'func_type="select" ' + setting("afmode", "custom_multi"),
+                "".join(item(f"afmode_custom_multi_{v2}", t, setting("afmode", "custom_multi", v2)) for v2, t in CUSTOM_MULTI))
+    afs += "".join(item(f"afmode_{v}", t, setting("afmode", v)) for v, t in AF_MODES[3:])
+    quick.append(item("afmode", "AF Mode", 'func_type="sp_embeded_afmode"', afs))
+    for item_id, title, value, subs in DRIVE:
+        if subs:
+            inner = "".join(item(f"{item_id}_{v2}".replace("/", "_"), t, setting("drivemode", value, v2)) for v2, t in subs)
+            quick.append(item(item_id, title, 'func_type="select" ' + setting("drivemode", value), inner))
+        else:
+            quick.append(item(item_id, title, setting("drivemode", value)))
+    quick.append(item("peaking", "Peaking", 'func_type="sp_embeded_peaking"',
+                      "".join(item(f"peaking_{v}", t, setting("peaking", v)) for v, t in PEAKING)))
+    xml = ("<photosettings><menu>" + "".join(photo) + "</menu></photosettings>"
+           "<qmenu2><menu>" + "".join(quick) + "</menu></qmenu2>")
+    title_xml = "".join(f'<title id="{k}">{escape(v)}</title>' for k, v in titles.items())
+    return xml, f'<titlelist model="{MODEL}"><language code="en" default="yes">{title_xml}</language></titlelist>'
 
 
 def av_code(f):
@@ -121,6 +248,8 @@ class MockLumix:
         self.iso = "auto"
         self.exposure = "0"
         self.whitebalance = "auto"
+        self.kelvin = "5500"
+        self.extras = extra_defaults()
         self.touch = None
         self.battery = 3
         self.counter = 1000
@@ -261,13 +390,17 @@ class CamHandler(QuietHandler):
             return self.csv(f"ok,{code_text(av_code(LENS_MAX_F))},{code_text(av_code(LENS_MIN_F))},"
                             f"{code_text(FASTEST)},{code_text(SLOWEST)},0,on,25,25,off,0,0")
         if kind == "allmenu":
-            items = []
-            for t, values in (("iso", ISO), ("whitebalance", WB)):
-                for v in values:
-                    items.append(f'<item id="menu_item_id_{t}_{v}" func_type="select" cmd_mode="setsetting" '
-                                 f'cmd_type="{t}" cmd_value="{v}"/>')
-            return self.result("ok", "<menuinfo><mainmenu><photosettings>" + "".join(items) +
-                               "</photosettings></mainmenu></menuinfo>")
+            return self.result("ok", allmenu_body())
+        if kind == "curmenu":
+            # Like a real body: Creative Control is greyed out unless the dial is on C, and 4K Photo
+            # can't record RAW.
+            cam = self.cam
+            four_k = cam.extras["drivemode"][0] == "4k_photo"
+            rows = ['<item id="menu_item_id_crtv_ctrl" enable="no" />',
+                    f'<item id="menu_item_id_filter_set" enable="yes" value="{cam.extras["filter_setting"][0]}" />']
+            for v in ("raw_fine", "raw_standard", "raw"):
+                rows.append(f'<item id="menu_item_id_quality_{v}" enable="{"no" if four_k else "yes"}" />')
+            return self.result("ok", f'<menuinfo model="{MODEL}">' + "".join(rows) + "</menuinfo>")
         self.result("err_param")
 
     def mode_getstate(self, q):
@@ -284,9 +417,13 @@ class CamHandler(QuietHandler):
             "focal": code_text(cam.focal), "shtrspeed": code_text(cam.shutter), "iso": cam.iso,
             "exposure": cam.exposure, "whitebalance": cam.whitebalance, "liveviewsize": cam.stream_size,
         }
+        if kind in cam.extras:
+            value, value2 = cam.extras[kind]
+            return self.result("ok", f'<settingvalue {kind}="{escape(value)}">{escape(value2)}</settingvalue>')
         if kind not in values:
             return self.result("err_param")
-        self.result("ok", f'<settingvalue {kind}="{values[kind]}"></settingvalue>')
+        text = cam.kelvin if cam.whitebalance == "color_temp" and kind == "whitebalance" else ""
+        self.result("ok", f'<settingvalue {kind}="{values[kind]}">{text}</settingvalue>')
 
     def mode_setsetting(self, q):
         cam = self.cam
@@ -318,10 +455,30 @@ class CamHandler(QuietHandler):
                 return self.result("err_param")
             cam.shutter = code if code == BULB else snap_thirds(code)
             print("  shutter now " + ("Bulb" if code == BULB else f"{tv_seconds(cam.shutter):.5g} s"))
+        elif kind == "whitebalance" and value == "color_temp":
+            lo, hi, step = menu_rules()[1]
+            k = q.get("value2", "")
+            if not k.isdigit() or not (lo <= int(k) <= hi) or (int(k) - lo) % step:
+                return self.result("err_param")
+            cam.whitebalance, cam.kelvin = "color_temp", k
+            print(f"  white balance now {k} K")
         elif kind in CHOICES:
             if value not in CHOICES[kind]:
                 return self.result("err_param")
             setattr(cam, kind, value)
+        elif kind in cam.extras:
+            pair = (value, q.get("value2", ""))
+            allowed = menu_rules()[0].get(kind, set())
+            # A choice can be sent without its second part (the camera keeps the last one).
+            if pair not in allowed and not (not pair[1] and any(v == value for v, _ in allowed)):
+                return self.result("err_param")
+            if kind == "creativectrl":
+                return self.result("err_reject")   # the dial isn't on C
+            if kind == "drivemode" and STICKY_DRIVE:
+                print("  (says ok, keeps the old drive mode)")
+                return self.result()
+            cam.extras[kind] = pair
+            print(f"  {kind} now {value}" + (f" / {pair[1]}" if pair[1] else ""))
         else:
             return self.result("err_param")
         self.result()
@@ -564,11 +721,15 @@ def main():
     ap = arguments(__doc__, 8082, 80)
     ap.add_argument("--refuse", action="store_true", help="answer No to the pairing prompt")
     ap.add_argument("--encrypted", action="store_true", help="newer pairing (req_acc_g/req_acc_e + X-SESSION_ID)")
-    ap.add_argument("--model", default="DC-GH5", help="model the camera reports, e.g. DC-LX100 or DMC-GH4")
+    ap.add_argument("--model", default="DC-GH5",
+                    help="model the camera reports, e.g. DC-LX100 or DMC-GH4; DMC-G7 serves the real G7's menu")
+    ap.add_argument("--sticky-drive", action="store_true",
+                    help="answer ok to drive mode changes but keep the old one (a GM1S does this)")
     args = ap.parse_args()
-    global ENCRYPTED, MODEL
+    global ENCRYPTED, MODEL, STICKY_DRIVE
     ENCRYPTED = args.encrypted
     MODEL = args.model
+    STICKY_DRIVE = args.sticky_drive
 
     cam = MockLumix(load_frames(), refuse=args.refuse)
     CamHandler.cam = MediaHandler.cam = cam

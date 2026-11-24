@@ -1,7 +1,22 @@
 import Foundation
+import Synchronization
+
+/// Names the connected camera gives its own settings and values. LUMIX menus carry an English
+/// name for every option; these are checked before the built-in tables.
+struct CameraText: Sendable {
+    var titles: [String: String] = [:]
+    var values: [String: [String: String]] = [:]
+}
 
 /// Human-readable labels for the camera's raw property values.
 enum PropertyFormat {
+    private static let cameraText = Mutex(CameraText())
+
+    /// Replaces the connected camera's own names (empty when it disconnects).
+    static func setCameraText(_ text: CameraText) {
+        cameraText.withLock { $0 = text }
+    }
+
     static let featured: [(name: String, title: String)] = [
         ("takemode", "Mode"),
         ("focalvalue", "Aperture"),
@@ -16,7 +31,8 @@ enum PropertyFormat {
     ]
 
     static func title(for name: String) -> String {
-        featured.first { $0.name == name }?.title ?? name
+        if let title = cameraText.withLock({ $0.titles[name] }) { return title }
+        return featured.first { $0.name == name }?.title ?? name
     }
 
     /// Exposure time in seconds for a shutter value: `60"` → 60, `250` → 1/250, `1.3` → 1/1.3.
@@ -33,6 +49,7 @@ enum PropertyFormat {
     }
 
     static func display(_ name: String, _ value: String) -> String {
+        if let label = cameraText.withLock({ $0.values[name]?[value] }) { return label }
         switch name {
         case "takemode":
             switch value.lowercased() {

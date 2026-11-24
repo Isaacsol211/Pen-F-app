@@ -214,7 +214,9 @@ struct AllSettingsView: View {
     var body: some View {
         NavigationStack {
             List {
-                let sorted = camera.properties.values.sorted { $0.name < $1.name }
+                let sorted = camera.properties.values.sorted {
+                    PropertyFormat.title(for: $0.name).localizedCaseInsensitiveCompare(PropertyFormat.title(for: $1.name)) == .orderedAscending
+                }
                 Section {
                     ForEach(sorted) { property in
                         if property.settable && !property.options.isEmpty {
@@ -228,7 +230,7 @@ struct AllSettingsView: View {
                         }
                     }
                 } footer: {
-                    Text("Read with get_camprop.cgi?com=desc&propname=desclist. Locked rows are read-only in the current mode.")
+                    Text("Everything the camera lets the app read or change over Wi-Fi. Locked rows can't be changed in the current mode.")
                 }
             }
             .navigationTitle("Camera settings")
@@ -247,13 +249,14 @@ struct AllSettingsView: View {
     private func row(_ property: CameraProperty) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(property.name).font(.body.monospaced())
-                if !property.options.isEmpty {
-                    Text("\(property.options.count) options").font(.caption).foregroundStyle(.secondary)
-                }
+                Text(PropertyFormat.title(for: property.name))
+                Text(property.options.isEmpty ? property.name : "\(property.name) · \(property.options.count) options")
+                    .font(.caption.monospaced()).foregroundStyle(.secondary)
             }
             Spacer()
-            Text(property.value).font(.callout.monospaced()).foregroundStyle(.secondary)
+            Text(PropertyFormat.display(property.name, property.value))
+                .font(.callout).foregroundStyle(.secondary)
+                .multilineTextAlignment(.trailing)
             if !property.settable {
                 Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
             }

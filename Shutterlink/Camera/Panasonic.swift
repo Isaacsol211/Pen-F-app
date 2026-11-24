@@ -60,6 +60,16 @@ final class PanasonicSession {
     var apertureCodes: [String: Int] = [:]
     var shutterCodes: [String: Int] = [:]
     var whiteBalanceCodes: [String: String] = [:]
+    /// The extra settings the camera's menu offers (drive, Photo Style, AF mode…) and colour temperature.
+    var settings: [LumixSetting] = []
+    var kelvin: LumixKelvin?
+    /// Their current values, merged into the properties on every refresh. Read again after one of
+    /// them changes, or when the last reading is more than a few seconds old.
+    var settingProperties: [String: CameraProperty] = [:]
+    var settingsReadAt: Date?
+    /// What the app last set, for settings the camera won't report back.
+    var lastSet: [String: String] = [:]
+    var loggedSettings = false
     var contentDirectory: URL?
     var lastStreamKick = Date.distantPast
 
@@ -122,6 +132,7 @@ final class PanasonicDriver: CameraDriver {
     func teardown() {
         keepAlive?.cancel()
         keepAlive = nil
+        PropertyFormat.setCameraText(CameraText())
     }
 
     // MARK: - Focus stacking
@@ -189,6 +200,7 @@ final class PanasonicDriver: CameraDriver {
     func connect() async throws {
         let uuid = PanasonicSession.uuid
         lumix = PanasonicSession()
+        PropertyFormat.setCameraText(CameraText())
         // Newer bodies (S5IIX, G9II…) say in their UPnP description that they want the newer pairing.
         let description = await readDeviceDescription()
         camera.profile = ModelProfiles.find(.panasonic, reported: description.model)
@@ -242,7 +254,7 @@ final class PanasonicDriver: CameraDriver {
         var info = ""
         if let capability = try? await lumixCommand([("mode", "getinfo"), ("type", "capability")]) {
             info += "CAPABILITY\n\(capability)\n\n"
-            if camera.profile == nil, let model = MiniXML.parse(Data(capability.utf8))?.firstDescendant(named: ["model_name"])?.trimmedText {
+            if camera.profile == nil, let model = MiniXML.parse(Data(capability.utf8))?.firstDescendant(named: ["model_name", "modelname"])?.trimmedText {
                 camera.profile = ModelProfiles.find(.panasonic, reported: model)
             }
         }
@@ -353,6 +365,138 @@ final class PanasonicDriver: CameraDriver {
         }
         lumix.menu = menu
         debugLog("LUMIX menu types: \(menu.keys.sorted())")
+
+        // The extra settings, named the way the camera names them.
+        let parsed = LumixMenu.parse(root)
+        lumix.settings = parsed.settings
+        lumix.kelvin = parsed.kelvin
+        var text = CameraText()
+        for setting in parsed.settings {
+            text.titles[setting.name] = setting.title
+            text.values[setting.name] = setting.labels.merging(["": "–"]) { own, _ in own }
+        }
+        if let kelvin = parsed.kelvin {
+            text.titles[LumixMenu.kelvinName] = LumixMenu.kelvinTitle
+            var labels = Dictionary(uniqueKeysWithValues: kelvin.options.map { ($0, "\($0) K") })
+            labels[""] = "Off"
+            text.values[LumixMenu.kelvinName] = labels
+        }
+        PropertyFormat.setCameraText(text)
+        debugLog("LUMIX extra settings: \(parsed.settings.map { "\($0.type) (\($0.options.count))" }.joined(separator: ", "))"
+                 + (parsed.kelvin.map { ", colour temperature \($0.min)–\($0.max) K" } ?? ""))
+    }
+
+    /// Reads the extra settings: their current values (getsetting) and what the camera allows right
+    /// now (curmenu: options greyed out in this mode are left out, and a heading that is switched
+    /// off locks its setting).
+    private func readLumixSettings() async {
+        guard !lumix.settings.isEmpty || lumix.kelvin != nil else { return }
+        lumix.settingsReadAt = Date()
+        var dump = ""
+        var menuState: [String: LumixMenuState] = [:]
+        if let reply = try? await lumixCommand([("mode", "getinfo"), ("type", "curmenu")], log: false),
+           let root = MiniXML.parse(Data(reply.utf8)) {
+            menuState = LumixMenu.parseState(root)
+            if !lumix.loggedSettings { dump += "CURMENU\n\(reply)\n\n" }
+        }
+        func enabled(_ ids: [String]) -> Bool { ids.allSatisfy { menuState[$0]?.enabled ?? true } }
+
+        var properties: [String: CameraProperty] = [:]
+        for setting in lumix.settings {
+            let reading = await readLumixSetting(setting.type)
+            if !lumix.loggedSettings { dump += "GETSETTING \(setting.type): \(reading.raw ?? "no answer")\n" }
+            let value: String
+            if let current = reading.value {
+                value = Self.optionKey(current, reading.detail, in: setting.options)
+            } else if let fromMenu = setting.headingItems.lazy.compactMap({ menuState[$0]?.value }).first {
+                value = Self.optionKey(fromMenu, nil, in: setting.options)
+            } else {
+                value = lumix.lastSet[setting.name] ?? ""
+            }
+            var options = setting.options.filter { enabled(setting.optionItems[$0] ?? []) || $0 == value }
+            if !value.isEmpty, !options.contains(value) { options.insert(value, at: 0) }
+            let usable = enabled(setting.headingItems) && options.contains { $0 != value }
+            if options.isEmpty { options = [value] }
+            properties[setting.name] = CameraProperty(name: setting.name, settable: usable, value: value, options: options)
+        }
+        if let kelvin = lumix.kelvin {
+            let reading = await readLumixSetting("whitebalance")
+            let value = reading.value == "color_temp" ? (reading.detail ?? lumix.lastSet[LumixMenu.kelvinName] ?? "") : ""
+            properties[LumixMenu.kelvinName] = CameraProperty(name: LumixMenu.kelvinName,
+                                                              settable: enabled([kelvin.itemID].compactMap { $0 }),
+                                                              value: value, options: kelvin.options)
+        }
+        lumix.settingProperties = properties
+        debugLog("LUMIX settings: " + properties.values.sorted { $0.name < $1.name }
+            .map { "\($0.name)=\($0.value)\($0.settable ? "" : " (locked)")" }.joined(separator: " "))
+        if !dump.isEmpty {
+            // Kept with the connection info (Request log ▸ Settings) to check a new body against.
+            camera.rawDescList += "\n" + dump
+            lumix.loggedSettings = true
+        }
+    }
+
+    /// getsetting: `<settingvalue drivemode="burst">h</settingvalue>`. The text, when there is one,
+    /// is the second part of the value.
+    private func readLumixSetting(_ type: String) async -> (value: String?, detail: String?, raw: String?) {
+        guard let reply = try? await lumixCommand([("mode", "getsetting"), ("type", type)], log: false) else {
+            return (nil, nil, nil)
+        }
+        let node = MiniXML.parse(Data(reply.utf8))?.firstDescendant(named: ["settingvalue"])
+        let detail = node?.trimmedText ?? ""
+        return (node?.attributes[type], detail.isEmpty ? nil : detail, reply)
+    }
+
+    /// The option a reading stands for: "burst" + "h" → "burst|h".
+    static func optionKey(_ value: String, _ detail: String?, in options: [String]) -> String {
+        if let detail, options.contains("\(value)|\(detail)") { return "\(value)|\(detail)" }
+        if options.contains(value) { return value }
+        return detail.map { "\(value)|\($0)" } ?? value
+    }
+
+    private func setLumixSetting(_ setting: LumixSetting, to key: String, reportErrors: Bool) async -> Bool {
+        let parts = key.split(separator: "|", maxSplits: 1).map(String.init)
+        guard let base = parts.first else { return false }
+        var params = [("mode", "setsetting"), ("type", setting.type), ("value", base)]
+        if parts.count > 1 { params.append(("value2", parts[1])) }
+        let previous = camera.properties[setting.name]?.value
+        camera.properties[setting.name]?.value = key
+        do {
+            try await lumixCommand(params)
+        } catch {
+            if let previous { camera.properties[setting.name]?.value = previous }
+            if reportErrors { camera.lastError = CameraModel.describe(error, host: camera.connectionHost) }
+            lumix.settingsReadAt = nil
+            await refreshProperties()
+            return false
+        }
+        lumix.lastSet[setting.name] = key
+        // Read it back: some bodies answer ok to a drive mode change and keep the old one.
+        lumix.settingsReadAt = nil
+        await refreshProperties()
+        guard let now = camera.properties[setting.name]?.value, !now.isEmpty, now != key else { return true }
+        let sameChoice = !now.contains("|") && now == base
+        if sameChoice { return true }
+        if reportErrors {
+            camera.lastError = "The camera said OK but stayed on \(PropertyFormat.display(setting.name, now)). "
+                + "Change \(setting.title.lowercased()) on the camera."
+        }
+        return false
+    }
+
+    private func setLumixKelvin(_ kelvin: String, reportErrors: Bool) async -> Bool {
+        guard !kelvin.isEmpty else { return false }
+        do {
+            try await lumixCommand([("mode", "setsetting"), ("type", "whitebalance"), ("value", "color_temp"),
+                                    ("value2", kelvin)])
+        } catch {
+            if reportErrors { camera.lastError = CameraModel.describe(error, host: camera.connectionHost) }
+            return false
+        }
+        lumix.lastSet[LumixMenu.kelvinName] = kelvin
+        lumix.settingsReadAt = nil
+        await refreshProperties()
+        return true
     }
 
     func applyLumixState(_ reply: String) {
@@ -472,7 +616,9 @@ final class PanasonicDriver: CameraDriver {
             result["expcomp"] = CameraProperty(name: "expcomp", settable: true, value: value, options: options)
         }
         if let raw = await current("whitebalance") {
-            let names = lumix.menu["whitebalance"] ?? PanasonicSession.whiteBalanceFallback
+            // Colour temperature has its own setting (it needs a Kelvin value).
+            let names = (lumix.menu["whitebalance"] ?? PanasonicSession.whiteBalanceFallback)
+                .filter { lumix.kelvin == nil || $0 != "color_temp" }
             var codes: [String: String] = [:]
             var options: [String] = []
             for name in names + [raw] {
@@ -492,10 +638,18 @@ final class PanasonicDriver: CameraDriver {
             if profile.noExposureComp { result["expcomp"]?.settable = false }
             if profile.noISO { result["isospeedvalue"]?.settable = false }
         }
+        if lumix.settingsReadAt.map({ Date().timeIntervalSince($0) > 15 }) ?? true { await readLumixSettings() }
+        for (name, property) in lumix.settingProperties where result[name] == nil { result[name] = property }
         camera.properties = result
     }
 
     func setProperty(_ name: String, to value: String, reportErrors: Bool) async -> Bool {
+        if let extra = lumix.settings.first(where: { $0.name == name }) {
+            return await setLumixSetting(extra, to: value, reportErrors: reportErrors)
+        }
+        if name == LumixMenu.kelvinName, lumix.kelvin != nil {
+            return await setLumixKelvin(value, reportErrors: reportErrors)
+        }
         let setting: (type: String, value: String)?
         switch name {
         case "focalvalue":

@@ -39,6 +39,11 @@ struct SettingSpec {
             if value.contains("selftimer") { return "timer" }
             if value.contains("continuous-H") { return "square.stack.3d.up.fill" }
             if value.contains("continuous") { return "square.stack.3d.up" }
+            // LUMIX
+            if value.hasPrefix("burst") { return value.hasSuffix("|sh") || value.hasSuffix("|h") ? "square.stack.3d.up.fill" : "square.stack.3d.up" }
+            if value.hasPrefix("4k_photo") { return "4k.tv" }
+            if value.hasPrefix("autobracket") { return "plusminus.circle" }
+            if value.hasPrefix("stopmotion_interval") { return "clock.arrow.2.circlepath" }
             return value.hasPrefix("silent") ? "speaker.slash" : "square"
         case "exposemovie":
             return ["p": "p.circle", "a": "a.circle", "s": "s.circle", "m": "m.circle"][value.lowercased()]

@@ -79,7 +79,8 @@ enum DriverSelfTest {
         let props = camera.properties.values.sorted { $0.name < $1.name }
         check("settings read", !props.isEmpty,
               props.map { "\($0.name)=\($0.value)\($0.settable ? "" : "(ro)")[\($0.options.count)]" }.joined(separator: " "))
-        for name in ["expcomp", "focalvalue", "shutspeedvalue", "isospeedvalue", "wbvalue"] {
+        let extras = camera.brand == .panasonic ? ["drivemode", "colormode", "afmode", LumixMenu.kelvinName] : []
+        for name in ["expcomp", "focalvalue", "shutspeedvalue", "isospeedvalue", "wbvalue"] + extras {
             guard let p = camera.settableProperty(name),
                   let target = p.options.first(where: { $0 != p.value && !PropertyFormat.isOpenEnded(shutter: $0) && $0 != "auto" })
             else { continue }
