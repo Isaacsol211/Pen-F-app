@@ -1,4 +1,4 @@
-# Test results: Olympus / OM System and Panasonic LUMIX
+# Test results: Olympus / OM System, Panasonic LUMIX, Nikon, Canon, Sony
 
 Mock-camera runs of [`../TEST-PLAN.md`](../TEST-PLAN.md) on the iPhone 17 simulator, 2026-11-25, against `main` 5da84a8 (app code unchanged). **Nothing here was run on a real camera**; "tested" means the app's side against a mock, with the mock's `--model` choosing which `ModelProfiles.swift` entry applies.
 
@@ -45,7 +45,30 @@ Olympus bodies in the table that were **not** run themselves: E-P5, E-M10, E-M10
 | Lab/Flow era | S1 II, S1R II, L10 | S1 II (probe, `--encrypted`) | [panasonic-dc-s1m2](panasonic-dc-s1m2.md) |
 | Not tested | TS5/FT5, TZ40/ZS30, FZ70/FZ72, TZ57/ZS45, TZ80/ZS60, TZ90/ZS70, TZ95/ZS80, TZ99/ZS99, TZ100/ZS100, TZ200/ZS200, FZ80/FZ82, LX100 II, LX10/LX15, GH5 II etc. | each is in the "Plain compact" or flagged group above; the mock gives every LUMIX the same menu, so only the profile flag differs | – |
 
-## Worst problems across both brands
+## Nikon, Canon, Sony (beta brands, no model table in the app)
+
+`ModelProfiles.swift` has no Nikon/Canon/Sony entries, so the only per-model logic is the crop factor worked out from the reported name. The repo mocks always report one body (Z 6II or D750, EOS R6, ILCE-6000); to test other names I ran **scratch copies** of the mocks that read the reported name from an environment variable (repo mocks unchanged). Probes check connect, live view and crop factor only.
+
+| Brand | Group | Bodies | Tested as | Sheet |
+|---|---|---|---|---|
+| Nikon | Z mirrorless | Z 5, Z 6/6II, Z 7/7II, Z 50, Z fc, Z 30 | Z 6II (full + UI), Z 5, Z 50, Z fc, Z 7II (probes) | [nikon-z6ii](nikon-z6ii.md) |
+| Nikon | ★ flagship Z | Z 8 ★, Z 9 ★, Z 6III ★, Z f ★ | all four (probes) | [nikon-z8-z9](nikon-z8-z9.md) |
+| Nikon | DSLR | D750, D850, D7200 | D750 (full), D850, D7200 (probes) | [nikon-d750](nikon-d750.md) |
+| Canon | CCAPI mirrorless | R, RP, R6, R7, R8, R10, R50, 90D | R6 (full + UI), R7, R10, R50, R8, RP, 90D (probes) | [canon-eos-r6](canon-eos-r6.md) |
+| Canon | ★ flagship | R5 ★, R3 ★, R6 II ★, R1 ★, R5 II ★ | all (probes, incl. "R6m2"/"R5m2" spellings) | [canon-eos-r5-r3-r6m2](canon-eos-r5-r3-r6m2.md) |
+| Sony | Smart Remote era | a6000, a6300, a7 II, a9, RX100 | a6000 (full + UI) | [sony-a6000](sony-a6000.md) |
+| Sony | modern / ★ flagship | a7 III/IV, a7R V, a1 ★, a9 III ★, a7S III, ZV-E10, ZV-E1, a6400, a6700, a7C II, RX100 VII | all (probes) | [sony-ilce-modern](sony-ilce-modern.md) |
+
+Not run: Nikon Z 30, D3xxx/D5xxx; Canon M-series, G-series, 250D/850D, PowerShot; Sony a6100/a6300/RX10; each falls into the nearest group above.
+
+### Worst problems per beta brand
+
+- **Nikon:** nothing before Pro says it is beta or mock-only (Pro screen, Add a camera list have no Beta tag); no Drive/Quality cell, so burst and RAW can't be chosen from the phone; every preset skips Drive without telling the user what to set on the camera. A Z 8/Z 9 owner gets almost no new value.
+- **Canon:** switching brand in Add a camera keeps the previous brand's address (Canon tried the Nikon port); the resulting 12-line error banner covers the sheet's brand list and address field, survives Cancel and shows on the home screen; WB shows the raw code `awb_white`; if the camera reports "R6m2"/"R5m2" the crop factor is wrong (1.6) and Astro shutters come out ~60% too long.
+- **Sony:** the Action preset FAILS ("camera refused 1/1000 … mode dial on S?"), the same pattern as the LUMIX G7 drive failure; the app connects to any Sony model name and gives modern bodies (a1, a7 IV, a9 III, a7R V, ZV-E10, a6700) no refusal before Pro; ZV-E1 (full frame) gets crop 1.5.
+- **All three (VAL-08):** it is **not** clear before paying that these brands are beta and mock-only. The Connect screen has a small flask line; the Pro screen and trial prompt say nothing.
+
+## Worst problems across Olympus and LUMIX
 
 1. **LUMIX G7 presets report FAILED when the drive dial cannot be changed.** On `--sticky-drive` six of seven presets and the ND setup end as failed with "The camera refused Self-timer 2 s": a refusal, not an instruction (`panasonic-dmc-g7` F1). This is the real G7's situation and the first thing a G7 owner sees.
 2. **Bracketing on fixed-exposure compacts (TZ55 and friends) fails with a self-contradictory message** "The shutter speed is locked in M. Use S or M…" instead of falling back to EV (`panasonic-dmc-tz60-tz55-ft7` F1).
