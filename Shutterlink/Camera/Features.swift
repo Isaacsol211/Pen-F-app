@@ -8,6 +8,10 @@ struct IntervalPlan: Equatable, Codable {
     var count = 60
     /// Seconds from the start of one shot to the start of the next.
     var seconds = 20.0
+    /// Day-to-night: keep live view as bright as at the start by lengthening the shutter, then raising ISO.
+    var ramp = false
+    /// The highest ISO ramping may go to.
+    var maxISO = 3200
 }
 
 struct IntervalState: Equatable {
@@ -16,6 +20,8 @@ struct IntervalState: Equatable {
     var total = 0
     var nextShotAt: Date?
     var startedAt: Date?
+    /// The last exposure change ramping made.
+    var rampNote: String?
 }
 
 extension CameraModel {
@@ -24,10 +30,17 @@ extension CameraModel {
     func startInterval(_ plan: IntervalPlan) {
         guard !interval.running, mode == .rec, !isOpenEndedShutter else { return }
         interval = IntervalState(running: true, done: 0, total: plan.count, nextShotAt: Date(), startedAt: Date())
+        let rampTarget = plan.ramp ? recentFrame.flatMap(FrameMeter.brightness) : nil
+        let baseISO = properties["isospeedvalue"].flatMap { Int($0.value) }
+        if plan.ramp, rampTarget == nil { interval.rampNote = "No live view to follow the light: ramping is off" }
         intervalTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled, self.interval.running,
                   plan.count == 0 || self.interval.done < plan.count {
+                if let rampTarget, self.interval.done > 0,
+                   let note = await self.rampExposure(towards: rampTarget, plan: plan, baseISO: baseISO) {
+                    self.interval.rampNote = note
+                }
                 let shotStart = Date()
                 self.interval.nextShotAt = nil
                 await self.shutterPressed()

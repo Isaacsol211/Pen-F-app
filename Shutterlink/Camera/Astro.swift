@@ -15,6 +15,8 @@ struct PresetStep: Identifiable, Equatable {
     var value: String?
     /// Why the step can't run on this camera, shown when `value` is nil.
     var unavailable = "Not offered by the camera over Wi-Fi"
+    /// Added to "The camera refused …" when the likely cause is a setting the app can't see.
+    var hint: String?
     var state: State = .pending
 }
 
@@ -135,13 +137,20 @@ extension CameraModel {
         }
 
         let drive = settable("drivemode")?.options.first { $0 == "lowvib-normal" }
+        var aperture = PresetStep(title: "Widest aperture", detail: "Gather as much starlight as possible",
+                                  property: "focalvalue", value: exposure("focalvalue") == nil ? nil : widestAperture)
+        var shutter = PresetStep(title: "Shutter", detail: shutterDetail, property: "shutspeedvalue",
+                                 value: exposure("shutspeedvalue") == nil ? nil : astroShutter(for: plan),
+                                 unavailable: shutterUnavailable)
+        // In A, S or P the camera picks aperture or shutter itself; the mode dial is the likely cause.
+        if !willBeManual {
+            aperture.hint = "Is the camera's mode dial on M?"
+            shutter.hint = "Is the camera's mode dial on M?"
+        }
         return [
             modeStep,
-            PresetStep(title: "Widest aperture", detail: "Gather as much starlight as possible", property: "focalvalue",
-                       value: exposure("focalvalue") == nil ? nil : widestAperture),
-            PresetStep(title: "Shutter", detail: shutterDetail, property: "shutspeedvalue",
-                       value: exposure("shutspeedvalue") == nil ? nil : astroShutter(for: plan),
-                       unavailable: shutterUnavailable),
+            aperture,
+            shutter,
             PresetStep(title: "ISO", detail: "Bright enough for faint stars without too much noise", property: "isospeedvalue",
                        value: settable("isospeedvalue") == nil ? nil : nearestISO(to: plan.iso)),
             wbStep,
@@ -151,35 +160,9 @@ extension CameraModel {
         ]
     }
 
-    /// Applies each step in order and records what the camera accepted.
-    func applyAstro(_ plan: AstroPlan) async {
-        guard !presetRunning else { return }
-        presetRunning = true
-        defer { presetRunning = false }
-        presetSteps = astroSteps(for: plan)
-        for index in presetSteps.indices {
-            // Work the value out again now: switching to M changes what the camera offers.
-            let fresh = astroSteps(for: plan)[index]
-            presetSteps[index].value = fresh.value
-            presetSteps[index].unavailable = fresh.unavailable
-            let step = presetSteps[index]
-            guard let value = step.value, let property = properties[step.property] else {
-                presetSteps[index].state = .skipped(step.unavailable)
-                continue
-            }
-            if property.value == value {
-                presetSteps[index].state = .done
-                continue
-            }
-            presetSteps[index].state = .running
-            let ok = await setProperty(step.property, to: value, reportErrors: false)
-            var refused = "The camera refused \(PropertyFormat.display(step.property, value))"
-            // In A, S or P the camera picks aperture or shutter itself; the mode dial is the likely cause.
-            if !ok, ["focalvalue", "shutspeedvalue"].contains(step.property),
-               case .skipped = presetSteps.first(where: { $0.property == "takemode" })?.state {
-                refused += ". Is the camera's mode dial on M?"
-            }
-            presetSteps[index].state = ok ? .done : .failed(refused)
-        }
+    /// Applies the night-sky settings; Undo in Presets puts the old ones back.
+    @discardableResult
+    func applyAstro(_ plan: AstroPlan) async -> Bool {
+        await runPreset(id: PresetRecipe.astro.id, title: "Astro") { astroSteps(for: plan) }
     }
 }

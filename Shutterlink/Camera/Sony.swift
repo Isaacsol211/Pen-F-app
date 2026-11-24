@@ -38,6 +38,8 @@ final class SonyDriver: CameraDriver {
     private var apis: Set<String> = []
     private var rpcID = 0
     private var stream: HTTPStreamReader?
+    /// Times live view was reopened since the last frame arrived.
+    private var liveRestarts = 0
     private var eventTask: Task<Void, Never>?
     /// UI value → Sony value, per property.
     private var valueMap: [String: [String: String]] = [:]
@@ -211,13 +213,30 @@ final class SonyDriver: CameraDriver {
             }
             let reader = HTTPStreamReader(url: url, parse: Self.parseLiveViewPackets)
             reader.onFrame = { [weak self] jpeg in
-                Task { @MainActor in self?.camera.submitLiveViewJPEG(jpeg) }
+                Task { @MainActor in
+                    self?.liveRestarts = 0
+                    self?.camera.submitLiveViewJPEG(jpeg)
+                }
             }
             reader.onEnd = { [weak self] error in
                 Task { @MainActor in
                     guard let self, self.camera.liveViewRunning, self.stream === reader else { return }
                     debugLog("Sony live view ended: \(error?.localizedDescription ?? "closed")")
-                    self.camera.liveViewRunning = false
+                    // A long exposure stalls the stream until the picture is done. Open it again once
+                    // the camera is free, a few times at most before leaving it to Restart live view.
+                    self.liveRestarts += 1
+                    guard self.liveRestarts <= 3 else {
+                        self.camera.liveViewRunning = false
+                        return
+                    }
+                    let deadline = Date().addingTimeInterval(120)
+                    while self.camera.isShooting, Date() < deadline { try? await Task.sleep(for: .milliseconds(500)) }
+                    try? await Task.sleep(for: .seconds(1))
+                    guard self.stream === reader, self.camera.phase == .connected, self.camera.mode == .rec else {
+                        self.camera.liveViewRunning = false
+                        return
+                    }
+                    await self.startLiveView()
                 }
             }
             stream?.stop()

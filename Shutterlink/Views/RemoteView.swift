@@ -6,6 +6,9 @@ struct RemoteView: View {
     @State private var showLog = false
     @State private var showAllSettings = false
     @State private var showAstro = false
+    @State private var showPresets = false
+    @State private var showND = false
+    @State private var showMotion = false
     @State private var showInterval = false
     @State private var showHighRes = false
     @State private var confirmPowerOff = false
@@ -75,6 +78,19 @@ struct RemoteView: View {
         }
         .sheet(isPresented: phoneSheet($showBracket)) {
             BracketView().presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: phoneSheet($showPresets)) {
+            PresetsView(openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: phoneSheet($showND)) {
+            NDView().presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: phoneSheet($showMotion)) {
+            // Live view stays usable above it, so the box can be dragged into place.
+            MotionView()
+                .presentationDetents([.medium, .large])
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }
         .fullScreenCover(isPresented: $pocketMode) { PocketModeView() }
         .fullScreenCover(isPresented: $showGallery) { GalleryView() }
@@ -346,9 +362,8 @@ struct RemoteView: View {
     /// `histogramHeight`: nil where the histogram is shown elsewhere (the tall layout's shooting column).
     @ViewBuilder private func controlSections(histogramHeight: CGFloat?, tileColumns: Int?) -> some View {
         if let panel = sidePanel {
-            SidePanelView(panel: panel) {
-                withAnimation(.snappy) { close(panel) }
-            }
+            SidePanelView(panel: panel, onClose: { withAnimation(.snappy) { close(panel) } },
+                          openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
             .transition(.opacity)
         } else {
             VStack(alignment: .leading, spacing: 12) {
@@ -400,6 +415,9 @@ struct RemoteView: View {
         if showInterval { return .interval }
         if showBracket { return .bracket }
         if showHighRes { return .highRes }
+        if showPresets { return .presets }
+        if showND { return .nd }
+        if showMotion { return .motion }
         return nil
     }
 
@@ -407,6 +425,9 @@ struct RemoteView: View {
         showInterval = panel == .interval
         showBracket = panel == .bracket
         showHighRes = panel == .highRes
+        showPresets = panel == .presets
+        showND = panel == .nd
+        showMotion = panel == .motion
         if isWorkspace { activeSetting = nil }
     }
 
@@ -415,11 +436,38 @@ struct RemoteView: View {
         case .interval: showInterval = false
         case .bracket: showBracket = false
         case .highRes: showHighRes = false
+        case .presets: showPresets = false
+        case .nd: showND = false
+        case .motion: showMotion = false
         }
     }
 
     private func toggle(_ panel: SidePanel) {
         if sidePanel == panel { close(panel) } else { open(panel) }
+    }
+
+    /// Presets → Astro: Astro is a sheet everywhere, so close the presets first (on a phone the sheet
+    /// has to go before another can come up).
+    private func openAstroFromPresets() {
+        let wasSheet = !isWorkspace
+        close(.presets)
+        if wasSheet {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showAstro = true }
+        } else {
+            showAstro = true
+        }
+    }
+
+    /// Presets → Macro → Focus stack: the Bracket tool on its Focus tab.
+    private func openFocusStackFromPresets() {
+        UserDefaults.standard.set(true, forKey: "bracket.focus")
+        let wasSheet = !isWorkspace
+        close(.presets)
+        if wasSheet {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { open(.bracket) }
+        } else {
+            withAnimation(.snappy) { open(.bracket) }
+        }
     }
 
     /// A tool's sheet is only for the phone layouts; in the workspace the same flag opens its panel.
@@ -509,6 +557,10 @@ struct RemoteView: View {
 
     private var tools: [ToolItem] {
         let all = [
+            ToolItem(id: "presets", icon: "wand.and.stars", title: "Presets",
+                     on: sidePanel == .presets, opens: true) {
+                toolsOpen = false; toggle(.presets)
+            },
             ToolItem(id: "astro", icon: "moon.stars.fill", title: "Astro", on: false, opens: true) {
                 toolsOpen = false; showAstro = true
             },
@@ -528,6 +580,13 @@ struct RemoteView: View {
             ToolItem(id: "bracket", icon: "square.stack.3d.down.right", title: "Bracket",
                      on: camera.bracket.running || sidePanel == .bracket, opens: true) {
                 toolsOpen = false; toggle(.bracket)
+            },
+            ToolItem(id: "nd", icon: "camera.filters", title: "ND filter", on: sidePanel == .nd, opens: true) {
+                toolsOpen = false; toggle(.nd)
+            },
+            ToolItem(id: "motion", icon: "figure.walk.motion", title: "Motion",
+                     on: camera.motion.armed || sidePanel == .motion, opens: true) {
+                toolsOpen = false; toggle(.motion)
             },
             ToolItem(id: "pocket", icon: "moon.zzz", title: "Pocket", on: false, opens: true) {
                 toolsOpen = false; pocketMode = true

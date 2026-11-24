@@ -185,7 +185,7 @@ struct ToolTiles: View {
 
 /// The tools that are sheets on a phone and panels in the workspace inspector.
 enum SidePanel: String, Identifiable {
-    case interval, bracket, highRes
+    case interval, bracket, highRes, presets, nd, motion
 
     var id: String { rawValue }
 
@@ -194,6 +194,9 @@ enum SidePanel: String, Identifiable {
         case .interval: "Interval timer"
         case .bracket: "Bracketing"
         case .highRes: "High Res Shot"
+        case .presets: "Presets"
+        case .nd: "ND filter"
+        case .motion: "Motion trigger"
         }
     }
 
@@ -202,6 +205,9 @@ enum SidePanel: String, Identifiable {
         case .interval: "timer"
         case .bracket: "square.stack.3d.down.right"
         case .highRes: "square.grid.3x3.square"
+        case .presets: "wand.and.stars"
+        case .nd: "camera.filters"
+        case .motion: "figure.walk.motion"
         }
     }
 }
@@ -211,6 +217,8 @@ enum SidePanel: String, Identifiable {
 struct SidePanelView: View {
     let panel: SidePanel
     let onClose: () -> Void
+    var openAstro: () -> Void = {}
+    var openFocusStack: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -228,6 +236,9 @@ struct SidePanelView: View {
             case .interval: IntervalPanel()
             case .bracket: BracketPanel()
             case .highRes: HighResPanel()
+            case .presets: PresetsPanel(openAstro: openAstro, openFocusStack: openFocusStack)
+            case .nd: NDPanel()
+            case .motion: MotionPanel()
             }
         }
     }

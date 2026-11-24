@@ -13,6 +13,8 @@ struct LiveViewPane: View {
     @State private var loupeCenter = CGPoint(x: 0.5, y: 0.5)
     @State private var panStart: CGPoint?
     @State private var pinchStart: Double?
+    /// Where the motion box was when a drag on it began.
+    @State private var motionDragStart: CGPoint?
 
     var body: some View {
         GeometryReader { geo in
@@ -39,6 +41,10 @@ struct LiveViewPane: View {
                 }
 
                 if !showLoupe { afOverlay(in: imageRect) }
+
+                if !showLoupe, camera.motion.armed || camera.motion.editing {
+                    motionBox(in: imageRect)
+                }
 
                 if showHistogram, !showLoupe, !camera.histogram.isEmpty {
                     HistogramView(values: camera.histogram)
@@ -134,6 +140,40 @@ struct LiveViewPane: View {
     }
 
     // MARK: - Loupe
+
+    /// The motion trigger's box: dashed while it's being placed, solid amber while armed. Drag to move.
+    private func motionBox(in imageRect: CGRect) -> some View {
+        let region = camera.motion.region
+        let armed = camera.motion.armed
+        let color: Color = armed ? Theme.accent : .white
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        return shape
+            .fill(color.opacity(armed ? 0.08 : 0.05))
+            .overlay(shape.stroke(color, style: StrokeStyle(lineWidth: 2, dash: armed ? [] : [6, 4])))
+            .overlay(alignment: .topLeading) {
+                CapsLabel(armed ? "Motion · \(camera.motion.shots)" : "Motion box", color: color)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.55), in: .capsule)
+                    .padding(5)
+            }
+            .frame(width: region.width * imageRect.width, height: region.height * imageRect.height)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        let start = motionDragStart ?? region.origin
+                        if motionDragStart == nil { motionDragStart = start }
+                        var moved = region
+                        moved.origin.x = min(max(start.x + value.translation.width / imageRect.width, 0), 1 - region.width)
+                        moved.origin.y = min(max(start.y + value.translation.height / imageRect.height, 0), 1 - region.height)
+                        camera.motion.region = moved
+                    }
+                    .onEnded { _ in motionDragStart = nil }
+            )
+            .offset(x: imageRect.minX + region.minX * imageRect.width, y: imageRect.minY + region.minY * imageRect.height)
+            .accessibilityLabel(armed ? "Motion trigger armed, \(camera.motion.shots) shots" : "Motion trigger box")
+    }
 
     private func magnified(in imageRect: CGRect) -> some View {
         let big = CGSize(width: imageRect.width * loupeZoom, height: imageRect.height * loupeZoom)

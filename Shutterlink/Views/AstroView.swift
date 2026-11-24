@@ -162,7 +162,7 @@ struct AstroView: View {
     }
 }
 
-private struct StepResultRow: View {
+struct StepResultRow: View {
     let step: PresetStep
 
     var body: some View {
