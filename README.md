@@ -323,9 +323,26 @@ adb shell am start -n com.apexcommerce.shutterlink/.MainActivity --es selfTest o
 adb logcat -s Shutterlink | grep SELFTEST
 ```
 
+**Same features as the iPhone app**, apart from what's listed under "Not ported yet" below:
+- Presets (Astro on every brand with the body's crop factor, Moon, Fireworks, Landscape, Action, Macro, Light trails),
+  Undo and My presets.
+- Focus stacking on LUMIX, Nikon and Canon (Bracket ▸ Focus).
+- Expose to the right, the ND filter calculator, Interval ▸ Follow the light, and the motion trigger (docked under live
+  view so the box can be dragged while it's open).
+- **Scene suggestions**: every ~1.5 s live view is labelled on the phone by Google's ML Kit image labeling (bundled
+  model, no Google Play services, nothing leaves the phone). Together with the frame's brightness, blown highlights and
+  where the sun and moon are, the same rules as on iOS pick one suggestion ("Night sky → Astro", "Waterfall in daylight
+  → ND filter", "Highlights clipping → EV −⅔"…). ML Kit's labels are mapped onto the iOS scene names; it has no "night",
+  "snow" or "ocean" label, so those come from a dark "Sky", "Ice"/"Glacier" and "Beach", and its "Moon" only counts in a
+  dark frame (it also calls a low sun a moon). Toggle under ··· ▸ Scene suggestions. ML Kit adds a 3 MB model plus a
+  native library of 7–12 MB per CPU type: a Play install gets one, the universal debug APK (~117 MB) carries all four.
+
 **Status (emulator and mocks only; not yet on a real phone or camera).**
 - All five drivers pass the self-test against their mocks in a Pixel 9a emulator (Android 15): Olympus/OM and
-  LUMIX, plus Nikon, Canon and Sony (Beta, as on iOS).
+  LUMIX, plus Nikon, Canon and Sony (Beta, as on iOS). The self-test also runs the interval, a bracket, a focus
+  stack (LUMIX, Nikon, Canon), Astro and every preset, Undo, a saved preset, the ND setup, the motion trigger, ETTR,
+  sun and moon positions on known dates, the scene rules on fixed labels, and ML Kit looking at live view.
+  Focus stacking needs the mocks from `feature/testflight` (they simulate a focus position).
 - Checked by hand there:
   - portrait and landscape layouts, the setting dials, mode dial, tools tray, loupe and grid;
   - the card browser with stars, swipe-through viewer, Save, and the RAW download of starred photos;
@@ -334,7 +351,7 @@ adb logcat -s Shutterlink | grep SELFTEST
 - Not tried yet:
   - joining a camera's Wi-Fi from the app (`WifiNetworkSpecifier`) and the permission prompts;
   - a real phone on a real camera's network.
-- Not ported yet: geotagging, the "Connect to Camera" shortcut, and a Wear OS remote.
+- Not ported yet: geotagging, the "Connect to Camera" shortcut, a Wear OS remote, and a tablet layout like the iPad one.
 
 ## Test without the camera (mock cameras)
 
@@ -535,8 +552,10 @@ Shared/
 android/                     Android app (Kotlin, Jetpack Compose); same structure as the iOS app
   app/src/main/java/com/apexcommerce/shutterlink/
     camera/                  drivers (Olympus, Panasonic, Nikon + PtpIp, Canon, Sony), CameraModel, live view,
-                             BrandDetector, ModelProfiles, Features, CameraNetwork (Wi-Fi binding), SelfTest
-    ui/                      Compose screens: Connect, Remote, Controls, OptionPanel, LiveViewPane, Gallery, Sheets
+                             BrandDetector, ModelProfiles, Features, Presets, ExposureTools, SceneAssistant, Astronomy, CameraNetwork
+                             (Wi-Fi binding), SelfTest
+    ui/                      Compose screens: Connect, Remote, Controls, OptionPanel, LiveViewPane, Gallery, Sheets,
+                             PresetSheets (Presets, ND filter, motion trigger), SceneSuggestionPill
     MainActivity.kt          the single activity, debug self-test hooks
 mock-camera/
   mock_penf.py               fake PEN-F (HTTP + RTP live view)

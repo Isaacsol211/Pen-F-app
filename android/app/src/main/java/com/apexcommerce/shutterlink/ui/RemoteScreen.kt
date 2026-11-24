@@ -27,6 +27,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import com.apexcommerce.shutterlink.camera.SceneSuggestion
+import com.apexcommerce.shutterlink.camera.applySceneSuggestion
+import com.apexcommerce.shutterlink.camera.runSceneAssistant
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.Filter
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Bedtime
@@ -81,7 +90,7 @@ import com.apexcommerce.shutterlink.camera.CameraModel
 import kotlinx.coroutines.launch
 
 /** Which sheet or full-screen page is open over the remote. */
-enum class RemotePage { NONE, GALLERY, ASTRO, INTERVAL, BRACKET, ALL_SETTINGS, LOG, HIGH_RES, POCKET }
+enum class RemotePage { NONE, GALLERY, ASTRO, INTERVAL, BRACKET, ALL_SETTINGS, LOG, HIGH_RES, POCKET, PRESETS, ND, MOTION }
 
 @Composable
 fun RemoteScreen(camera: CameraModel) {
@@ -97,6 +106,7 @@ fun RemoteScreen(camera: CameraModel) {
     var confirmDisconnect by remember { mutableStateOf(false) }
 
     LaunchedEffect(showLoupe) { camera.setLoupe(showLoupe) }
+    LaunchedEffect(Unit) { camera.runSceneAssistant() }
     LaunchedEffect(camera.isMovieMode) { if (activeSetting == "exposemovie" && !camera.isMovieMode) activeSetting = null }
 
     BackHandler(enabled = activeSetting != null || toolsOpen || showLoupe) {
@@ -140,6 +150,15 @@ fun RemoteScreen(camera: CameraModel) {
         activeSetting = name
         if (name != null) toolsOpen = false
     }
+    // Recipes and settings run straight away; ND and Motion open their panel, ready to go.
+    val applySuggestion: (SceneSuggestion) -> Unit = { suggestion ->
+        scope.launch { camera.applySceneSuggestion(suggestion) }
+        when (suggestion.action) {
+            SceneSuggestion.Action.OpenND -> page = RemotePage.ND
+            SceneSuggestion.Action.OpenMotion -> page = RemotePage.MOTION
+            else -> {}
+        }
+    }
     val toggleTools: () -> Unit = {
         toolsOpen = !toolsOpen
         if (toolsOpen) activeSetting = null
@@ -150,10 +169,12 @@ fun RemoteScreen(camera: CameraModel) {
             val landscape = maxWidth > maxHeight
             if (landscape) {
                 LandscapeLayout(camera, menu, tools, toolsOpen, toggleTools, activeSetting, selectSetting,
-                    showGrid, showHistogram, showLoupe, maxWidth, maxHeight) { page = RemotePage.GALLERY }
+                    showGrid, showHistogram, showLoupe, maxWidth, maxHeight, motionOpen = page == RemotePage.MOTION,
+                    closeMotion = { page = RemotePage.NONE }, applySuggestion = applySuggestion) { page = RemotePage.GALLERY }
             } else {
                 PortraitLayout(camera, menu, tools, quickAids, toolsOpen, toggleTools, activeSetting, selectSetting,
-                    showGrid, showHistogram, showLoupe, showAids = maxHeight >= 700.dp) { page = RemotePage.GALLERY }
+                    showGrid, showHistogram, showLoupe, showAids = maxHeight >= 700.dp, motionOpen = page == RemotePage.MOTION,
+                    closeMotion = { page = RemotePage.NONE }, applySuggestion = applySuggestion) { page = RemotePage.GALLERY }
             }
             Toast(camera, Modifier.align(Alignment.TopCenter))
         }
@@ -166,6 +187,13 @@ fun RemoteScreen(camera: CameraModel) {
         RemotePage.ALL_SETTINGS -> AllSettingsSheet(camera) { page = RemotePage.NONE }
         RemotePage.LOG -> LogSheet(camera) { page = RemotePage.NONE }
         RemotePage.HIGH_RES -> HighResSheet(camera) { page = RemotePage.NONE }
+        RemotePage.PRESETS -> PresetsSheet(camera,
+            openAstro = { page = RemotePage.ASTRO },
+            openFocusStack = {
+                camera.prefs.edit().putBoolean("bracket.focus", true).apply()
+                page = RemotePage.BRACKET
+            }) { page = RemotePage.NONE }
+        RemotePage.ND -> NDSheet(camera) { page = RemotePage.NONE }
         else -> {}
     }
 
@@ -210,7 +238,8 @@ private fun NightVision(enabled: Boolean, content: @Composable () -> Unit) {
 private fun PortraitLayout(
     camera: CameraModel, menu: @Composable () -> Unit, tools: List<ToolItem>, quickAids: List<ToolItem>,
     toolsOpen: Boolean, toggleTools: () -> Unit, activeSetting: String?, selectSetting: (String?) -> Unit,
-    showGrid: Boolean, showHistogram: Boolean, showLoupe: Boolean, showAids: Boolean, openGallery: () -> Unit,
+    showGrid: Boolean, showHistogram: Boolean, showLoupe: Boolean, showAids: Boolean,
+    motionOpen: Boolean, closeMotion: () -> Unit, applySuggestion: (SceneSuggestion) -> Unit, openGallery: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         InfoBar(camera) { menu() }
@@ -219,12 +248,18 @@ private fun PortraitLayout(
         Box {
             LiveViewPane(camera, showGrid, showHistogram, showLoupe, Modifier.fillMaxWidth().aspectRatio(4f / 3f))
             Banners(camera, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
+            SuggestionOverlay(camera, showLoupe, applySuggestion, Modifier.align(Alignment.BottomCenter).padding(10.dp))
         }
         Box(Modifier.padding(horizontal = 12.dp).zIndex(1f)) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OptionPanelFor(camera, activeSetting) { selectSetting(null) }
-                ExposureStrip(camera, activeSetting, selectSetting)
-                if (showAids) QuickAidStrip(quickAids)
+                if (motionOpen) {
+                    // Docked, not a sheet: the box on live view stays draggable while it's open.
+                    MotionPanel(camera, closeMotion, maxHeight = 250.dp)
+                } else {
+                    OptionPanelFor(camera, activeSetting) { selectSetting(null) }
+                    ExposureStrip(camera, activeSetting, selectSetting)
+                    if (showAids) QuickAidStrip(quickAids)
+                }
             }
             // The tools float over the picture rather than squeezing it.
             androidx.compose.animation.AnimatedVisibility(toolsOpen, Modifier.align(Alignment.BottomCenter).floatUp(),
@@ -252,7 +287,8 @@ private fun LandscapeLayout(
     camera: CameraModel, menu: @Composable () -> Unit, tools: List<ToolItem>,
     toolsOpen: Boolean, toggleTools: () -> Unit, activeSetting: String?, selectSetting: (String?) -> Unit,
     showGrid: Boolean, showHistogram: Boolean, showLoupe: Boolean,
-    width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp, openGallery: () -> Unit,
+    width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp,
+    motionOpen: Boolean, closeMotion: () -> Unit, applySuggestion: (SceneSuggestion) -> Unit, openGallery: () -> Unit,
 ) {
     val imageWidth = width - 128.dp - 28.dp
     val imageHeight = minOf(height - 8.dp, imageWidth * 3 / 4)
@@ -267,7 +303,16 @@ private fun LandscapeLayout(
                     StatusPill(camera)
                     Banners(camera, Modifier.widthIn(max = 460.dp))
                 }
-                if (!readoutsBelow && !showLoupe) {
+                if (!motionOpen) {
+                    // Above the readouts when they're drawn over the picture.
+                    SuggestionOverlay(camera, showLoupe, applySuggestion, Modifier.align(Alignment.BottomCenter)
+                        .padding(start = 10.dp, end = 10.dp, bottom = if (!readoutsBelow && !showLoupe) 84.dp else 10.dp))
+                }
+                if (motionOpen) {
+                    Box(Modifier.align(Alignment.BottomEnd).padding(10.dp).widthIn(max = 360.dp)) {
+                        MotionPanel(camera, closeMotion, maxHeight = imageHeight - 20.dp)
+                    }
+                } else if (!readoutsBelow && !showLoupe) {
                     Column(Modifier.align(Alignment.BottomCenter).padding(10.dp).widthIn(max = 620.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         OptionPanelFor(camera, activeSetting) { selectSetting(null) }
                         ExposureStrip(camera, activeSetting, selectSetting, compact = true)
@@ -329,6 +374,12 @@ private fun CameraMenu(camera: CameraModel, open: (RemotePage) -> Unit, disconne
             }
             DropdownMenuItem({ Text("Restart live view") }, { expanded = false; scope.launch { camera.restartLiveView() } },
                 leadingIcon = { Icon(Icons.Filled.Refresh, null) })
+            DropdownMenuItem({ Text("Scene suggestions") }, { camera.changeSceneAssistant(!camera.sceneAssistantOn) },
+                leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) },
+                trailingIcon = {
+                    Switch(camera.sceneAssistantOn, { camera.changeSceneAssistant(it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = Theme.accent, checkedThumbColor = Color.Black))
+                })
             HorizontalDivider(color = Theme.stroke)
             if (camera.capabilities.highResShot) {
                 DropdownMenuItem({ Text("High Res Shot helper") }, { expanded = false; open(RemotePage.HIGH_RES) }, leadingIcon = { Icon(Icons.Filled.Apps, null) })
@@ -359,6 +410,7 @@ private fun buildTools(
 ): List<ToolItem> {
     val caps = camera.capabilities
     val all = mutableListOf(
+        ToolItem("presets", Icons.Filled.AutoFixHigh, "Presets", false, opens = true) { open(RemotePage.PRESETS) },
         ToolItem("astro", Icons.Filled.NightsStay, "Astro", false, opens = true) { open(RemotePage.ASTRO) },
         ToolItem("interval", Icons.Filled.Timer, "Interval", camera.interval.running, opens = true) { open(RemotePage.INTERVAL) },
         ToolItem("loupe", Icons.Filled.ZoomIn, "Loupe", showLoupe) { toggleLoupe() },
@@ -367,6 +419,8 @@ private fun buildTools(
         ToolItem("grid", Icons.Filled.GridOn, "Grid", showGrid) { toggleGrid() },
         ToolItem("peaking", Icons.Filled.CenterFocusStrong, "Peaking", camera.focusPeaking) { camera.setPeaking(!camera.focusPeaking) },
         ToolItem("bracket", Icons.Filled.Layers, "Bracket", camera.bracket.running, opens = true) { open(RemotePage.BRACKET) },
+        ToolItem("nd", Icons.Filled.Filter, "ND filter", false, opens = true) { open(RemotePage.ND) },
+        ToolItem("motion", Icons.Filled.DirectionsWalk, "Motion", camera.motion.armed, opens = true) { open(RemotePage.MOTION) },
         ToolItem("pocket", Icons.Filled.Bedtime, "Pocket", false, opens = true) { open(RemotePage.POCKET) },
         ToolItem("tap", Icons.Filled.TouchApp, if (camera.touchShutter) "Tap shoots" else "Tap AF", camera.touchShutter) {
             camera.touchShutter = !camera.touchShutter
@@ -389,6 +443,15 @@ private fun buildTools(
         })
     }
     return all
+}
+
+/** The scene assistant's suggestion over the bottom of live view (not while the loupe is open). */
+@Composable
+private fun SuggestionOverlay(camera: CameraModel, showLoupe: Boolean, apply: (SceneSuggestion) -> Unit, modifier: Modifier) {
+    val suggestion = camera.sceneSuggestion
+    AnimatedVisibility(suggestion != null && !showLoupe, modifier, enter = slideInVertically { it } + fadeIn(), exit = fadeOut()) {
+        suggestion?.let { s -> SceneSuggestionPill(camera, s, onApply = { apply(s) }) }
+    }
 }
 
 /** Camera errors and model-specific advice, over the top of the picture. */

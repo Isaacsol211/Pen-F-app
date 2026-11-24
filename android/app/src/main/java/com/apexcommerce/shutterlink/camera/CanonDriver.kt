@@ -55,7 +55,19 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
             highResShot = false,
             cardBrowser = has("contents"),
             powerOff = false,
+            focusDrive = has("shooting/control/drivefocus"),
         )
+
+    /**
+     * `POST shooting/control/drivefocus {"value": "near1…3" | "far1…3"}`, in live view with the lens on AF.
+     * CCAPI doesn't say when the lens reaches infinity, so a stack runs to its frame count.
+     */
+    override suspend fun driveFocus(farther: Boolean, step: FocusStepSize): FocusDriveResult {
+        val value = (if (farther) "far" else "near") + step.raw
+        client.request("POST", path("shooting/control/drivefocus"), json = mapOf("value" to value), timeout = 8.0)
+        delay(200)
+        return FocusDriveResult.MOVED
+    }
 
     private fun has(feature: String, method: String? = null): Boolean {
         if (api[feature] == null) return false

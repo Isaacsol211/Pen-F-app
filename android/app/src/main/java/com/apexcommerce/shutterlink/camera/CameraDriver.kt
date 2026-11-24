@@ -28,6 +28,8 @@ data class CameraCapabilities(
     val powerOff: Boolean = false,
     /** Olympus: the User-Agent can be switched under Advanced. */
     val userAgentChoice: Boolean = false,
+    /** The lens can be stepped nearer or farther from the app, for focus stacking. */
+    val focusDrive: Boolean = false,
 )
 
 /** How live-view frames reach the phone. */
@@ -81,6 +83,9 @@ interface CameraDriver {
     suspend fun toggleMovie() {}
     suspend fun fetchLastShot() {}
     suspend fun syncClock(): Boolean = false
+    /** Steps manual focus nearer or farther (focus stacking). Only called when `capabilities.focusDrive`. */
+    suspend fun driveFocus(farther: Boolean, step: FocusStepSize): FocusDriveResult =
+        throw CameraException("This camera can't move its focus over Wi-Fi.")
 
     /** Fills `camera.images` and `camera.cardFolders`. */
     suspend fun openGallery()

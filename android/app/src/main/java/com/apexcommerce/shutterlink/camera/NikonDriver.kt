@@ -52,6 +52,7 @@ object PtpOp {
     const val NIKON_START_LIVE_VIEW = 0x9201
     const val NIKON_END_LIVE_VIEW = 0x9202
     const val NIKON_GET_LIVE_VIEW_IMAGE = 0x9203
+    const val NIKON_MF_DRIVE = 0x9204
     const val NIKON_CHANGE_AF_AREA = 0x9205
     const val NIKON_CAPTURE_TO_CARD = 0x9207
     const val NIKON_START_MOVIE = 0x920A
@@ -79,6 +80,8 @@ object NikonResponse {
     const val CHANGE_CAMERA_MODE_FAILED = 0xA003
     const val INVALID_STATUS = 0xA004
     const val NOT_LIVE_VIEW = 0xA00B
+    const val MF_DRIVE_STEP_END = 0xA00C
+    const val MF_DRIVE_STEP_INSUFFICIENCY = 0xA00E
     const val BULB_RELEASE_BUSY = 0xA200
     const val SILENT_RELEASE_BUSY = 0xA201
     const val MEDIA_FULL = 0xA207
@@ -116,8 +119,35 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
             movie = supports(PtpOp.NIKON_START_MOVIE), videoSwitch = true,
             lastShotReview = supports(PtpOp.NIKON_GET_EVENT) || supports(PtpOp.NIKON_GET_EVENT_EX),
             clockSync = false, highResShot = false, cardBrowser = supports(PtpOp.GET_OBJECT_HANDLES),
-            powerOff = false,
+            powerOff = false, focusDrive = supports(PtpOp.NIKON_MF_DRIVE),
         )
+
+    /**
+     * MfDrive (0x9204): direction 1 = towards the closest point, 2 = towards infinity, then an amount
+     * (1–32767). Only works in live view and with the lens's AF/MF switch on AF (the camera drives it).
+     */
+    override suspend fun driveFocus(farther: Boolean, step: FocusStepSize): FocusDriveResult {
+        val amount = when (step) {
+            FocusStepSize.FINE -> 40L
+            FocusStepSize.MEDIUM -> 120L
+            FocusStepSize.COARSE -> 400L
+        }
+        for (attempt in 0 until 2) {
+            val response = ptp.transaction(PtpOp.NIKON_MF_DRIVE, listOf(if (farther) 2L else 1L, amount), timeout = 10.0)
+            when (response.code) {
+                PtpException.OK -> {
+                    waitUntilReady()
+                    return FocusDriveResult.MOVED
+                }
+                NikonResponse.MF_DRIVE_STEP_END, NikonResponse.MF_DRIVE_STEP_INSUFFICIENCY -> return FocusDriveResult.END_OF_TRAVEL
+                NikonResponse.NOT_LIVE_VIEW ->
+                    // Live view pauses around each capture; give it a moment to come back.
+                    if (attempt == 0) delay(800) else throw CameraException("The camera only moves focus while live view is on.")
+                else -> throw PtpException(response.code, PtpOp.NIKON_MF_DRIVE)
+            }
+        }
+        return FocusDriveResult.MOVED
+    }
 
     /** Stable per-install id: cameras that remember paired devices know us by it. */
     private fun guid(): ByteArray {

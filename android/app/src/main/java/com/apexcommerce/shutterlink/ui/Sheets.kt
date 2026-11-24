@@ -34,6 +34,17 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import com.apexcommerce.shutterlink.camera.FocusStepSize
+import com.apexcommerce.shutterlink.camera.PresetRecipe
+import com.apexcommerce.shutterlink.camera.canFocusStack
+import com.apexcommerce.shutterlink.camera.canRampExposure
+import com.apexcommerce.shutterlink.camera.cropFactor
+import com.apexcommerce.shutterlink.camera.focusStackSetup
+import com.apexcommerce.shutterlink.camera.focusStackUnavailable
+import com.apexcommerce.shutterlink.camera.hasLiveComposite
+import com.apexcommerce.shutterlink.camera.startFocusStack
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -118,7 +129,11 @@ private fun Stepper(label: String, value: String, onMinus: () -> Unit, onPlus: (
 fun IntervalSheet(camera: CameraModel, onDismiss: () -> Unit) {
     var count by remember { mutableIntStateOf(camera.prefs.getInt("interval.count", 60)) }
     var seconds by remember { mutableDoubleStateOf(camera.prefs.getFloat("interval.seconds", 20f).toDouble()) }
-    fun save() = camera.prefs.edit().putInt("interval.count", count).putFloat("interval.seconds", seconds.toFloat()).apply()
+    var ramp by remember { mutableStateOf(camera.prefs.getBoolean("interval.ramp", false)) }
+    var maxIso by remember { mutableIntStateOf(camera.prefs.getInt("interval.maxISO", 3200)) }
+    fun save() = camera.prefs.edit().putInt("interval.count", count).putFloat("interval.seconds", seconds.toFloat())
+        .putBoolean("interval.ramp", ramp).putInt("interval.maxISO", maxIso).apply()
+    val plan = IntervalPlan(count, seconds, ramp = ramp && camera.canRampExposure, maxISO = maxIso)
     Sheet("Interval timer", onDismiss) {
         if (camera.interval.running) {
             val now = rememberNow(true, 500)
@@ -136,6 +151,7 @@ fun IntervalSheet(camera: CameraModel, onDismiss: () -> Unit) {
                         val next = camera.interval.nextShotAt
                         Text(if (next != null) "Next shot in ${((next - now + 999) / 1000).coerceAtLeast(0)} s" else "Exposing…",
                             color = Theme.secondary, style = monoStyle(15.sp, FontWeight.Normal))
+                        camera.interval.rampNote?.let { Text(it, color = Theme.accent, fontSize = 13.sp) }
                     }
                 }
                 SurfaceButton(onClick = { camera.stopInterval() }, modifier = Modifier.fillMaxWidth()) {
@@ -173,7 +189,26 @@ fun IntervalSheet(camera: CameraModel, onDismiss: () -> Unit) {
                     }
                 }
             }
-            AccentButton(onClick = { camera.startInterval(IntervalPlan(count, seconds)) }, modifier = Modifier.fillMaxWidth(),
+            Card {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Follow the light", fontSize = 16.sp)
+                        Text("Day to night (or night to day)", color = Theme.secondary, fontSize = 13.sp)
+                    }
+                    Switch(ramp && camera.canRampExposure, { ramp = it; save() }, enabled = camera.canRampExposure,
+                        colors = SwitchDefaults.colors(checkedTrackColor = Theme.accent, checkedThumbColor = Color.Black))
+                }
+                if (ramp && camera.canRampExposure) {
+                    CapsLabel("Highest ISO")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(1600, 3200, 6400, 12800).forEach { v -> Chip("$v", maxIso == v) { maxIso = v; save() } }
+                    }
+                }
+                Text(if (camera.canRampExposure)
+                    "Keeps live view as bright as when you start: as it gets dark the shutter gets longer (up to what the interval leaves room for), then the ISO goes up, a third of a stop at a time, and back at sunrise. Needs live view to show the exposure (Live View Boost off)."
+                else "Switch the camera to M so the app can change the shutter speed.", color = Theme.secondary, fontSize = 13.sp)
+            }
+            AccentButton(onClick = { camera.startInterval(plan) }, modifier = Modifier.fillMaxWidth(),
                 enabled = camera.mode == CameraMode.REC && !camera.isOpenEndedShutter) {
                 Icon(Icons.Filled.Timer, null)
                 Text("Start")
@@ -193,12 +228,30 @@ fun BracketSheet(camera: CameraModel, onDismiss: () -> Unit) {
     var thirds by remember { mutableIntStateOf(camera.prefs.getInt("bracket.thirds", 3)) }
     var target by remember { mutableStateOf(BracketTarget.entries.getOrElse(camera.prefs.getInt("bracket.target", 0)) { BracketTarget.AUTO }) }
     fun save() = camera.prefs.edit().putInt("bracket.frames", frames).putInt("bracket.thirds", thirds).putInt("bracket.target", target.ordinal).apply()
+    var focusMode by remember { mutableStateOf(camera.prefs.getBoolean("bracket.focus", false)) }
+    var focusFrames by remember { mutableIntStateOf(camera.prefs.getInt("focusStack.frames", 10)) }
+    var focusStep by remember { mutableStateOf(FocusStepSize.of(camera.prefs.getInt("focusStack.step", 1))) }
+    fun saveFocus() = camera.prefs.edit().putBoolean("bracket.focus", focusMode).putInt("focusStack.frames", focusFrames)
+        .putInt("focusStack.step", focusStep.raw).apply()
     val plan = BracketPlan(frames, thirds, target)
     val set = camera.bracketSet(plan)
-    Sheet("Exposure bracketing", onDismiss, footer = {
-        AccentButton(onClick = { camera.startBracket(plan); onDismiss() }, modifier = Modifier.fillMaxWidth(),
-            enabled = set.isSuccess && camera.canBracket) { Text("Shoot ${set.getOrNull()?.values?.size ?: frames} frames") }
+    Sheet(if (focusMode) "Focus stacking" else "Exposure bracketing", onDismiss, footer = {
+        if (!focusMode) {
+            AccentButton(onClick = { camera.startBracket(plan); onDismiss() }, modifier = Modifier.fillMaxWidth(),
+                enabled = set.isSuccess && camera.canBracket) { Text("Shoot ${set.getOrNull()?.values?.size ?: frames} frames") }
+        } else if (camera.capabilities.focusDrive) {
+            AccentButton(onClick = { camera.startFocusStack(focusFrames, focusStep); onDismiss() }, modifier = Modifier.fillMaxWidth(),
+                enabled = camera.canFocusStack) { Text("Shoot $focusFrames-frame focus stack") }
+        }
     }) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Exposure", !focusMode) { focusMode = false; saveFocus() }
+            Chip("Focus", focusMode) { focusMode = true; saveFocus() }
+        }
+        if (focusMode) {
+            FocusStackCards(camera, focusFrames, focusStep, { focusFrames = it; saveFocus() }, { focusStep = it; saveFocus() })
+            return@Sheet
+        }
         Card {
             CapsLabel("Frames")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(3, 5, 7, 9).forEach { n -> Chip("$n", frames == n) { frames = n; save() } } }
@@ -219,10 +272,41 @@ fun BracketSheet(camera: CameraModel, onDismiss: () -> Unit) {
                     }
                 }
                 if (s.clamped) Text("Some frames hit the end of the camera's range and repeat a value.", color = Theme.orange, fontSize = 13.sp)
-                Text("The setting goes back to where it was afterwards. No focus bracketing: there's no Wi-Fi command to step the focus.",
-                    color = Theme.secondary, fontSize = 13.sp)
+                Text("The setting goes back to where it was afterwards.", color = Theme.secondary, fontSize = 13.sp)
             }.onFailure { Text(it.message ?: "Can't bracket now.", color = Theme.orange, fontSize = 14.sp) }
         }
+    }
+}
+
+@Composable
+private fun FocusStackCards(
+    camera: CameraModel, frames: Int, step: FocusStepSize, setFrames: (Int) -> Unit, setStep: (FocusStepSize) -> Unit,
+) {
+    if (!camera.capabilities.focusDrive) {
+        Card {
+            Text("Use the camera's own focus bracketing", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+            Text(camera.focusStackUnavailable, color = Theme.secondary, fontSize = 14.sp)
+        }
+        return
+    }
+    Card {
+        Stepper("Frames", "$frames", { setFrames((frames - if (frames <= 20) 1 else 5).coerceAtLeast(2)) },
+            { setFrames((frames + if (frames < 20) 1 else 5).coerceAtMost(200)) })
+        CapsLabel("Step")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { FocusStepSize.entries.forEach { s -> Chip(s.title, step == s) { setStep(s) } } }
+        Text("Fine for macro and wide apertures, coarser for landscapes and stopped-down lenses. The stack stops early if the lens reaches infinity.",
+            color = Theme.secondary, fontSize = 13.sp)
+    }
+    Card {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Lightbulb, null, Modifier.size(18.dp), tint = Theme.accent)
+            Text("Before you start", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Text(camera.focusStackSetup, color = Theme.secondary, fontSize = 14.sp)
+        Text("Not yet tried on a real camera of this brand: shoot a short stack first.", color = Theme.tertiary, fontSize = 13.sp)
+    }
+    if (camera.isOpenEndedShutter) {
+        Text("Focus stacking needs a timed shutter speed, not Bulb or Live modes.", color = Theme.secondary, fontSize = 13.sp)
     }
 }
 
@@ -235,9 +319,9 @@ fun AstroSheet(camera: CameraModel, onDismiss: () -> Unit) {
     var focal by remember { mutableDoubleStateOf((camera.liveInfo.focalLength ?: 17).toDouble()) }
     var strict by remember { mutableStateOf(true) }
     var iso by remember { mutableIntStateOf(1600) }
-    val plan = AstroPlan(focal, strict, iso, trails)
-    val steps = if (camera.presetSteps.isNotEmpty() && camera.presetRunning) camera.presetSteps else camera.astroSteps(plan)
-    val canTrails = camera.properties["shutspeedvalue"]?.options?.any { it.lowercase() == "livecomp" } == true
+    val plan = AstroPlan(focal, strict, iso, trails, cropFactor = camera.cropFactor)
+    val steps = if (camera.presetResultsFor == PresetRecipe.ASTRO.id && camera.presetSteps.isNotEmpty()) camera.presetSteps else camera.astroSteps(plan)
+    val hasLiveComposite = camera.hasLiveComposite
     Sheet("Astro preset", onDismiss, footer = {
         AccentButton(onClick = {
             scope.launch {
@@ -252,11 +336,9 @@ fun AstroSheet(camera: CameraModel, onDismiss: () -> Unit) {
             Text(if (camera.presetRunning) "Applying…" else "Apply to camera")
         }
     }) {
-        if (canTrails) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip("Stars", !trails) { trails = false }
-                Chip("Star trails", trails) { trails = true }
-            }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Stars", !trails) { trails = false; camera.presetResultsFor = null }
+            Chip("Star trails", trails) { trails = true; camera.presetResultsFor = null }
         }
         Card {
             Stepper("Lens focal length", "${focal.toInt()} mm", { focal = (focal - 1).coerceAtLeast(7.0) }, { focal = (focal + 1).coerceAtMost(300.0) })
@@ -266,14 +348,16 @@ fun AstroSheet(camera: CameraModel, onDismiss: () -> Unit) {
                     Chip("300 rule (sharp)", strict) { strict = true }
                     Chip("500 rule", !strict) { strict = false }
                 }
-                Text(String.format(java.util.Locale.US, "Longest exposure before stars streak: %.1f s", plan.maxSeconds), color = Theme.secondary, fontSize = 13.sp)
+                Text(String.format(java.util.Locale.US, "Longest exposure before stars streak: %.1f s (crop factor %s)", plan.maxSeconds,
+                    if (plan.cropFactor == Math.rint(plan.cropFactor)) plan.cropFactor.toInt().toString() else plan.cropFactor.toString()),
+                    color = Theme.secondary, fontSize = 13.sp)
             }
             CapsLabel("ISO")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf(800, 1600, 3200, 6400).forEach { v -> Chip("$v", iso == v) { iso = v } } }
         }
         Card {
             Text("Will set", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-            steps.forEach { step -> StepLine(step) }
+            steps.forEach { step -> StepResultRow(step) }
         }
         Card {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -284,29 +368,39 @@ fun AstroSheet(camera: CameraModel, onDismiss: () -> Unit) {
                 "Put the camera on a tripod and turn image stabilisation off on the camera.",
                 "Focus manually on a bright star: switch the lens to MF and use the loupe.",
                 "Shoot from the phone so nothing touches the camera.",
-            ).plus(if (trails) listOf("Set the base exposure for Live Composite on the camera (Shooting menu ▸ Composite Settings). Tap the shutter to start and again to stop.") else emptyList())
+            ).plus(when {
+                trails && hasLiveComposite -> listOf("Set the base exposure for Live Composite on the camera (Shooting menu ▸ Composite Settings). Tap the shutter to start and again to stop.")
+                trails -> listOf("This camera has no Live Composite. For trails, shoot a series with the interval timer and stack it afterwards.")
+                else -> emptyList()
+            })
                 .forEach { Text("• $it", color = Theme.secondary, fontSize = 14.sp) }
         }
     }
 }
 
+/** One preset step and what happened: skipped steps read as notes (what to do on the camera), not errors. */
 @Composable
-private fun StepLine(step: PresetStep) {
+fun StepResultRow(step: PresetStep) {
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         val (mark, color) = when (step.state) {
             PresetStep.State.Done -> "✓" to Theme.green
             PresetStep.State.Running -> "…" to Theme.accent
             is PresetStep.State.Failed -> "✕" to Theme.red
-            is PresetStep.State.Skipped -> "–" to Theme.tertiary
-            PresetStep.State.Pending -> "•" to Theme.tertiary
+            is PresetStep.State.Skipped -> "ⓘ" to Theme.secondary
+            PresetStep.State.Pending -> (if (step.value == null) "ⓘ" else "•") to Theme.tertiary
         }
         Text(mark, color = color, style = monoStyle(15.sp))
         Column(Modifier.weight(1f)) {
             Text(step.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            val reason = (step.state as? PresetStep.State.Failed)?.reason ?: (step.state as? PresetStep.State.Skipped)?.reason
-            Text(reason ?: step.detail, color = if (step.state is PresetStep.State.Failed) Theme.red else Theme.secondary, fontSize = 13.sp)
+            val caption = when (val st = step.state) {
+                is PresetStep.State.Failed -> st.reason
+                is PresetStep.State.Skipped -> st.reason
+                else -> if (step.value == null) step.unavailable else step.detail
+            }
+            Text(caption, color = if (step.state is PresetStep.State.Failed) Theme.red else Theme.secondary, fontSize = 13.sp)
         }
-        Text(step.value?.let { PropertyFormat.display(step.property, it) } ?: "–", style = monoStyle(14.sp), color = Theme.accent)
+        Text(step.value?.let { PropertyFormat.display(step.property, it) } ?: "–", style = monoStyle(14.sp),
+            color = if (step.value == null) Theme.tertiary else Theme.accent)
     }
 }
 

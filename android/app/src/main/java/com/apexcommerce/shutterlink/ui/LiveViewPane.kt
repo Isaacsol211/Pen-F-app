@@ -5,6 +5,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -215,7 +217,39 @@ fun LiveViewPane(
 
         if (showLoupe) LoupeHud(camera, loupeZoom, loupeCenter, Modifier.align(Alignment.BottomCenter))
 
+        if (!showLoupe && (camera.motion.armed || camera.motion.editing)) MotionBox(camera, imageRect)
+
         StatusOverlay(camera)
+    }
+}
+
+/** The motion trigger's box: drag to move it; solid amber while armed. */
+@Composable
+private fun MotionBox(camera: CameraModel, imageRect: Rect) {
+    val density = LocalDensity.current
+    val region = camera.motion.region
+    val armed = camera.motion.armed
+    val color = if (armed) Theme.accent else Color.White
+    val w = with(density) { (region.w * imageRect.width).toFloat().toDp() }
+    val h = with(density) { (region.h * imageRect.height).toFloat().toDp() }
+    Box(
+        Modifier
+            .offset { IntOffset((imageRect.left + region.x * imageRect.width).roundToInt(), (imageRect.top + region.y * imageRect.height).roundToInt()) }
+            .size(w, h)
+            .background(color.copy(alpha = if (armed) 0.08f else 0.05f), RoundedCornerShape(6.dp))
+            .border(2.dp, color, RoundedCornerShape(6.dp))
+            .pointerInput(imageRect) {
+                detectDragGestures { change, drag ->
+                    change.consume()
+                    val r = camera.motion.region
+                    val x = (r.x + drag.x / imageRect.width).coerceIn(0.0, 1 - r.w)
+                    val y = (r.y + drag.y / imageRect.height).coerceIn(0.0, 1 - r.h)
+                    camera.motion = camera.motion.copy(region = r.copy(x = x, y = y))
+                }
+            },
+    ) {
+        CapsLabel(if (armed) "Motion · ${camera.motion.shots}" else "Motion box", color = color, size = 10.sp,
+            modifier = Modifier.padding(5.dp).background(Color.Black.copy(alpha = 0.55f), Pill).padding(horizontal = 6.dp, vertical = 3.dp))
     }
 }
 

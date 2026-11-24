@@ -47,6 +47,8 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
     private var apis: Set<String> = emptySet()
     private var rpcId = 0
     private var stream: HttpStreamReader? = null
+    /** Times live view was reopened since the last frame arrived. */
+    private var liveRestarts = 0
     private var eventJob: Job? = null
     /** UI value → Sony value, per property. */
     private var valueMap: Map<String, Map<String, String>> = emptyMap()
@@ -250,13 +252,31 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
             val address = call("startLiveview").firstOrNull() as? String
                 ?: throw CameraException("The camera gave no live-view address.")
             val reader = HttpStreamReader(address) { parseLiveViewPackets(it) }
-            reader.onFrame = { jpeg -> camera.scope.launch { camera.submitLiveViewJpeg(jpeg) } }
+            reader.onFrame = { jpeg ->
+                camera.scope.launch {
+                    liveRestarts = 0
+                    camera.submitLiveViewJpeg(jpeg)
+                }
+            }
             reader.onEnd = { error ->
                 camera.scope.launch {
-                    if (camera.liveViewRunning && stream === reader) {
-                        debugLog("Sony live view ended: ${error?.message ?: "closed"}")
+                    if (!camera.liveViewRunning || stream !== reader) return@launch
+                    debugLog("Sony live view ended: ${error?.message ?: "closed"}")
+                    // A long exposure stalls the stream until the picture is done. Open it again once the
+                    // camera is free, a few times at most before leaving it to Restart live view.
+                    liveRestarts++
+                    if (liveRestarts > 3) {
                         camera.liveViewRunning = false
+                        return@launch
                     }
+                    val deadline = System.currentTimeMillis() + 120_000
+                    while (camera.isShooting && System.currentTimeMillis() < deadline) delay(500)
+                    delay(1000)
+                    if (stream !== reader || camera.phase != ConnectionPhase.CONNECTED || camera.mode != CameraMode.REC) {
+                        camera.liveViewRunning = false
+                        return@launch
+                    }
+                    startLiveView()
                 }
             }
             stream?.stop()

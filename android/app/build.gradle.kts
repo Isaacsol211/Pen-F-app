@@ -62,4 +62,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // Scene suggestions: Google's on-device image labeling with the model bundled in the app
+    // (about 5.7 MB; no Google Play services, nothing leaves the phone).
+    implementation("com.google.mlkit:image-labeling:17.0.9")
 }

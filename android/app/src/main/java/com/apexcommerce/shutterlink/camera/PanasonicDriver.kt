@@ -77,8 +77,36 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             liveViewSizes = CameraBrand.PANASONIC.defaultLiveViewSizes, tapToFocus = true,
             openEndedExposure = !(camera.profile?.fixedExposure ?: false),
             movie = !(camera.profile?.noVideo ?: false), videoSwitch = true, lastShotReview = false,
-            clockSync = false, highResShot = false, cardBrowser = true, powerOff = true,
+            clockSync = false, highResShot = false, cardBrowser = true, powerOff = true, focusDrive = true,
         )
+
+    /**
+     * `camctrl&type=focus`: "wide-…" steps nearer, "tele-…" farther, "-fast" in bigger steps. The camera
+     * has to be in MF (it answers err_reject otherwise) and replies "ok,<position>,<end>".
+     */
+    override suspend fun driveFocus(farther: Boolean, step: FocusStepSize): FocusDriveResult {
+        val direction = if (farther) "tele" else "wide"
+        val (speed, repeats) = when (step) {
+            FocusStepSize.FINE -> "normal" to 1
+            FocusStepSize.MEDIUM -> "normal" to 3
+            FocusStepSize.COARSE -> "fast" to 1
+        }
+        var reply = ""
+        repeat(repeats) {
+            reply = try {
+                lumixCommand(listOf("mode" to "camctrl", "type" to "focus", "value" to "$direction-$speed"), timeout = 5.0)
+            } catch (e: PanasonicException) {
+                if (e.code == "err_reject") throw CameraException("The camera won't move focus: switch it to MF (manual focus) and try again.")
+                throw e
+            }
+        }
+        // Community notes read the two numbers as position and end of travel; unconfirmed on a real body.
+        val numbers = reply.split(",").drop(1).mapNotNull { it.trim().toIntOrNull() }
+        if (numbers.size >= 2 && numbers[1] > 0 && (if (farther) numbers[0] >= numbers[1] else numbers[0] <= 0)) {
+            return FocusDriveResult.END_OF_TRAVEL
+        }
+        return FocusDriveResult.MOVED
+    }
 
     companion object {
         const val DEVICE_NAME = "Shutterlink"

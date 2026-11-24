@@ -21,8 +21,14 @@ fun CameraModel.startInterval(plan: IntervalPlan) {
     if (interval.running || mode != CameraMode.REC || isOpenEndedShutter) return
     val now = System.currentTimeMillis()
     interval = IntervalState(running = true, done = 0, total = plan.count, nextShotAt = now, startedAt = now)
+    val rampTarget = if (plan.ramp) recentFrame?.let { FrameMeter.brightness(it) } else null
+    val baseIso = properties["isospeedvalue"]?.value?.toIntOrNull()
+    if (plan.ramp && rampTarget == null) interval = interval.copy(rampNote = "No live view to follow the light: ramping is off")
     intervalJob = scope.launch {
         while (isActive && interval.running && (plan.count == 0 || interval.done < plan.count)) {
+            if (rampTarget != null && interval.done > 0) {
+                rampExposure(rampTarget, plan, baseIso)?.let { interval = interval.copy(rampNote = it) }
+            }
             val shotStart = System.currentTimeMillis()
             interval = interval.copy(nextShotAt = null)
             shutterPressed()
@@ -174,73 +180,84 @@ fun CameraModel.startBracket(plan: BracketPlan) {
     }
 }
 
+// MARK: - Focus stacking
+
+/** Where the user puts focus before starting, and what the lens switch has to be on. */
+val CameraModel.focusStackSetup: String
+    get() = when (brand) {
+        CameraBrand.PANASONIC -> "Set the camera to MF and focus on the nearest thing you want sharp. Each frame moves focus a step farther away."
+        // The camera drives the lens's AF motor, so the lens has to stay on AF.
+        CameraBrand.NIKON, CameraBrand.CANON -> "Leave the lens on AF, focus on the nearest thing you want sharp, and keep live view on. Each frame moves focus a step farther away."
+        else -> "Focus on the nearest thing you want sharp. Each frame moves focus a step farther away."
+    }
+
+/** Where to look instead, on cameras the app can't step the focus of. */
+val CameraModel.focusStackUnavailable: String
+    get() = when (brand) {
+        CameraBrand.OLYMPUS -> "Olympus and OM System cameras have no Wi-Fi command to move focus. Use Focus BKT, or Focus Stacking where the body has it, in the camera's Bracketing menu, then press the shutter here."
+        CameraBrand.SONY -> "Sony's Camera Remote API has no command to move focus. Use the camera's own Focus Bracket where it has one."
+        else -> "This camera doesn't offer a Wi-Fi command to move focus. Use its own focus bracketing from the camera's menu."
+    }
+
+val CameraModel.canFocusStack: Boolean get() = capabilities.focusDrive && canBracket
+
+/**
+ * Shoots a frame, steps focus farther, and repeats until the frame count or infinity. Uses the
+ * bracket's state, so its progress ring and Cancel work for it too.
+ */
+fun CameraModel.startFocusStack(frames: Int, step: FocusStepSize) {
+    val driver = driver ?: return
+    if (!canFocusStack || frames <= 0) return
+    bracket = BracketState(running = true, done = 0, total = frames, isFocusStack = true)
+    bracketJob = scope.launch {
+        var reachedEnd = false
+        var failure: String? = null
+        try {
+            for (index in 0 until frames) {
+                if (!isActive) break
+                bracket = bracket.copy(label = "Focus ${index + 1} of $frames")
+                val before = shotCounter
+                shutterPressed()
+                shutterReleased()
+                while (isShooting && isActive) delay(100)
+                if (shotCounter <= before) {
+                    failure = lastError ?: "The camera didn't take frame ${index + 1}."
+                    break
+                }
+                bracket = bracket.copy(done = index + 1)
+                if (index == frames - 1 || !isActive) break
+                try {
+                    if (driver.driveFocus(farther = true, step = step) == FocusDriveResult.END_OF_TRAVEL) {
+                        reachedEnd = true
+                        break
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    failure = e.message ?: e.toString()
+                    break
+                }
+                // Let the lens settle before the next frame.
+                delay(300)
+            }
+        } catch (ignored: CancellationException) {
+        } finally {
+            val shot = bracket.done
+            bracket = BracketState()
+            bracketJob = null
+            when {
+                failure != null -> lastError = if (shot > 0) "Focus stack stopped after $shot frames: $failure" else failure
+                shot > 0 -> showToast(if (reachedEnd) "Focus stack: $shot frames, reached infinity" else "Focus stack: $shot of $frames frames")
+            }
+        }
+    }
+}
+
 fun CameraModel.cancelBracket() {
     bracketJob?.cancel()
     if (phase != ConnectionPhase.CONNECTED) {
         bracketJob = null
         bracket = BracketState()
-    }
-}
-
-// MARK: - Astro preset
-
-/** Slowest available shutter that still keeps stars round (or Live Composite for trails). */
-fun CameraModel.astroShutter(plan: AstroPlan): String? {
-    val options = properties["shutspeedvalue"]?.options ?: return null
-    if (plan.trails) return options.firstOrNull { it.lowercase() == "livecomp" }
-    return options.mapNotNull { o -> PropertyFormat.seconds(o)?.let { o to it } }
-        .filter { it.second <= plan.maxSeconds }
-        .maxByOrNull { it.second }?.first
-}
-
-val CameraModel.widestAperture: String?
-    get() {
-        val property = properties["focalvalue"] ?: return null
-        return dialOptions(property).options.mapNotNull { o -> o.toDoubleOrNull()?.let { o to it } }.minByOrNull { it.second }?.first
-    }
-
-fun CameraModel.nearestIso(target: Int): String? =
-    properties["isospeedvalue"]?.options?.mapNotNull { o -> o.toIntOrNull()?.let { o to it } }
-        ?.minByOrNull { abs(it.second - target) }?.first
-
-fun CameraModel.astroSteps(plan: AstroPlan): List<PresetStep> {
-    val mode = properties["takemode"]?.options?.firstOrNull { it.uppercase() == "M" }
-    val wb = properties["wbvalue"]?.options?.firstOrNull { it == "35" }
-    val drive = properties["drivemode"]?.options?.firstOrNull { it == "lowvib-normal" }
-    val shutterDetail = if (plan.trails) "Live Composite: stacks only new light, so stars draw trails"
-    else fmt("Longest that keeps stars sharp at %d mm (≤ %.1f s)", plan.focalLength.toInt(), plan.maxSeconds)
-    return listOf(
-        PresetStep("Manual mode", "So aperture and shutter can be set", "takemode", mode),
-        PresetStep("Widest aperture", "Gather as much starlight as possible", "focalvalue", widestAperture),
-        PresetStep("Shutter", shutterDetail, "shutspeedvalue", astroShutter(plan)),
-        PresetStep("ISO", "Bright enough for faint stars without too much noise", "isospeedvalue", nearestIso(plan.iso)),
-        PresetStep("White balance ≈ 4000 K", "Neutral-blue night sky (Fluorescent preset)", "wbvalue", wb),
-        PresetStep("Anti-shock drive", "Avoids shutter-shock blur on a tripod", "drivemode", drive),
-    )
-}
-
-/** Applies each step in order and records what the camera accepted. */
-suspend fun CameraModel.applyAstro(plan: AstroPlan) {
-    if (presetRunning) return
-    presetRunning = true
-    try {
-        presetSteps = astroSteps(plan)
-        for (index in presetSteps.indices) {
-            val step = presetSteps[index]
-            fun update(state: PresetStep.State) {
-                presetSteps = presetSteps.toMutableList().also { it[index] = it[index].copy(state = state) }
-            }
-            val value = step.value
-            if (value == null || properties[step.property] == null) {
-                update(PresetStep.State.Skipped("Not offered by the camera over Wi-Fi"))
-                continue
-            }
-            update(PresetStep.State.Running)
-            val ok = setProperty(step.property, value, reportErrors = false)
-            update(if (ok) PresetStep.State.Done else PresetStep.State.Failed("The camera refused ${PropertyFormat.display(step.property, value)}"))
-        }
-    } finally {
-        presetRunning = false
     }
 }
 
@@ -343,7 +360,10 @@ fun CameraModel.stripValue(name: String, property: CameraProperty?): String {
         "expcomp" -> info.expComp?.let { return it }
         "wbvalue" -> {
             val raw = property?.value ?: return "–"
-            return if (raw == "0") "AWB" else PropertyFormat.whiteBalance[raw]?.take(6) ?: raw
+            // Short enough for a strip cell, without cutting a word off mid-way ("Fluore").
+            val short = mapOf("0" to "AWB", "20" to "Incand.", "35" to "Fluor.", "64" to "Underw.", "256" to "OT 1",
+                "257" to "OT 2", "258" to "OT 3", "259" to "OT 4", "512" to "Kelvin")
+            return short[raw] ?: PropertyFormat.whiteBalance[raw] ?: raw
         }
     }
     if (property == null) return "–"

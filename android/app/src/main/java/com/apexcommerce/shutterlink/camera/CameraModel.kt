@@ -144,6 +144,46 @@ class CameraModel private constructor(val context: Context) {
 
     var presetSteps by mutableStateOf<List<PresetStep>>(emptyList())
     var presetRunning by mutableStateOf(false)
+    /** Which preset `presetSteps` belong to (a recipe id or a saved preset's id). */
+    var presetResultsFor by mutableStateOf<String?>(null)
+    /** Settings from before the last preset, for Undo. */
+    var presetUndo by mutableStateOf<SettingsSnapshot?>(null)
+    /** "My presets", for every brand (each remembers the brand it was saved on). */
+    var savedPresets by mutableStateOf(SavedPresets.load(prefs))
+
+    // MARK: Motion trigger, exposing to the right
+
+    var motion by mutableStateOf(MotionTrigger())
+    /** How much the trigger box changed between the last two frames analysed (0…1). */
+    var motionLevel by mutableStateOf(0.0)
+    var motionPrevious: IntArray? = null
+    var motionAnalyzedAt = 0L
+    var motionQuietUntil = 0L
+    var ettrRunning by mutableStateOf(false)
+
+    // MARK: Scene assistant
+
+    /** "Scene suggestions" in the ··· menu; on by default. */
+    var sceneAssistantOn by mutableStateOf(true)
+    var sceneSuggestion by mutableStateOf<SceneSuggestion?>(null)
+    /** What the last look saw (scene names), for the self-test. */
+    var sceneSignals: SceneSignals? = null
+    /** ML Kit's own labels from the last look. */
+    var sceneRawLabels: Map<String, Float> = emptyMap()
+    /** Suggestion id → time (ms) until which it stays away. */
+    var sceneSnoozed: Map<String, Long> = emptyMap()
+    var sceneCandidate: String? = null
+    var sceneMisses = 0
+    /** Debug: scene labels that stand in for ML Kit's ("night_sky:0.97,sky:0.9"), to try the suggestions. */
+    var sceneLabelOverride: Map<String, Float>? = null
+
+    fun changeSceneAssistant(on: Boolean) {
+        sceneAssistantOn = on
+        prefs.edit().putBoolean("assistant.on", on).apply()
+        if (!on) sceneSuggestion = null
+    }
+    /** The latest live-view frame as a Bitmap, for metering (ETTR, ramping, ND). */
+    var latestBitmap: Bitmap? = null
 
     // MARK: Card browser
 
@@ -204,6 +244,7 @@ class CameraModel private constructor(val context: Context) {
         userAgent = prefs.getString("userAgent", null) ?: "OI.Share v2"
         liveViewQuality = prefs.getString("lvqty", null) ?: "0640x0480"
         focusPeaking = prefs.getBoolean("ui.peaking", false)
+        sceneAssistantOn = prefs.getBoolean("assistant.on", true)
         bulbTimer = prefs.getFloat("bulbTimer", 0f).toDouble()
         starred = prefs.getStringSet("stars", emptySet())?.toSet() ?: emptySet()
         fitLiveViewQualityToBrand()
@@ -413,6 +454,15 @@ class CameraModel private constructor(val context: Context) {
         cameraNote = null
         stopInterval()
         cancelBracket()
+        // Undo and the motion trigger belong to this camera's session.
+        presetUndo = null
+        presetSteps = emptyList()
+        presetResultsFor = null
+        armMotion(false)
+        latestBitmap = null
+        sceneSuggestion = null
+        sceneCandidate = null
+        sceneSignals = null
         openExposureStopJob?.cancel()
         openExposureStopJob = null
         rawImportJob?.cancel()
@@ -526,6 +576,7 @@ class CameraModel private constructor(val context: Context) {
         if (!liveViewRunning) return
         if (image != null) {
             liveFrame = image.asImageBitmap()
+            latestBitmap = image
             if (image.width != frameWidth || image.height != frameHeight) {
                 frameWidth = image.width
                 frameHeight = image.height
@@ -539,6 +590,7 @@ class CameraModel private constructor(val context: Context) {
                 fpsUpdatedAt = now
                 if (fps != frameTimes.size) fps = frameTimes.size
             }
+            if (motion.armed || motion.editing) analyzeMotion(image)
         }
         if (info != null && info != liveInfo) {
             // The receiver only knows what the stream says; keep what drivers learned by polling.

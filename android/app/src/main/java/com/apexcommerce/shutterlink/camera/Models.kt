@@ -101,6 +101,10 @@ data class IntervalPlan(
     val count: Int = 60,
     /** Seconds from the start of one shot to the start of the next. */
     val seconds: Double = 20.0,
+    /** Day-to-night: keep live view as bright as at the start by lengthening the shutter, then raising ISO. */
+    val ramp: Boolean = false,
+    /** The highest ISO ramping may go to. */
+    val maxISO: Int = 3200,
 )
 
 data class IntervalState(
@@ -109,6 +113,8 @@ data class IntervalState(
     val total: Int = 0,
     val nextShotAt: Long? = null,
     val startedAt: Long? = null,
+    /** The last exposure change ramping made. */
+    val rampNote: String? = null,
 )
 
 enum class BracketTarget(val title: String) { AUTO("Auto"), EV("EV"), SHUTTER("Shutter") }
@@ -126,6 +132,8 @@ data class BracketState(
     val total: Int = 0,
     /** What the frame being shot is set to, e.g. "−1 EV · 1/500". */
     val label: String? = null,
+    /** A focus stack rather than an exposure bracket. */
+    val isFocusStack: Boolean = false,
 )
 
 /** The settings a bracket will shoot, worked out before it starts. */
@@ -151,6 +159,10 @@ data class PresetStep(
     val detail: String,
     val property: String,
     val value: String?,
+    /** Why the step can't run on this camera, shown when `value` is null. */
+    val unavailable: String = "Not offered by the camera over Wi-Fi",
+    /** Added to "The camera refused …" when the likely cause is a setting the app can't see. */
+    val hint: String? = null,
     val state: State = State.Pending,
     val id: String = UUID.randomUUID().toString(),
 ) {
@@ -171,7 +183,92 @@ data class AstroPlan(
     val iso: Int = 1600,
     /** Star trails with Live Composite instead of single exposures. */
     val trails: Boolean = false,
+    /** The sensor's crop factor: 2 for Micro Four Thirds, about 1.5 for APS-C, 1 for full frame. */
+    val cropFactor: Double = 2.0,
 ) {
-    /** Longest exposure before stars visibly streak: rule ÷ (focal length × 2× crop). */
-    val maxSeconds: Double get() = (if (strict) 300.0 else 500.0) / (focalLength * 2)
+    /** Longest exposure before stars visibly streak: rule ÷ (focal length × crop factor). */
+    val maxSeconds: Double get() = (if (strict) 300.0 else 500.0) / (focalLength * cropFactor)
+}
+
+/** How far one focus-stacking step moves the lens. */
+enum class FocusStepSize(val raw: Int, val title: String) {
+    FINE(1, "Fine"), MEDIUM(2, "Medium"), COARSE(3, "Coarse");
+
+    companion object {
+        fun of(raw: Int) = entries.firstOrNull { it.raw == raw } ?: FINE
+    }
+}
+
+enum class FocusDriveResult {
+    MOVED,
+    /** The lens is already at the end of its travel in that direction (infinity or the closest point). */
+    END_OF_TRAVEL,
+}
+
+/** The settings before a preset changed them, so Undo can put them back. */
+data class SettingsSnapshot(val title: String, val values: Map<String, String>)
+
+/** Settings the user saved under a name, for the camera brand they were saved on. */
+data class SavedPreset(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val brand: String,
+    val values: Map<String, String>,
+    val created: Long = System.currentTimeMillis(),
+)
+
+/** A rectangle normalised to the live-view frame (0…1). */
+data class NRect(val x: Double, val y: Double, val w: Double, val h: Double) {
+    val midX get() = x + w / 2
+    val midY get() = y + h / 2
+}
+
+/** The motion trigger: shoots when part of a box on live view changes. */
+data class MotionTrigger(
+    val armed: Boolean = false,
+    /** The box watched for movement, normalised to the frame. */
+    val region: NRect = NRect(0.3, 0.3, 0.4, 0.4),
+    /** 0…1: higher fires on smaller changes. */
+    val sensitivity: Double = 0.6,
+    /** Seconds to wait after a shot before firing again. */
+    val cooldown: Double = 3.0,
+    val shots: Int = 0,
+    val lastTrigger: Long? = null,
+    /** The panel is open: show the box on live view even while disarmed, so it can be placed. */
+    val editing: Boolean = false,
+) {
+    /** Share of the box (0…1) that has to change between frames: 1 % at the most sensitive, 15 % at the least. */
+    val threshold: Double get() = 0.01 + (1 - sensitivity) * 0.14
+
+    fun resized(scale: Double): MotionTrigger {
+        val x = (region.midX - scale / 2).coerceIn(0.0, 1 - scale)
+        val y = (region.midY - scale / 2).coerceIn(0.0, 1 - scale)
+        return copy(region = NRect(x, y, scale, scale))
+    }
+}
+
+/** The exposure metered without the ND filter on. */
+data class NDMeter(
+    val seconds: Double,
+    /** The camera's aperture value ("8.0"), when known. */
+    val aperture: String?,
+    /** A fixed ISO ("200"); null when the camera chose it and didn't say. */
+    val iso: String?,
+)
+
+/** One-tap recipes. Each sets only what the camera lets the app change over Wi-Fi, and says why for anything it can't. */
+enum class PresetRecipe(val id: String, val title: String, val summary: String, val tip: String) {
+    ASTRO("astro", "Astro", "Stars or star trails, from your lens and sensor", ""),
+    MOON("moon", "Moon", "A sharp, properly exposed moon: M, f/8, 1/250 s",
+        "Use your longest lens and focus manually on the moon's edge. If the moon still looks too bright, try 1/500 s."),
+    FIREWORKS("fireworks", "Fireworks", "Whole bursts on a dark sky",
+        "Put the camera on a tripod and focus manually where the bursts are. Start the exposure just before a burst."),
+    LANDSCAPE("landscape", "Landscape", "f/8, lowest ISO, nothing shaking the camera",
+        "Shoot from the phone so nothing touches the camera. Focus about a third of the way into the scene."),
+    ACTION("action", "Action", "1/1000 s to freeze movement, fast bursts",
+        "Hold the shutter for a burst. Use the camera's continuous AF (C-AF) for moving subjects: the app can't switch the AF mode."),
+    MACRO("macro", "Macro", "f/8 and steady, ready for a focus stack",
+        "Use a tripod. For more depth than f/8 gives, shoot a focus stack next."),
+    TRAILS("trails", "Light trails & silky water", "Long exposures: car lights, waterfalls, the sea",
+        "In daylight this needs an ND filter: use the ND calculator to work out the exposure."),
 }

@@ -63,6 +63,11 @@ class MainActivity : ComponentActivity() {
         val host = intent.getStringExtra("host") ?: return
         if (!CameraNetwork.isLocalTestHost(host)) return
         camera.forceWifiBinding = intent.getBooleanExtra("bindWifi", false)
+        // "night_sky:0.97,sky:0.9" stands in for ML Kit's labels, to try the scene suggestions.
+        camera.sceneLabelOverride = intent.getStringExtra("sceneLabels")?.split(",")?.mapNotNull { pair ->
+            val parts = pair.split(":")
+            parts.getOrNull(1)?.toFloatOrNull()?.let { parts[0] to it }
+        }?.toMap()
         intent.getStringExtra("selfTest")?.let { brand ->
             camera.scope.launch { DriverSelfTest.run(camera, brand, host) }
             return
