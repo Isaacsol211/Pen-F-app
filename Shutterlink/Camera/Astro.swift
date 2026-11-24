@@ -36,10 +36,32 @@ struct AstroPlan {
 }
 
 extension CameraModel {
-    /// Slowest available shutter that still keeps stars round (or Live Composite for trails).
+    /// Slowest available shutter that still keeps stars round. For trails, Live Composite where the
+    /// camera has it, else 30 s frames for the interval timer to shoot back to back.
     func astroShutter(for plan: AstroPlan) -> String? {
-        if plan.trails { return properties["shutspeedvalue"]?.options.first { $0.lowercased() == "livecomp" } }
-        return timedShutters.filter { $0.1 <= plan.maxSeconds }.max { $0.1 < $1.1 }?.0
+        if plan.trails, hasLiveComposite { return properties["shutspeedvalue"]?.options.first { $0.lowercased() == "livecomp" } }
+        let longest = plan.trails ? 30 : plan.maxSeconds
+        return timedShutters.filter { $0.1 <= longest }.max { $0.1 < $1.1 }?.0
+    }
+
+    var hasLiveComposite: Bool {
+        properties["shutspeedvalue"]?.options.contains { $0.lowercased() == "livecomp" } ?? false
+    }
+
+    /// Star trails without Live Composite: about an hour of back-to-back frames, to stack afterwards.
+    func trailsSeries(for plan: AstroPlan) -> IntervalPlan? {
+        guard plan.trails, !hasLiveComposite else { return nil }
+        let frame = astroShutter(for: plan).flatMap(PropertyFormat.seconds(fromShutter:)) ?? 30
+        let every = (frame + 3).rounded()   // a few seconds to save each frame
+        return IntervalPlan(count: Int((3600 / every).rounded()), seconds: every)
+    }
+
+    /// Starts the star-trail series, and leaves the same plan in the Interval panel.
+    func startTrailsSeries(_ series: IntervalPlan) {
+        UserDefaults.standard.set(series.count, forKey: "interval.count")
+        UserDefaults.standard.set(series.seconds, forKey: "interval.seconds")
+        UserDefaults.standard.set(false, forKey: "interval.ramp")
+        startInterval(series)
     }
 
     var widestAperture: String? {
@@ -96,13 +118,11 @@ extension CameraModel {
     func astroSteps(for plan: AstroPlan) -> [PresetStep] {
         // In A, S or P the camera locks aperture or shutter; once the preset has switched to M they open up.
         let (mode, inM) = modeStep("M", why: "So aperture and shutter can be set")
-        let hasLiveComposite = properties["shutspeedvalue"]?.options.contains { $0.lowercased() == "livecomp" } ?? false
-        let shutterDetail: String = plan.trails
-            ? "Live Composite: stacks only new light, so stars draw trails"
-            : String(format: "Longest that keeps stars sharp at %d mm (≤ %.1f s)", Int(plan.focalLength), plan.maxSeconds)
-        let shutterUnavailable = plan.trails && !hasLiveComposite
-            ? "Live Composite is an Olympus / OM System feature. For trails here, use the interval timer and stack the frames"
-            : "Not offered by the camera over Wi-Fi"
+        let shutterDetail: String = !plan.trails
+            ? String(format: "Longest that keeps stars sharp at %d mm (≤ %.1f s)", Int(plan.focalLength), plan.maxSeconds)
+            : hasLiveComposite ? "Live Composite: stacks only new light, so stars draw trails"
+            : "One frame of the series: the interval timer shoots them back to back, then stack them"
+        let shutterUnavailable = "Not offered by the camera over Wi-Fi"
 
         // About 4000 K keeps the night sky a neutral blue. Fluorescent is the nearest preset on most
         // bodies; LUMIX has none, so it falls back to Incandescent (about 3200 K, a cooler blue).

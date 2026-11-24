@@ -13,9 +13,6 @@ struct AstroView: View {
         AstroPlan(focalLength: focalLength, strict: strict, iso: iso, trails: trails, cropFactor: camera.cropFactor)
     }
 
-    private var hasLiveComposite: Bool {
-        camera.properties["shutspeedvalue"]?.options.contains { $0.lowercased() == "livecomp" } ?? false
-    }
 
     var body: some View {
         NavigationStack {
@@ -81,10 +78,10 @@ struct AstroView: View {
                         tip("Put the camera on a tripod and turn image stabilisation off on the camera.")
                         tip("Focus manually on a bright star: switch the lens to MF and use the camera's magnify view.")
                         tip("Shoot from the phone so nothing touches the camera.")
-                        if trails && hasLiveComposite {
+                        if trails && camera.hasLiveComposite {
                             tip("Set the base exposure for Live Composite on the camera (Shooting menu ▸ Composite Settings). Tap the shutter to start and again to stop.")
                         } else if trails {
-                            tip("This camera has no Live Composite. For trails, shoot a series with the interval timer and stack it afterwards.")
+                            tip("This camera has no Live Composite, so the app shoots a series of 30 s frames with the interval timer. Stack them afterwards (StarStaX, Sequator or Photoshop) for the trails.")
                         }
                     }
                 }
@@ -94,42 +91,60 @@ struct AstroView: View {
             .safeAreaBar(edge: .bottom) {
                 // Stays on after it's applied; tapping again turns it off and puts the old settings back.
                 let astroOn = camera.isPresetOn(PresetRecipe.astro.id)
-                Button {
-                    Task {
-                        if astroOn {
-                            await camera.undoPreset()
-                            return
-                        }
-                        await camera.applyAstro(plan)
-                        let allGood = camera.presetSteps.allSatisfy {
-                            if case .failed = $0.state { return false }
-                            return true
-                        }
-                        if allGood {
-                            camera.showToast("Astro is on")
-                            try? await Task.sleep(for: .seconds(1.1))
+                VStack(spacing: 8) {
+                    if astroOn, let series = camera.trailsSeries(for: plan), !camera.interval.running {
+                        Button {
+                            camera.startTrailsSeries(series)
                             dismiss()
+                        } label: {
+                            Label("Start the series: \(series.count) frames, about \(Int((Double(series.count) * series.seconds / 60).rounded())) min",
+                                  systemImage: "timer")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 6)
                         }
+                        .buttonStyle(.accent)
+                        .disabled(camera.presetRunning || camera.mode != .rec)
+                        .padding(.horizontal, 16)
                     }
-                } label: {
-                    HStack {
-                        if camera.presetRunning { ProgressView() }
-                        if astroOn {
-                            Image(systemName: "checkmark.circle.fill").symbolEffect(.bounce, value: astroOn)
+                    Button {
+                        Task {
+                            if astroOn {
+                                await camera.undoPreset()
+                                return
+                            }
+                            await camera.applyAstro(plan)
+                            let allGood = camera.presetSteps.allSatisfy {
+                                if case .failed = $0.state { return false }
+                                return true
+                            }
+                            // Trails without Live Composite stay open for Start the series.
+                            if allGood, camera.trailsSeries(for: plan) == nil {
+                                camera.showToast("Astro is on")
+                                try? await Task.sleep(for: .seconds(1.1))
+                                dismiss()
+                            }
                         }
-                        Text(camera.presetRunning ? "Applying…" : astroOn ? "Astro is on · Tap to turn off" : "Apply astro settings")
-                            .contentTransition(.interpolate)
+                    } label: {
+                        HStack {
+                            if camera.presetRunning { ProgressView() }
+                            if astroOn {
+                                Image(systemName: "checkmark.circle.fill").symbolEffect(.bounce, value: astroOn)
+                            }
+                            Text(camera.presetRunning ? "Applying…" : astroOn ? "Astro is on · Tap to turn off" : "Apply astro settings")
+                                .contentTransition(.interpolate)
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
                     }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                    .buttonStyle(.accent)
+                    .tint(astroOn ? Color.green : Theme.accent)
+                    .disabled(camera.presetRunning || camera.mode != .rec)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .sensoryFeedback(.success, trigger: astroOn)
                 }
-                .buttonStyle(.accent)
-                .tint(astroOn ? Color.green : Theme.accent)
-                .disabled(camera.presetRunning || camera.mode != .rec)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-                .sensoryFeedback(.success, trigger: astroOn)
             }
             .navigationTitle("Astro")
             .navigationBarTitleDisplayMode(.inline)
