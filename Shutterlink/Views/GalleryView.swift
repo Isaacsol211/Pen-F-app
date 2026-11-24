@@ -162,12 +162,14 @@ struct GalleryView: View {
                         // on iPhone and iPad, to Photos.
                         if Platform.isMac { pickRawFolder = true } else { camera.downloadStarredRAWs() }
                     } label: {
-                        Label(Platform.isMac ? "RAWs to Folder…" : "RAWs", systemImage: "arrow.down.circle")
+                        Label(Platform.isMac ? "RAWs…" : "RAWs", systemImage: "arrow.down.circle")
                     }
                     .buttonStyle(.accent)
                     .tint(Theme.accent)
                     .disabled(starredCount == 0 || importing)
-                    .accessibilityLabel("Download the RAW files of starred photos")
+                    .accessibilityLabel(Platform.isMac ? "Save the RAW files of starred photos to a folder"
+                                                       : "Download the RAW files of starred photos")
+                    .help("Save the RAW files of starred photos to a folder")
                     .fileImporter(isPresented: $pickRawFolder, allowedContentTypes: [.folder]) { result in
                         if case .success(let folder) = result { camera.downloadStarredRAWs(to: folder) }
                     }

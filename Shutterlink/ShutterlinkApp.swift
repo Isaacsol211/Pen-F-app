@@ -3,6 +3,9 @@ import SwiftUI
 @main
 struct ShutterlinkApp: App {
     @State private var camera = CameraModel.shared
+    #if targetEnvironment(macCatalyst)
+    @UIApplicationDelegateAdaptor(MacAppDelegate.self) private var macDelegate
+    #endif
 
     init() {
         #if targetEnvironment(macCatalyst)
@@ -22,14 +25,7 @@ struct ShutterlinkApp: App {
         // Big enough for the workspace layouts (the iPad ones); see `MacWindow`.
         .defaultSize(width: MacWindow.defaultSize.width, height: MacWindow.defaultSize.height)
         #endif
-        .commands {
-            CameraCommands()
-            #if targetEnvironment(macCatalyst)
-            // One window: there's one camera connection, and every window would run its own live
-            // view analysis.
-            CommandGroup(replacing: .newItem) {}
-            #endif
-        }
+        .commands { CameraCommands() }
     }
 }
 
@@ -79,6 +75,20 @@ enum MacWindow {
     static func configure(_ scene: UIWindowScene?) {
         guard let scene else { return }
         scene.sizeRestrictions?.minimumSize = minimumSize
+    }
+}
+
+/// Trims the menu bar UIKit gives every Mac Catalyst app (SwiftUI's `CommandGroup(replacing:)`
+/// doesn't reach these items there).
+final class MacAppDelegate: UIResponder, UIApplicationDelegate {
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        guard builder.system == .main else { return }
+        // One window: there's one camera connection, and every window would run its own live view
+        // analysis. Closing the window and clicking the Dock icon brings it back.
+        builder.remove(menu: .newItem)
+        // Duplicate, Move, Rename, Export As…: there are no documents.
+        builder.remove(menu: .document)
     }
 }
 #endif
