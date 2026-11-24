@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
@@ -58,7 +59,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,7 +76,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -88,8 +87,11 @@ import com.apexcommerce.shutterlink.camera.CameraModel
 import com.apexcommerce.shutterlink.camera.CameraNetwork
 import com.apexcommerce.shutterlink.camera.ConnectionPhase
 import com.apexcommerce.shutterlink.camera.SavedCamera
+import com.apexcommerce.shutterlink.camera.applyScannedCode
 import com.apexcommerce.shutterlink.camera.connect
+import com.apexcommerce.shutterlink.camera.connectFromScannedCode
 import com.apexcommerce.shutterlink.camera.forget
+import com.apexcommerce.shutterlink.camera.joinAndConnect
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -99,11 +101,17 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun ConnectScreen(camera: CameraModel) {
-    val scope = rememberCoroutineScope()
     var showAdd by remember { mutableStateOf(false) }
     var connectingId by remember { mutableStateOf<String?>(null) }
     var forgetting by remember { mutableStateOf<SavedCamera?>(null) }
+    var scanNote by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(camera.phase) { if (camera.phase != ConnectionPhase.CONNECTING) connectingId = null }
+    val withWifiPermission = rememberWifiJoinPermission(camera)
+    val scan = rememberQrScanner(onCode = { code ->
+        withWifiPermission {
+            scanNote = if (camera.connectFromScannedCode(code)) null else UNREADABLE_CODE
+        }
+    })
 
     if (showAdd) {
         AddCameraScreen(camera) { showAdd = false }
@@ -126,6 +134,7 @@ fun ConnectScreen(camera: CameraModel) {
                             Text("Remote control for Olympus, OM System and Panasonic LUMIX cameras over their own Wi-Fi, with Nikon, Canon and Sony in beta.",
                                 color = Theme.secondary, fontSize = 15.sp)
                         }
+                        scan?.let { ScanToConnectCard(camera, busy = connectingId == null, note = scanNote) { scanNote = null; it() } }
                         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                             CapsLabel("Your cameras")
                             Column(Modifier.fillMaxWidth().dashedBorder(22.dp).padding(vertical = 28.dp, horizontal = 20.dp),
@@ -138,15 +147,20 @@ fun ConnectScreen(camera: CameraModel) {
                         }
                     } else {
                         Box(Modifier.padding(top = 20.dp)) { BrandLockup(40.dp) }
+                        scan?.let { ScanToConnectCard(camera, busy = connectingId == null, note = scanNote) { scanNote = null; it() } }
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             CapsLabel("Your cameras")
-                            Text("Turn on the camera's Wi-Fi and join it in Settings ▸ Wi-Fi, then tap it.", color = Theme.secondary, fontSize = 15.sp,
-                                modifier = Modifier.padding(bottom = 4.dp))
+                            Text("Turn on the camera's Wi-Fi and tap it. A camera saved with its Wi-Fi joins it by itself; for others, join it in Settings ▸ Wi-Fi first.",
+                                color = Theme.secondary, fontSize = 15.sp, modifier = Modifier.padding(bottom = 4.dp))
                             camera.savedCameras.forEach { saved ->
                                 SavedCameraCard(camera, saved, connecting = camera.phase == ConnectionPhase.CONNECTING && connectingId == saved.id,
                                     onTap = {
                                         connectingId = saved.id
-                                        scope.launch { camera.connect(saved) }
+                                        // In the camera's own scope: this screen goes away once it's connected,
+                                        // and its scope with it, which would cancel the end of the connection.
+                                        // A camera saved with its network joins it first, which needs Android's permission.
+                                        if (saved.ssid != null) withWifiPermission { camera.scope.launch { camera.connect(saved) } }
+                                        else camera.scope.launch { camera.connect(saved) }
                                     },
                                     onLongPress = { forgetting = saved })
                             }
@@ -297,7 +311,7 @@ private fun WifiStatusRow(camera: CameraModel) {
 fun steps(brand: CameraBrand?): List<Pair<String, String>> = when (brand) {
     null -> listOf(
         "Start the camera's Wi-Fi" to "Open its smartphone or Wi-Fi connection menu. Pick your brand above for the exact steps.",
-        "Join that network" to "Settings ▸ Wi-Fi ▸ the camera's network, with the password the camera shows, or use Join camera Wi-Fi below. If Android says the network has no internet, stay connected.",
+        "Join that network" to "Settings ▸ Wi-Fi ▸ the camera's network, with the password the camera shows, or type both below and Shutterlink joins it. If Android says the network has no internet, stay connected.",
         "Connect" to "The app works out which camera it is from the network and by asking it.",
     )
     CameraBrand.OLYMPUS -> listOf(
@@ -330,10 +344,20 @@ fun steps(brand: CameraBrand?): List<Pair<String, String>> = when (brand) {
 /** New camera: pick the brand (or Automatic), follow its steps, connect. Saved the first time it connects. */
 @Composable
 private fun AddCameraScreen(camera: CameraModel, onClose: () -> Unit) {
-    val scope = rememberCoroutineScope()
     val selection: CameraBrand? = if (camera.autoDetectBrand) null else camera.brand
     val connecting = camera.phase == ConnectionPhase.CONNECTING
     var showAdvanced by remember { mutableStateOf(false) }
+    var scanNote by remember { mutableStateOf<String?>(null) }
+    val withWifiPermission = rememberWifiJoinPermission(camera)
+    val scan = rememberQrScanner(onCode = { code ->
+        if (camera.applyScannedCode(code)) {
+            scanNote = null
+            withWifiPermission { camera.scope.launch { camera.joinAndConnect() } }
+        } else {
+            scanNote = UNREADABLE_CODE
+        }
+    })
+    val joinsWifi = camera.wifiSsid.isNotBlank()
     androidx.activity.compose.BackHandler(enabled = !connecting) { onClose() }
 
     Column(Modifier.fillMaxSize().background(Theme.background).safeDrawingPadding().imePadding()) {
@@ -344,6 +368,17 @@ private fun AddCameraScreen(camera: CameraModel, onClose: () -> Unit) {
         }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp).widthIn(max = 560.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            scan?.let { open ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AccentButton(onClick = { scanNote = null; open() }, modifier = Modifier.fillMaxWidth(), enabled = !connecting) {
+                        Icon(Icons.Filled.QrCodeScanner, null)
+                        Text("Scan the camera's QR code")
+                    }
+                    Text("Start the camera's smartphone connection so it shows a QR code. Shutterlink joins its Wi-Fi and connects.",
+                        color = Theme.secondary, fontSize = 13.sp)
+                    scanNote?.let { Text(it, color = Theme.orange, fontSize = 13.sp) }
+                }
+            }
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 CapsLabel("Camera")
                 Column(Modifier.fillMaxWidth().surface(RoundedCornerShape(20.dp))) {
@@ -364,7 +399,7 @@ private fun AddCameraScreen(camera: CameraModel, onClose: () -> Unit) {
                     }
                 }
             }
-            JoinWifiCard(camera)
+            WifiCard(camera, typeLabel = if (scan != null) "Or type the camera's Wi-Fi" else "The camera's Wi-Fi")
             Row(Modifier.fillMaxWidth().heightIn(min = Theme.target).clickable { showAdvanced = !showAdvanced }.padding(horizontal = 6.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 CapsLabel("Advanced")
@@ -377,9 +412,13 @@ private fun AddCameraScreen(camera: CameraModel, onClose: () -> Unit) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 12.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             camera.lastError?.let { ConnectErrorBanner(it) }
             WifiStatusRow(camera)
-            AccentButton(onClick = { scope.launch { camera.connect() } }, modifier = Modifier.fillMaxWidth(), enabled = !connecting) {
+            AccentButton(onClick = {
+                // The camera's scope, not this screen's (which closes as soon as it's connected).
+                if (joinsWifi) withWifiPermission { camera.scope.launch { camera.joinAndConnect() } }
+                else camera.scope.launch { camera.connect() }
+            }, modifier = Modifier.fillMaxWidth(), enabled = !connecting) {
                 if (connecting) CircularProgressIndicator(color = Theme.onAccent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                Text(if (connecting) camera.status ?: "Connecting…" else "Connect", maxLines = 1)
+                Text(if (connecting) camera.status ?: "Connecting…" else if (joinsWifi) "Join Wi-Fi and Connect" else "Connect", maxLines = 1)
             }
         }
     }
@@ -422,57 +461,81 @@ private fun fieldColors() = OutlinedTextFieldDefaults.colors(
     focusedLabelColor = Theme.accent, unfocusedLabelColor = Theme.secondary,
 )
 
+private const val UNREADABLE_CODE =
+    "Shutterlink can't read this camera's code yet. Type the network name and password shown next to the code instead."
+
 /**
- * Android can join the camera's Wi-Fi for the app (WifiNetworkSpecifier): the system asks the user to
- * confirm, and the network lasts while the app uses it. Needs Nearby Wi-Fi devices (Android 13+) or
- * location (Android 10–12).
+ * Runs an action that joins a camera's Wi-Fi, asking first for the permission Android wants for that
+ * (Nearby Wi-Fi devices on Android 13+, location before). Without it, the error says what to do instead.
  */
 @Composable
-private fun JoinWifiCard(camera: CameraModel) {
+fun rememberWifiJoinPermission(camera: CameraModel): ((() -> Unit) -> Unit) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var expanded by remember { mutableStateOf(false) }
-    var ssid by remember { mutableStateOf(camera.prefs.getString("join.ssid", "") ?: "") }
-    var password by remember { mutableStateOf("") }
-    var joining by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<String?>(null) }
     val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES else Manifest.permission.ACCESS_FINE_LOCATION
-    fun join() {
-        joining = true
-        result = null
-        camera.prefs.edit().putString("join.ssid", ssid.trim()).apply()
-        scope.launch {
-            val error = CameraNetwork.join(ssid.trim(), password.ifEmpty { null })
-            joining = false
-            result = error ?: "Joined ${ssid.trim()}. Tap Connect."
-        }
-    }
+    var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) join() else result = "Android needs the ${if (Build.VERSION.SDK_INT >= 33) "Nearby devices" else "location"} permission to join a Wi-Fi network for the app. You can still join it in Settings ▸ Wi-Fi."
+        val action = pending
+        pending = null
+        if (granted) action?.invoke()
+        else camera.lastError = "Android needs the ${if (Build.VERSION.SDK_INT >= 33) "Nearby devices" else "location"} permission for Shutterlink to join the camera's Wi-Fi. You can still join it in Settings ▸ Wi-Fi, then connect."
     }
-    Column(Modifier.fillMaxWidth().surface(RoundedCornerShape(20.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded }, verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Wifi, null, tint = Theme.accent, modifier = Modifier.size(20.dp))
-            Text("Join camera Wi-Fi from the app", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(start = 10.dp))
-            Icon(Icons.Filled.KeyboardArrowDown, null, tint = Theme.secondary)
+    return { action ->
+        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) action()
+        else {
+            pending = action
+            ask.launch(permission)
         }
-        if (expanded) {
-            Text("Type the network name and password the camera shows. Android asks you to confirm, and keeps the phone on it while Shutterlink is connected.",
-                color = Theme.secondary, fontSize = 13.sp)
-            OutlinedTextField(ssid, { ssid = it }, label = { Text("Network name (SSID)") }, singleLine = true, colors = fieldColors(),
-                modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(password, { password = it }, label = { Text("Password (if any)") }, singleLine = true, colors = fieldColors(),
-                visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth())
-            SurfaceButton(onClick = {
-                if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) join() else ask.launch(permission)
-            }, enabled = ssid.isNotBlank() && !joining, modifier = Modifier.fillMaxWidth()) {
-                if (joining) CircularProgressIndicator(color = Theme.accent, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                Text(if (joining) "Waiting for Android…" else "Join ${ssid.trim().ifEmpty { "network" }}", fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** Home screen: scan the QR code on the camera's screen; Shutterlink joins its Wi-Fi, connects and saves it. */
+@Composable
+private fun ScanToConnectCard(camera: CameraModel, busy: Boolean, note: String?, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    val connecting = busy && camera.phase == ConnectionPhase.CONNECTING
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 84.dp).background(Theme.surface, shape)
+                .border(1.dp, Theme.accent.copy(alpha = 0.6f), shape)
+                .clickable(enabled = camera.phase == ConnectionPhase.DISCONNECTED, onClick = onClick)
+                .padding(16.dp)
+                .semantics { contentDescription = "Scan the camera's QR code. Joins its Wi-Fi and connects." },
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(Modifier.size(50.dp).background(Theme.accent, RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) {
+                if (connecting) CircularProgressIndicator(color = Theme.onAccent, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                else Icon(Icons.Filled.QrCodeScanner, null, tint = Theme.onAccent)
             }
-            result?.let { Text(it, color = if (it.startsWith("Joined")) Theme.green else Theme.orange, fontSize = 13.sp) }
-            CameraNetwork.joinedSsid?.let { Text("Holding $it for the app.", color = Theme.tertiary, fontSize = 12.sp) }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(if (connecting) camera.status ?: "Connecting…" else "Scan the camera's QR code", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text("Joins its Wi-Fi and connects. No trip to Settings.", color = Theme.secondary, fontSize = 13.sp)
+            }
         }
+        note?.let { Text(it, color = Theme.orange, fontSize = 13.sp) }
+    }
+}
+
+/**
+ * Shutterlink joins the camera's network itself (WifiNetworkSpecifier: Android asks the user to
+ * confirm, and the phone stays on it while Shutterlink holds it), from its QR code or its name and
+ * password, and remembers it so the camera's card does everything next time.
+ */
+@Composable
+private fun WifiCard(camera: CameraModel, typeLabel: String) {
+    val enabled = camera.phase == ConnectionPhase.DISCONNECTED
+    Column(Modifier.fillMaxWidth().surface(RoundedCornerShape(20.dp)).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        CapsLabel(typeLabel, color = Theme.accent)
+        Text("The network name and password shown on the camera. Shutterlink joins it for you (Android asks you to confirm), and next time tapping the camera joins and connects in one go. Leave it empty if the phone is already on the camera's Wi-Fi.",
+            color = Theme.secondary, fontSize = 13.sp)
+        OutlinedTextField(camera.wifiSsid, { camera.wifiSsid = it }, label = { Text("Network name") }, singleLine = true, colors = fieldColors(),
+            enabled = enabled, textStyle = monoStyle(16.sp, FontWeight.Normal),
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Camera network name" })
+        // Shown in clear: it's printed on the camera's screen anyway, and easy to mistype.
+        OutlinedTextField(camera.wifiPassword, { camera.wifiPassword = it }, label = { Text("Password") }, singleLine = true, colors = fieldColors(),
+            enabled = enabled, textStyle = monoStyle(16.sp, FontWeight.Normal),
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Camera network password" })
     }
 }
 

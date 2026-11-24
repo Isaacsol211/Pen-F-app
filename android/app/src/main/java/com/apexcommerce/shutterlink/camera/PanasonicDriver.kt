@@ -621,6 +621,8 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             // capture returns straight away; keep the countdown honest for long exposures.
             if (seconds >= 1) delay(((seconds + 0.5) * 1000).toLong())
             camera.shotCounter++
+            // LUMIX can't send files during live view: auto-save takes it from the card later.
+            camera.autoSaveLater()
             runCatching { lumixCommand(listOf("mode" to "camcmd", "value" to "autoreviewunlock"), timeout = 3.0, log = false) }
         } catch (e: CancellationException) {
             throw e
@@ -640,6 +642,7 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             camera.isShooting = false
             camera.exposureStartedAt = null
             camera.shotCounter++
+            camera.autoSaveLater()
             return
         }
         camera.isShooting = true

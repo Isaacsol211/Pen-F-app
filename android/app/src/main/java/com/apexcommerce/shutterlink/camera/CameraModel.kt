@@ -87,6 +87,11 @@ class CameraModel private constructor(val context: Context) {
     // MARK: Connection
 
     var phase by mutableStateOf(ConnectionPhase.DISCONNECTED)
+    /** Add a camera's Wi-Fi fields (typed, or filled by a scanned QR code). */
+    var wifiSsid by mutableStateOf("")
+    var wifiPassword by mutableStateOf("")
+    /** The camera network Shutterlink joined for this connection, saved with the camera once it connects. */
+    var joinedNetwork: WifiCredentials? = null
     var status by mutableStateOf<String?>(null)
     var lastError by mutableStateOf<String?>(null)
     var cameraName by mutableStateOf<String?>(null)
@@ -165,6 +170,15 @@ class CameraModel private constructor(val context: Context) {
 
     /** "Scene suggestions" in the ··· menu; on by default. */
     var sceneAssistantOn by mutableStateOf(true)
+
+    // MARK: Auto-save (see AutoSave.kt)
+
+    /** "Save new photos to the gallery" in the ··· menu. */
+    var autoSaveNewPhotos by mutableStateOf(false)
+    /** Photos taken that auto-save takes from the card when it's next opened (LUMIX). */
+    var autoSavePending by mutableStateOf(0)
+    var autoSavedCount by mutableStateOf(0)
+    var autoSaveChain: Job? = null
     var sceneSuggestion by mutableStateOf<SceneSuggestion?>(null)
     /** What the last look saw (scene names), for the self-test. */
     var sceneSignals: SceneSignals? = null
@@ -245,6 +259,7 @@ class CameraModel private constructor(val context: Context) {
         liveViewQuality = prefs.getString("lvqty", null) ?: "0640x0480"
         focusPeaking = prefs.getBoolean("ui.peaking", false)
         sceneAssistantOn = prefs.getBoolean("assistant.on", true)
+        autoSaveNewPhotos = prefs.getBoolean("autoSave", false)
         bulbTimer = prefs.getFloat("bulbTimer", 0f).toDouble()
         starred = prefs.getStringSet("stars", emptySet())?.toSet() ?: emptySet()
         fitLiveViewQualityToBrand()
@@ -437,6 +452,8 @@ class CameraModel private constructor(val context: Context) {
         stopLiveView()
         runCatching { driver?.disconnect() }
         teardown()
+        // Let go of a network the app joined, so the phone goes back to its usual Wi-Fi.
+        CameraNetwork.leaveJoined()
     }
 
     suspend fun powerOff() {
@@ -444,9 +461,12 @@ class CameraModel private constructor(val context: Context) {
         stopLiveView()
         runCatching { driver.powerOff() }
         teardown()
+        CameraNetwork.leaveJoined()
     }
 
     private fun teardown() {
+        // A failed attempt keeps the joined network for the next try; an ended session lets it go.
+        if (phase == ConnectionPhase.CONNECTED) joinedNetwork = null
         driver?.teardown()
         driver = null
         activeHost = null
@@ -463,6 +483,10 @@ class CameraModel private constructor(val context: Context) {
         sceneSuggestion = null
         sceneCandidate = null
         sceneSignals = null
+        autoSaveChain?.cancel()
+        autoSaveChain = null
+        autoSavePending = 0
+        autoSavedCount = 0
         openExposureStopJob?.cancel()
         openExposureStopJob = null
         rawImportJob?.cancel()
@@ -745,6 +769,8 @@ class CameraModel private constructor(val context: Context) {
         } finally {
             galleryLoading = false
         }
+        // Photos auto-save couldn't fetch during live view (LUMIX).
+        savePendingAutoSaves()
     }
 
     suspend fun closeGallery() {

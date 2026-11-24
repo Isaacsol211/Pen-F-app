@@ -199,7 +199,13 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
     private suspend fun applyChanges(changes: JSONObject) {
         val level = changes.optJSONObject("battery")?.opt("level") as? String
         level?.let { batteryPercent(it) }?.let { camera.liveInfo = camera.liveInfo.copy(battery = it) }
-        changes.stringList("addedcontents").lastOrNull()?.let { showLastShot(it) }
+        val added = changes.stringList("addedcontents")
+        added.lastOrNull()?.let { showLastShot(it) }
+        // Auto-save: the JPEG or HEIF of each new capture (CCAPI serves files during live view).
+        for (file in added) {
+            if (file.substringAfterLast('.', "").uppercase() !in listOf("JPG", "JPEG", "HIF", "HEIF")) continue
+            camera.autoSave(file.substringAfterLast('/')) { client.request("GET", file, timeout = 120.0, log = false) }
+        }
         val settingKeys = listOf("tv", "av", "iso", "exposure", "wb", "shootingmode", "shootingmodedial")
         if (settingKeys.any { changes.has(it) }) refreshProperties()
     }

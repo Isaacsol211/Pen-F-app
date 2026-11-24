@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import com.apexcommerce.shutterlink.camera.SceneSuggestion
@@ -87,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.apexcommerce.shutterlink.camera.CameraModel
+import com.apexcommerce.shutterlink.camera.changeAutoSave
 import kotlinx.coroutines.launch
 
 /** Which sheet or full-screen page is open over the remote. */
@@ -258,7 +260,8 @@ private fun PortraitLayout(
                 } else {
                     OptionPanelFor(camera, activeSetting) { selectSetting(null) }
                     ExposureStrip(camera, activeSetting, selectSetting)
-                    if (showAids) QuickAidStrip(quickAids)
+                    // While a setting panel is open (Drive, ISO…) it gets the aids' room; they come back when it closes.
+                    if (showAids && activeSetting == null) QuickAidStrip(quickAids)
                 }
             }
             // The tools float over the picture rather than squeezing it.
@@ -378,6 +381,12 @@ private fun CameraMenu(camera: CameraModel, open: (RemotePage) -> Unit, disconne
                 leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) },
                 trailingIcon = {
                     Switch(camera.sceneAssistantOn, { camera.changeSceneAssistant(it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = Theme.accent, checkedThumbColor = Color.Black))
+                })
+            DropdownMenuItem({ Text("Save new photos to the gallery") }, { camera.changeAutoSave(!camera.autoSaveNewPhotos) },
+                leadingIcon = { Icon(Icons.Filled.Download, null) },
+                trailingIcon = {
+                    Switch(camera.autoSaveNewPhotos, { camera.changeAutoSave(it) },
                         colors = SwitchDefaults.colors(checkedTrackColor = Theme.accent, checkedThumbColor = Color.Black))
                 })
             HorizontalDivider(color = Theme.stroke)
