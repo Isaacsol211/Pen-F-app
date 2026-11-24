@@ -723,7 +723,12 @@ final class PanasonicDriver: CameraDriver {
             return false
         }
         let ok = await camera.optimisticallySet(name, to: value, reportErrors: reportErrors) {
-            try await lumixCommand([("mode", "setsetting"), ("type", setting.type), ("value", setting.value)])
+            do {
+                try await lumixCommand([("mode", "setsetting"), ("type", setting.type), ("value", setting.value)])
+            } catch let error as URLError where error.code == .timedOut && ["focal", "shtrspeed"].contains(setting.type) {
+                // A G7 doesn't answer at all when the mode dial doesn't allow the change.
+                throw CameraError("The camera didn't take it. Is the mode dial on \(setting.type == "focal" ? "A or M" : "S or M")?")
+            }
         }
         await refreshProperties()
         return ok

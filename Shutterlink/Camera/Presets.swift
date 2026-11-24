@@ -162,9 +162,18 @@ extension CameraModel {
         return preferred.first { options.contains($0) }
     }
 
-    func antiShockStep(_ detail: String = "Avoids shutter-shock blur on a tripod",
-                       unavailable: String = "Use the camera's electronic shutter if it has one") -> PresetStep {
-        presetStep("Anti-shock drive", detail, "drivemode", option("drivemode", in: ["lowvib-normal"]), unavailable: unavailable)
+    /// Keeps a tripod shot steady: anti-shock drive where the camera has it, else a 2 s self-timer,
+    /// else what to set on the camera, so the step never just says "not offered".
+    func antiShockStep(_ detail: String = "Avoids shutter-shock blur on a tripod") -> PresetStep {
+        if let timer = option("drivemode", in: ["selftimer|2sec"]), option("drivemode", in: ["lowvib-normal"]) == nil {
+            return presetStep("2 s self-timer", "\(detail): the camera waits 2 s after the press", "drivemode", timer)
+        }
+        let onCamera = brand == .panasonic
+            ? "Set it on the camera: turn the drive dial to the self-timer and choose 2 s in MENU ▸ Rec ▸ Self Timer, "
+                + "or choose ESHTR (electronic shutter) in MENU ▸ Rec ▸ Shutter Type"
+            : "Set it on the camera: a 2 s self-timer, or the electronic (silent) shutter"
+        return presetStep("Anti-shock drive", detail, "drivemode", option("drivemode", in: ["lowvib-normal"]),
+                          unavailable: onCamera)
     }
 
     /// Runs steps in order and records what the camera accepted. They're worked out again before each

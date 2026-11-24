@@ -340,7 +340,10 @@ final class CameraModel {
     func dialOptions(for property: CameraProperty) -> CameraProperty {
         guard property.name == "focalvalue", let range = liveInfo.apertureRange else { return property }
         var filtered = property
-        filtered.options = property.options.filter { Double($0).map(range.contains) ?? true }
+        // Labels are rounded ("2.8" for a lens that says F2.83), so allow a little either side; the
+        // next third stop is 12 % away.
+        let lens = (range.lowerBound * 0.97)...(range.upperBound * 1.03)
+        filtered.options = property.options.filter { Double($0).map(lens.contains) ?? true }
         guard !filtered.options.isEmpty else { return property }
         // The camera can report a value the lens can't do (e.g. "1.0"); show the nearest real stop.
         if !filtered.options.contains(property.value), let current = Double(property.value) {

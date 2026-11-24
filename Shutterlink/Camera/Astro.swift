@@ -128,7 +128,7 @@ extension CameraModel {
             presetStep("ISO", "Bright enough for faint stars without too much noise", "isospeedvalue",
                        nearestISO(to: plan.iso)),
             wbStep,
-            antiShockStep(unavailable: "Use the camera's electronic shutter or a 2 s self-timer instead"),
+            antiShockStep(),
         ]
     }
 
