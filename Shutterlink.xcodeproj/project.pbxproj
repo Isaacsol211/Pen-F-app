@@ -286,6 +286,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = "Shutterlink-iOS.entitlements";
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = "Shutterlink-iOS.entitlements";
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Shutterlink-Mac.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;
@@ -299,6 +301,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Shutterlink;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Shutterlink talks to your camera over its Wi-Fi to show live view and take pictures.";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Shutterlink scans the QR code on your camera's screen to join the camera's Wi-Fi.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "With geotagging on, Shutterlink notes where you are while connected to the camera and adds that location to photos you save to Photos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Shutterlink saves photos you download from the camera's card to your library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -325,6 +328,8 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = "Shutterlink-iOS.entitlements";
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = "Shutterlink-iOS.entitlements";
 				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "Shutterlink-Mac.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 4;
@@ -338,6 +343,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Shutterlink;
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Shutterlink talks to your camera over its Wi-Fi to show live view and take pictures.";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Shutterlink scans the QR code on your camera's screen to join the camera's Wi-Fi.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "With geotagging on, Shutterlink notes where you are while connected to the camera and adds that location to photos you save to Photos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Shutterlink saves photos you download from the camera's card to your library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

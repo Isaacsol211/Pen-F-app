@@ -453,6 +453,10 @@ final class SonyDriver: CameraDriver {
                           let image = UIImage(data: data) else { return }
                     self?.camera.lastShot = image.preparingForDisplay() ?? image
                 }
+                // Auto-save: the postview, which is the full JPEG when the camera's postview size is Original.
+                camera.autoSave(name: url.lastPathComponent) {
+                    try await client.fetch(url, timeout: 60, log: false)
+                }
             }
         } catch {
             camera.report(error)

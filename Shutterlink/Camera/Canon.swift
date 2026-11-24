@@ -174,6 +174,13 @@ final class CanonDriver: CameraDriver {
         }
         if let added = changes["addedcontents"] as? [String], let newest = added.last {
             await showLastShot(newest)
+            // Auto-save: the JPEG or HEIF of each new capture (CCAPI serves files during live view).
+            for file in added where ["JPG", "JPEG", "HIF", "HEIF"].contains((file as NSString).pathExtension.uppercased()) {
+                let client = client
+                camera.autoSave(name: (file as NSString).lastPathComponent) {
+                    try await client.request("GET", file, timeout: 120, log: false)
+                }
+            }
         }
         let settingKeys = ["tv", "av", "iso", "exposure", "wb", "shootingmode", "shootingmodedial"]
         if settingKeys.contains(where: { changes[$0] != nil }) { await refreshProperties() }

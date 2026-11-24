@@ -170,10 +170,14 @@ struct RemoteView: View {
             VStack(spacing: 10) {
                 optionPanel
                 ExposureStrip(active: $activeSetting)
-                if showAids {
+                // While a setting's panel is open (Drive, ISO…) it gets the aids' room; they come back
+                // when it closes.
+                if showAids && activeSetting == nil {
                     QuickAidStrip(tools: quickAids)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+            .animation(.snappy, value: activeSetting == nil)
             // The tools float over the picture rather than squeezing it.
             .overlay(alignment: .bottom) {
                 if toolsOpen {
@@ -569,6 +573,9 @@ struct RemoteView: View {
                 }
                 Toggle(isOn: Binding(get: { camera.sceneAssistantOn }, set: { camera.sceneAssistantOn = $0 })) {
                     Label("Scene suggestions", systemImage: "sparkle.magnifyingglass")
+                }
+                Toggle(isOn: Binding(get: { camera.autoSaveNewPhotos }, set: { camera.autoSaveNewPhotos = $0 })) {
+                    Label("Save new photos to Photos", systemImage: "square.and.arrow.down.on.square")
                 }
             }
             Section {

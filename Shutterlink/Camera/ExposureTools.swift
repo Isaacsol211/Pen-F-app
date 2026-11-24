@@ -36,6 +36,33 @@ enum FrameMeter {
         return pixels.reduce(0) { $0 + linear[Int($1)] } / Double(pixels.count)
     }
 
+    /// Mean colour of the bright, nearly grey pixels (white walls, a white shirt): what the camera's white
+    /// balance makes of white. nil when under 3% of the frame qualifies.
+    static func neutralCast(_ image: CGImage) -> ColourCast? {
+        let width = 80, height = 60
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+            guard let ctx = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
+            ctx.interpolationQuality = .low
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return nil }
+        var red = 0.0, green = 0.0, blue = 0.0, count = 0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let r = Int(pixels[i]), g = Int(pixels[i + 1]), b = Int(pixels[i + 2])
+            let high = max(r, g, b), low = min(r, g, b)
+            // Bright, not blown, and not strongly coloured (a tinted white, not a red shirt).
+            guard (r + g + b) / 3 > 150, high < 250, high - low < 60 else { continue }
+            red += Double(r); green += Double(g); blue += Double(b); count += 1
+        }
+        guard count >= width * height * 3 / 100 else { return nil }
+        let n = Double(count)
+        return ColourCast(red: red / n, green: green / n, blue: blue / n)
+    }
+
     /// Share of pixels at the very top of the range (blown highlights in the JPEG), 0…1.
     static func clipped(_ image: CGImage) -> Double? {
         guard let pixels = grey(image, width: 80, height: 60) else { return nil }

@@ -66,7 +66,12 @@ extension CameraModel {
         case .connecting:
             break
         case .disconnected:
-            Task { await connect(waitingUntil: Date().addingTimeInterval(30)) }
+            // The camera used last, joining its Wi-Fi first when Shutterlink joined it before.
+            if let saved = savedCameras.first, saved.ssid != nil, saved.brand == brand {
+                Task { await connect(to: saved, waitingUntil: Date().addingTimeInterval(30)) }
+            } else {
+                Task { await connect(waitingUntil: Date().addingTimeInterval(30)) }
+            }
         }
     }
 

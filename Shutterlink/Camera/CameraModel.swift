@@ -218,6 +218,24 @@ final class CameraModel {
     var rawImport: RawImportProgress?
     @ObservationIgnored var rawImportTask: Task<Void, Never>?
 
+    // MARK: Camera Wi-Fi and auto-save (CameraWiFi.swift, AutoSave.swift)
+
+    /// The camera's network as typed or scanned in Add a camera; Shutterlink joins it before connecting.
+    var wifiSSID = ""
+    var wifiPassword = ""
+    /// The network joined for this connection, remembered with the camera once it answers.
+    @ObservationIgnored var joinedNetwork: CameraNetwork?
+    /// Save each new photo to Photos as it's taken.
+    var autoSaveNewPhotos = UserDefaults.standard.bool(forKey: "autoSave") {
+        didSet { UserDefaults.standard.set(autoSaveNewPhotos, forKey: "autoSave") }
+    }
+    /// Photos taken while auto-save was on that the camera couldn't send during live view (LUMIX);
+    /// they're saved from the card the next time it's opened.
+    var autoSavePending = 0
+    /// Saved by auto-save during this connection.
+    var autoSavedCount = 0
+    @ObservationIgnored var autoSaveChain: Task<Void, Never>?
+
     // MARK: Request log
 
     var log: [LogEntry] = []
@@ -474,6 +492,11 @@ final class CameraModel {
         openExposureStopTask?.cancel()
         openExposureStopTask = nil
         rawImportTask?.cancel()
+        autoSaveChain?.cancel()
+        autoSaveChain = nil
+        autoSavePending = 0
+        autoSavedCount = 0
+        joinedNetwork = nil
         peakingOverlay = nil
         receiver?.stop()
         receiver = nil
@@ -711,6 +734,8 @@ final class CameraModel {
         defer { galleryLoading = false }
         await stopLiveView()
         await driver.openGallery()
+        // Photos auto-save couldn't fetch during live view (LUMIX).
+        await savePendingAutoSaves()
     }
 
     func closeGallery() async {

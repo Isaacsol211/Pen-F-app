@@ -233,11 +233,21 @@ forget it.
 
 The first time, tap **Add your camera** (later, **Add a camera** under the list):
 
-1. Pick **Automatic** (recommended: the app works out the brand) or your brand. Nikon, Canon and Sony are
-   marked Beta.
+1. Pick **Automatic** (recommended: the app works out the brand) or your brand.
 2. Follow the steps the sheet shows for that brand. For the PEN-F: start **Connection to Smartphone**, then
-   in Settings ▸ Wi-Fi join `PEN-F-P-…` with the 8-digit password shown on the camera.
+   either join `PEN-F-P-…` in Settings ▸ Wi-Fi with the 8-digit password shown on the camera, or let
+   Shutterlink join it (below).
 3. Tap **Connect** and allow **Local Network** access when asked. Once it connects, the camera is saved.
+
+**Let Shutterlink join the camera's Wi-Fi (iPhone and iPad).** Under **Or let Shutterlink join it**, scan the
+QR code on the camera's screen or type the network name and password shown with it, then tap **Join Wi-Fi
+and Connect**. iOS asks once whether to join. The network is saved with the camera (the password in the
+Keychain), so from then on tapping the camera's card, or the Action button, joins its Wi-Fi and connects in
+one go. It uses `NEHotspotConfiguration` (the Hotspot Configuration capability, `Shutterlink-iOS.entitlements`).
+It reads Olympus / OM System codes (`OIS1,<name>,<password>`, each character mirrored in the alphabet
+`0–9 A–Z $%*+-/`; worked out from the PEN-F), the common `WIFI:` format and Sony's `W01:` one (not yet
+checked on a camera). For other brands, type the name and password. Every scanned code is written to the
+request log, so a code from a real camera can be added later. On a Mac, join the camera in System Settings.
 
 **Advanced** in the sheet holds the camera address (for the mock cameras, or a camera on another network),
 the Olympus User-Agent and the live-view size. Close OI.Share / OM Image Share / LUMIX Sync first so the
@@ -249,7 +259,21 @@ The app adds a **Connect to Camera** shortcut. Put it on the Action button (Sett
 
 Once you've joined the camera's Wi-Fi in Settings, iOS rejoins it by itself whenever the camera's Wi-Fi is on, so the flow is: turn on Wi-Fi on the camera, press the Action button, shoot.
 
-The app doesn't join the camera's Wi-Fi itself. That needs Apple's Hotspot Configuration capability, which Apple only grants to paid developer accounts. The app doesn't use it yet, so the Wi-Fi join is left to iOS. Now that it's signed with a paid team, `NEHotspotConfiguration` could be added to make it truly one-tap.
+If Shutterlink joined the camera's Wi-Fi for you (above), the shortcut joins it again before connecting, so it's truly one press.
+
+### Save new photos to Photos
+
+Turn on **Save new photos to Photos** in the ⋯ menu while connected, and each photo you take from
+Shutterlink (phone, Watch, presets, the motion trigger) goes to Photos as it's taken, geotagged when that's on.
+The JPEG (or HEIF) is saved; RAW files stay on the card for the card browser. Interval, bracketing and focus
+stacks aren't saved one by one, so a time-lapse doesn't fill Photos.
+
+- **Olympus / OM System:** the camera's last JPEG (`getlastjpg`), during live view. Not yet checked on the
+  real PEN-F that this is full size (the mock sends 640×480).
+- **Canon, Nikon:** the new JPEG or HEIF straight off the card during live view.
+- **Sony:** the postview image, which is the full JPEG only when the camera's postview size is Original.
+- **LUMIX:** the camera can't send files during live view, so new photos are saved the next time you open
+  the card.
 
 ### Friends: try this first
 

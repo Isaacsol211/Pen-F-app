@@ -633,6 +633,8 @@ final class PanasonicDriver: CameraDriver {
             // capture returns straight away; keep the countdown honest for long exposures.
             if seconds >= 1 { try? await Task.sleep(for: .seconds(seconds + 0.5)) }
             camera.shotCounter += 1
+            // LUMIX can't send files during live view: auto-save takes it from the card later.
+            camera.autoSaveLater()
             _ = try? await lumixCommand([("mode", "camcmd"), ("value", "autoreviewunlock")], timeout: 3, log: false)
         } catch {
             camera.lastError = CameraModel.describe(error, host: camera.connectionHost)
@@ -646,6 +648,7 @@ final class PanasonicDriver: CameraDriver {
             camera.isShooting = false
             camera.exposureStartedAt = nil
             camera.shotCounter += 1
+            camera.autoSaveLater()
             return
         }
         camera.isShooting = true

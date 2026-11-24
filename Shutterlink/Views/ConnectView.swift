@@ -11,6 +11,8 @@ struct ConnectView: View {
     /// Brand whose steps the connection guide shows; until one is picked, the last camera's.
     @State private var guideBrand: CameraBrand?
     @State private var guidePicked = false
+    @State private var showScanner = false
+    @State private var scanNote: String?
 
     var body: some View {
         GeometryReader { geo in
@@ -22,10 +24,12 @@ struct ConnectView: View {
                     VStack(alignment: .leading, spacing: 24) {
                         if camera.savedCameras.isEmpty {
                             cover(compact: geo.size.height < 600)
+                            scanToConnect
                             emptyState
                         } else {
                             BrandLockup(markSize: 40)
                                 .padding(.top, 20)
+                            scanToConnect
                             cameraList(grid: false)
                             tip
                         }
@@ -47,6 +51,11 @@ struct ConnectView: View {
             AddCameraSheet(twoColumns: isWorkspace)
                 .environment(camera)
         }
+        #if !targetEnvironment(macCatalyst)
+        .sheet(isPresented: $showScanner) {
+            QRScannerSheet { camera.connectFromScannedCode($0) }
+        }
+        #endif
         .onChange(of: camera.phase) { _, phase in
             if phase != .connecting { connectingID = nil }
         }
@@ -65,10 +74,12 @@ struct ConnectView: View {
             VStack(alignment: .leading, spacing: 24) {
                 if camera.savedCameras.isEmpty {
                     cover(compact: false)
+                    scanToConnect
                     emptyState
                 } else {
                     BrandLockup(markSize: 44)
                         .padding(.top, 28)
+                    scanToConnect
                     cameraList(grid: true)
                 }
             }
@@ -142,6 +153,68 @@ struct ConnectView: View {
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
+    // MARK: - Scan to connect
+
+    /// iPhone and iPad: scan the QR code on the camera's screen and Shutterlink joins its Wi-Fi,
+    /// connects and saves the camera with its network, so its card connects in one tap from then on.
+    @ViewBuilder private var scanToConnect: some View {
+        if CameraWiFi.canJoin && CameraCodeScanner.isSupported {
+            let busy = camera.phase == .connecting && connectingID == nil && !showAdd
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    Task {
+                        if await CameraCodeScanner.requestAccess() {
+                            scanNote = nil
+                            showScanner = true
+                        } else {
+                            scanNote = "Camera access is off. Turn it on in Settings ▸ Shutterlink ▸ Camera."
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 14) {
+                        Group {
+                            if busy {
+                                ProgressView().tint(Theme.onAccent)
+                            } else {
+                                Image(systemName: "qrcode.viewfinder")
+                                    .font(.system(size: 22, weight: .semibold))
+                            }
+                        }
+                        .foregroundStyle(Theme.onAccent)
+                        .frame(width: 50, height: 50)
+                        .background(Theme.accent, in: .rect(cornerRadius: 13, style: .continuous))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(busy ? (camera.status ?? "Connecting…") : "Scan the camera's QR code")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            Text("Joins its Wi-Fi and connects. No trip to Settings.")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
+                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Theme.accent.opacity(0.6), lineWidth: 1))
+                    .contentShape(.rect(cornerRadius: 20))
+                }
+                .buttonStyle(.plain)
+                .disabled(camera.phase != .disconnected)
+                .accessibilityHint("Scans the code on the camera's screen, joins its Wi-Fi and connects")
+                if let scanNote {
+                    Text(scanNote)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.secondary)
+                }
+            }
+        }
+    }
+
     // MARK: - First run
 
     private func cover(compact: Bool) -> some View {
@@ -188,7 +261,9 @@ struct ConnectView: View {
     private func cameraList(grid: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             CapsLabel("Your cameras")
-            Text("Turn on the camera's Wi-Fi and join it in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) it.")
+            Text(CameraWiFi.canJoin
+                 ? "Turn on the camera's Wi-Fi and tap it. A camera added by scanning joins its Wi-Fi by itself; for others, join it in Settings ▸ Wi-Fi first, or scan its code once."
+                 : "Turn on the camera's Wi-Fi and join it in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) it.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -402,6 +477,8 @@ struct AddCameraSheet: View {
     var twoColumns = false
     @State private var showAdvanced = false
     @State private var sheetWidth: CGFloat = 0
+    @State private var showScanner = false
+    @State private var scanNote: String?
 
     private var selection: CameraBrand? { camera.autoDetectBrand ? nil : camera.brand }
     private var sideBySide: Bool { twoColumns && sheetWidth >= 660 }
@@ -411,20 +488,26 @@ struct AddCameraSheet: View {
             ScrollView {
                 Group {
                     if sideBySide {
-                        HStack(alignment: .top, spacing: 20) {
-                            brandList
+                        VStack(alignment: .leading, spacing: 20) {
+                            scanButton
+                            HStack(alignment: .top, spacing: 20) {
+                                brandList
+                                    .frame(maxWidth: .infinity)
+                                VStack(alignment: .leading, spacing: 24) {
+                                    stepsCard
+                                    wifiCard
+                                    advanced
+                                }
                                 .frame(maxWidth: .infinity)
-                            VStack(alignment: .leading, spacing: 24) {
-                                stepsCard
-                                advanced
                             }
-                            .frame(maxWidth: .infinity)
                         }
                         .frame(maxWidth: 960)
                     } else {
                         VStack(alignment: .leading, spacing: 24) {
+                            scanButton
                             brandList
                             stepsCard
+                            wifiCard
                             advanced
                         }
                         .frame(maxWidth: 560, alignment: .leading)
@@ -447,6 +530,16 @@ struct AddCameraSheet: View {
                 }
             }
         }
+        #if !targetEnvironment(macCatalyst)
+        .sheet(isPresented: $showScanner) {
+            QRScannerSheet { text in
+                guard camera.applyScannedCode(text) else { return false }
+                scanNote = nil
+                Task { await camera.joinAndConnect() }
+                return true
+            }
+        }
+        #endif
         .presentationBackground(Theme.background)
         .presentationSizing(WorkspaceSheetSizing(page: twoColumns))
         .tint(Theme.accent)
@@ -533,11 +626,11 @@ struct AddCameraSheet: View {
                 WifiStatusRow(address: NetworkInfo.wifiAddress(), host: camera.host)
             }
             Button {
-                Task { await camera.connect() }
+                Task { await camera.joinAndConnect() }
             } label: {
                 HStack(spacing: 10) {
                     if connecting { ProgressView().tint(Theme.onAccent) }
-                    Text(connecting ? (camera.status ?? "Connecting…") : "Connect")
+                    Text(connecting ? (camera.status ?? "Connecting…") : (joinsWiFi ? "Join Wi-Fi and Connect" : "Connect"))
                         .contentTransition(.interpolate)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
@@ -554,6 +647,81 @@ struct AddCameraSheet: View {
         .frame(maxWidth: 600)
         .frame(maxWidth: .infinity)
         .background(Theme.background)
+    }
+
+    /// Scans the camera's QR code, then joins its Wi-Fi and connects straight away.
+    @ViewBuilder private var scanButton: some View {
+        if CameraWiFi.canJoin && CameraCodeScanner.isSupported {
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    Task {
+                        if await CameraCodeScanner.requestAccess() {
+                            scanNote = nil
+                            showScanner = true
+                        } else {
+                            scanNote = "Camera access is off. Turn it on in Settings ▸ Shutterlink ▸ Camera, or type the name and password below."
+                        }
+                    }
+                } label: {
+                    Label("Scan the camera's QR code", systemImage: "qrcode.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.accent)
+                .disabled(camera.phase != .disconnected)
+                Text("Start the camera's smartphone connection so it shows a QR code. Shutterlink joins its Wi-Fi and connects.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let scanNote {
+                    Text(scanNote)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Connect joins the typed or scanned network first.
+    private var joinsWiFi: Bool {
+        CameraWiFi.canJoin && !camera.wifiSSID.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// iPhone and iPad: Shutterlink joins the camera's network itself, from its QR code or its name and
+    /// password, and remembers it so the camera's card does everything next time.
+    @ViewBuilder private var wifiCard: some View {
+        if CameraWiFi.canJoin {
+            @Bindable var camera = camera
+            VStack(alignment: .leading, spacing: 14) {
+                CapsLabel("Or type the camera's Wi-Fi", color: Theme.accent)
+                Text("The network name and password shown on the camera. Shutterlink joins it for you, and next time tapping the camera joins and connects in one go.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(spacing: 0) {
+                    TextField("Network name", text: $camera.wifiSSID)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: Theme.target)
+                        .accessibilityLabel("Camera network name")
+                    Rectangle().fill(Theme.stroke).frame(height: 1).padding(.leading, 14)
+                    TextField("Password", text: $camera.wifiPassword)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: Theme.target)
+                        .accessibilityLabel("Camera network password")
+                }
+                .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.surfaceRaised))
+                .disabled(camera.phase != .disconnected)
+            }
+            .padding(18)
+            .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+        }
     }
 
     @ViewBuilder private var advanced: some View {

@@ -490,13 +490,17 @@ private struct ZoomableImage: View {
                         lastScale = scale
                         if scale <= 1 { withAnimation(.smooth) { reset() } }
                     }
-                    .simultaneously(with: DragGesture()
-                        .onChanged { value in
-                            guard scale > 1 else { return }
-                            offset = CGSize(width: lastOffset.width + value.translation.width,
-                                            height: lastOffset.height + value.translation.height)
-                        }
-                        .onEnded { _ in lastOffset = offset })
+            )
+            // Panning only while zoomed in. At 1× the drag must not claim the touch, or the pager
+            // never sees the swipe to the previous or next photo.
+            .simultaneousGesture(
+                DragGesture()
+                    .onChanged { value in
+                        offset = CGSize(width: lastOffset.width + value.translation.width,
+                                        height: lastOffset.height + value.translation.height)
+                    }
+                    .onEnded { _ in lastOffset = offset },
+                including: scale > 1 ? .all : .subviews
             )
             .onTapGesture(count: 2) {
                 withAnimation(.bouncy(duration: 0.35)) {
@@ -504,7 +508,7 @@ private struct ZoomableImage: View {
                 }
             }
             .accessibilityLabel("Photo")
-            .accessibilityHint("Pinch or double-tap to zoom")
+            .accessibilityHint("Pinch or double-tap to zoom. Swipe for the next photo")
     }
 
     private func reset() {
