@@ -377,9 +377,11 @@ private struct BulbTimerSheet: View {
 struct PocketModeView: View {
     @Environment(CameraModel.self) private var camera
     @Environment(\.dismiss) private var dismiss
+    #if !targetEnvironment(macCatalyst)
     @State private var savedBrightness: CGFloat?
     /// The screen that was dimmed: on iPhone Duo, folding or unfolding moves the app to the other one.
     @State private var dimmedScreen: UIScreen?
+    #endif
     @State private var showHint = true
 
     private let red = Color(red: 0.75, green: 0.05, blue: 0.05)
@@ -401,14 +403,14 @@ struct PocketModeView: View {
                 VStack {
                     Spacer()
                     if showHint {
-                        Text("Keep the screen on: iOS pauses the app's Wi-Fi when the iPhone locks. For hours-long star trails, use the camera's own Live Composite or interval shooting instead.\n\nDouble-tap to leave.")
+                        Text(Self.hint)
                             .font(.footnote)
                             .multilineTextAlignment(.center)
                             .foregroundStyle(red.opacity(0.45))
                             .padding(.horizontal, 30)
                             .transition(.opacity)
                     } else {
-                        Text("Double-tap to leave").font(.caption).foregroundStyle(red.opacity(0.25))
+                        Text(Self.leave).font(.caption).foregroundStyle(red.opacity(0.25))
                     }
                 }
                 .padding(.bottom, 30)
@@ -418,6 +420,8 @@ struct PocketModeView: View {
         .onTapGesture(count: 2) { dismiss() }
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
+        #if !targetEnvironment(macCatalyst)
+        // A Mac app can't set the display's brightness; the black screen is as dark as it gets.
         .background(WindowSceneReader { dim($0?.screen) })
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
@@ -425,12 +429,20 @@ struct PocketModeView: View {
         .onDisappear {
             if let savedBrightness, let dimmedScreen { dimmedScreen.brightness = savedBrightness }
         }
+        #endif
         .task {
             try? await Task.sleep(for: .seconds(8))
             withAnimation(.smooth(duration: 1.5)) { showHint = false }
         }
         .accessibilityAction(named: "Leave pocket mode") { dismiss() }
     }
+
+    #if targetEnvironment(macCatalyst)
+    private static let hint = "The Mac stays awake while Shutterlink is connected; the display may sleep. For hours-long star trails, use the camera's own Live Composite or interval shooting instead.\n\nDouble-click to leave."
+    private static let leave = "Double-click to leave"
+    #else
+    private static let hint = "Keep the screen on: iOS pauses the app's Wi-Fi when the iPhone locks. For hours-long star trails, use the camera's own Live Composite or interval shooting instead.\n\nDouble-tap to leave."
+    private static let leave = "Double-tap to leave"
 
     /// Dims the screen showing this view. When the scene moves to another screen (folding or
     /// unfolding an iPhone Duo), the old screen gets its brightness back and the new one is dimmed.
@@ -441,6 +453,7 @@ struct PocketModeView: View {
         dimmedScreen = screen
         screen?.brightness = 0.02
     }
+    #endif
 
     private func headline(at now: Date) -> String {
         if let started = camera.exposureStartedAt {

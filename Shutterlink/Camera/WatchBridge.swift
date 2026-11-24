@@ -1,3 +1,5 @@
+// The Apple Watch remote pairs with the iPhone; there's no Watch companion on a Mac.
+#if !targetEnvironment(macCatalyst)
 import UIKit
 import WatchConnectivity
 
@@ -244,3 +246,4 @@ final class WatchBridge: NSObject, WCSessionDelegate {
         Task { @MainActor in self.handle(command, delay: delay, value: value, on: on) }
     }
 }
+#endif

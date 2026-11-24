@@ -304,9 +304,20 @@ final class OlympusDriver: CameraDriver {
         }
     }
 
-    /// Grabs a preview of the capture that just finished, for the review thumbnail.
-    /// The PEN-F lists both `getrecview` and `getlastjpg`; try the first, fall back to the second.
+    /// Grabs a preview of the capture that just finished, for the review thumbnail, then hands the
+    /// full JPEG (`getlastjpg`, available during live view) to auto-save when it's on.
     func fetchLastShot() async {
+        await fetchReviewImage()
+        if camera.autoSaveApplies, commands.supports("exec_takemisc", "getlastjpg") {
+            let client = client
+            camera.autoSave(name: camera.autoSaveName()) {
+                try await client.get("exec_takemisc", [("com", "getlastjpg")], timeout: 60, log: false)
+            }
+        }
+    }
+
+    /// The PEN-F lists both `getrecview` and `getlastjpg`; try the first, fall back to the second.
+    private func fetchReviewImage() async {
         for command in ["getrecview", "getlastjpg"] where commands.supports("exec_takemisc", command) {
             guard let data = try? await client.get("exec_takemisc", [("com", command)], timeout: 8),
                   let image = UIImage(data: data) else {

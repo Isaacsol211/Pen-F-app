@@ -417,7 +417,7 @@ struct MotionPanel: View {
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(camera.motion.armed ? Theme.accent : Theme.secondary)
             }
-            Text("Live view over Wi-Fi lags a little, so this suits birds at a feeder and slow subjects, not lightning. Keep Shutterlink open and the iPhone awake.")
+            Text("Live view over Wi-Fi lags a little, so this suits birds at a feeder and slow subjects, not lightning. Keep Shutterlink open and the \(Platform.device) awake.")
                 .font(.footnote)
                 .foregroundStyle(Theme.secondary)
         }

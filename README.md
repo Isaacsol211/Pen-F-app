@@ -218,6 +218,13 @@ on the left. Live view keeps running through a fold. Checked in the Simulator on
 the old PEN-F Remote from the iPhone, and on the Watch install Shutterlink from the Watch app ▸ Available Apps.
 Settings (brand, address, stars) start fresh, and iOS asks for Local Network, Photos and Location again.
 
+## Run it on a Mac
+
+The Mac app is the same target built with Mac Catalyst (same bundle ID, so one purchase covers iPhone, iPad and
+Mac). In Xcode pick **My Mac (Mac Catalyst)** and press ▶. It uses the iPad workspace layouts in a resizable
+window, with Camera, Exposure and Tools menus (Space takes a picture). See [MAC.md](MAC.md) for what works,
+what doesn't yet, and what App Store Connect needs.
+
 ## Connect to the camera
 
 The home screen lists **your cameras**: every camera this iPhone has connected to, most recent first.
@@ -226,11 +233,21 @@ forget it.
 
 The first time, tap **Add your camera** (later, **Add a camera** under the list):
 
-1. Pick **Automatic** (recommended: the app works out the brand) or your brand. Nikon, Canon and Sony are
-   marked Beta.
+1. Pick **Automatic** (recommended: the app works out the brand) or your brand.
 2. Follow the steps the sheet shows for that brand. For the PEN-F: start **Connection to Smartphone**, then
-   in Settings ▸ Wi-Fi join `PEN-F-P-…` with the 8-digit password shown on the camera.
+   either join `PEN-F-P-…` in Settings ▸ Wi-Fi with the 8-digit password shown on the camera, or let
+   Shutterlink join it (below).
 3. Tap **Connect** and allow **Local Network** access when asked. Once it connects, the camera is saved.
+
+**Let Shutterlink join the camera's Wi-Fi (iPhone and iPad).** Under **Or let Shutterlink join it**, scan the
+QR code on the camera's screen or type the network name and password shown with it, then tap **Join Wi-Fi
+and Connect**. iOS asks once whether to join. The network is saved with the camera (the password in the
+Keychain), so from then on tapping the camera's card, or the Action button, joins its Wi-Fi and connects in
+one go. It uses `NEHotspotConfiguration` (the Hotspot Configuration capability, `Shutterlink-iOS.entitlements`).
+It reads Olympus / OM System codes (`OIS1,<name>,<password>`, each character mirrored in the alphabet
+`0–9 A–Z $%*+-/`; worked out from the PEN-F), the common `WIFI:` format and Sony's `W01:` one (not yet
+checked on a camera). For other brands, type the name and password. Every scanned code is written to the
+request log, so a code from a real camera can be added later. On a Mac, join the camera in System Settings.
 
 **Advanced** in the sheet holds the camera address (for the mock cameras, or a camera on another network),
 the Olympus User-Agent and the live-view size. Close OI.Share / OM Image Share / LUMIX Sync first so the
@@ -242,7 +259,21 @@ The app adds a **Connect to Camera** shortcut. Put it on the Action button (Sett
 
 Once you've joined the camera's Wi-Fi in Settings, iOS rejoins it by itself whenever the camera's Wi-Fi is on, so the flow is: turn on Wi-Fi on the camera, press the Action button, shoot.
 
-The app doesn't join the camera's Wi-Fi itself. That needs Apple's Hotspot Configuration capability, which Apple only grants to paid developer accounts. The app doesn't use it yet, so the Wi-Fi join is left to iOS. Now that it's signed with a paid team, `NEHotspotConfiguration` could be added to make it truly one-tap.
+If Shutterlink joined the camera's Wi-Fi for you (above), the shortcut joins it again before connecting, so it's truly one press.
+
+### Save new photos to Photos
+
+Turn on **Save new photos to Photos** in the ⋯ menu while connected, and each photo you take from
+Shutterlink (phone, Watch, presets, the motion trigger) goes to Photos as it's taken, geotagged when that's on.
+The JPEG (or HEIF) is saved; RAW files stay on the card for the card browser. Interval, bracketing and focus
+stacks aren't saved one by one, so a time-lapse doesn't fill Photos.
+
+- **Olympus / OM System:** the camera's last JPEG (`getlastjpg`), during live view. Not yet checked on the
+  real PEN-F that this is full size (the mock sends 640×480).
+- **Canon, Nikon:** the new JPEG or HEIF straight off the card during live view.
+- **Sony:** the postview image, which is the full JPEG only when the camera's postview size is Original.
+- **LUMIX:** the camera can't send files during live view, so new photos are saved the next time you open
+  the card.
 
 ### Friends: try this first
 
@@ -543,12 +574,14 @@ Shutterlink/
   Camera/Geotag.swift        location log (When In Use) and nearest-point lookup
   Camera/Shortcuts.swift     "Connect to Camera" App Intent and App Shortcut
   Camera/WatchBridge.swift   iPhone end of the Watch remote: status, commands, preview frames
+  Camera/Platform.swift      Mac vs iOS wording, keeping the device awake while connected
   Camera/StripValues.swift   the exposure strip's values (shared with the Watch)
   Camera/XML.swift           tiny XML parser + camera command list
   Camera/PropertyFormat.swift labels for raw property values
   Views/Design.swift         colours, surfaces and button styles shared by every screen
   Views/BrandMark.swift      the Shutterlink aperture mark, name lockup and launch hand-off
   Views/ExtrasViews.swift    bracketing sheet, pocket mode, bulb timer, RAW download bar
+  Views/KeyCommands.swift    Mac menu bar and iPad keyboard shortcuts
   Views/…                    SwiftUI screens
 ShutterlinkWatch/            Apple Watch remote (SwiftUI, WatchConnectivity)
   PhoneLink.swift            Watch end of the link to the iPhone app

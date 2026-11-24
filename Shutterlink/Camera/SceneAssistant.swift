@@ -14,6 +14,10 @@ struct SceneSuggestion: Equatable, Identifiable {
         case exposeToTheRight
         case openND
         case openMotion
+        /// Shutter priority at 1/500 s with Auto ISO (a small preset, so Undo puts it back).
+        case freezeMotion
+        /// Turns on the live-view grid, to level the camera by.
+        case showGrid
     }
 
     /// Stable per kind of suggestion, so "not now" keeps that kind away for a while.
@@ -35,6 +39,18 @@ struct SceneSignals: Equatable {
     var clipped: Double = 0
     /// From the iPhone's clock and last known location; nil without a location.
     var sky: Astronomy.Sky?
+    /// Share of the frame that changed between two live-view frames a quarter-second apart (0…1).
+    var motion: Double = 0
+    /// How far the picture leans, from Apple's horizon detection, in degrees; nil when there's no clear line.
+    var tilt: Double?
+    /// The colour that near-white surfaces come out in live view, after the camera's white balance.
+    var cast: ColourCast?
+    /// Exposure time in seconds, as the camera has set it now.
+    var shutter: Double?
+    /// Lens focal length as on a full-frame camera (focal length × crop factor).
+    var focal35: Double?
+    /// The ISO in use (the value Auto ISO picked, when the camera says).
+    var iso: Int?
 
     func score(_ names: String...) -> Float {
         names.map { labels[$0] ?? 0 }.max() ?? 0
@@ -42,6 +58,18 @@ struct SceneSignals: Equatable {
 
     var isDaylight: Bool { sky.map { $0.sunAltitude > 0 } ?? (brightness > 0.08) }
     var isDark: Bool { sky.map { $0.sunAltitude < -6 } ?? (brightness < 0.03) }
+}
+
+/// Mean colour of the bright, nearly grey parts of a frame (white walls, a white shirt), 0…255 per channel.
+struct ColourCast: Equatable {
+    var red: Double
+    var green: Double
+    var blue: Double
+
+    /// Above 0: whites come out yellow or orange (warm light the white balance left in). Below 0: blue.
+    var warmth: Double { (red + green) / 2 / max(blue, 1) - 1 }
+    /// Above 0: more orange (lamps) than yellow-green (tubes).
+    var orange: Double { red / max(green, 1) - 1 }
 }
 
 extension CameraModel {
@@ -109,6 +137,28 @@ extension CameraModel {
                                        detail: "\(Int((s.clipped * 100).rounded()))% of the picture is blown out",
                                        actionTitle: change.label, action: .setting(property: change.property, value: change.value)))
         }
+        // Blur: something moving at a slow shutter, or a slow shutter for the lens held by hand.
+        if let t = s.shutter, t < 0.5, !isOpenEndedShutter {
+            if s.motion >= 0.04, t > 1.0 / 250 {
+                out.append(SceneSuggestion(id: "motion", icon: "figure.run", title: "Movement in the frame",
+                                           detail: "At \(Self.shutterText(t)) it will blur. 1/500 s freezes it, with ISO raised to match",
+                                           actionTitle: "1/500 s", action: .freezeMotion))
+            } else if let f = s.focal35, t > 1 / (2 * f), let iso = s.iso,
+                      let mode = properties["takemode"]?.value.uppercased(), ["P", "A"].contains(mode),
+                      let raised = isoForSteadyShutter(t, focal35: f, iso: iso) {
+                out.append(SceneSuggestion(id: "shake", icon: "hand.raised.fill", title: "Camera shake",
+                                           detail: "\(Self.shutterText(t)) is slow for a \(Int(f.rounded())) mm view by hand. ISO \(raised.iso) gives about \(Self.shutterText(t * Double(iso) / Double(raised.iso)))",
+                                           actionTitle: "ISO \(raised.iso)", action: .setting(property: "isospeedvalue", value: raised.value)))
+            }
+        }
+        out += whiteBalanceSuggestions(for: s)
+        if let tilt = s.tilt, (3...20).contains(abs(tilt)) {
+            let gridOn = UserDefaults.standard.bool(forKey: "ui.grid")
+            out.append(SceneSuggestion(id: "tilt", icon: "level", title: "Tilted \(Int(abs(tilt).rounded()))°",
+                                       detail: gridOn ? "The picture leans. Line the grid up with a wall or the horizon"
+                                                      : "The picture leans. The grid helps you hold the camera level",
+                                       actionTitle: gridOn ? "OK" : "Show grid", action: .showGrid))
+        }
         if s.score("snow") >= 0.4, s.clipped < 0.01, let change = exposureChange(thirds: 2) {
             out.append(SceneSuggestion(id: "snow", icon: "snowflake", title: "Snow",
                                        detail: "Snow fools the meter into grey: brighten it",
@@ -131,6 +181,73 @@ extension CameraModel {
                                        actionTitle: "Expose right", action: .exposeToTheRight))
         }
         return out
+    }
+
+    /// White balance for the light the scene is in: lamps or tubes indoors, shade or cloud outside, golden
+    /// hour, or an indoor setting left on outdoors. Only offered while the camera's white balance can be set.
+    func whiteBalanceSuggestions(for s: SceneSignals) -> [SceneSuggestion] {
+        guard let wb = settableProperty("wbvalue") else { return [] }
+        let current = PropertyFormat.display("wbvalue", wb.value)
+        let isAuto = current.localizedCaseInsensitiveContains("auto")
+        let indoor = s.score("furniture", "table", "door", "room", "interior_room", "ceiling", "sofa", "bed", "kitchen",
+                             "shelf", "lamp", "painting", "decoration", "frame", "office", "restaurant") >= 0.3
+        let outdoor = s.score("sky", "blue_sky", "cloudy", "tree", "mountain", "beach", "land", "grass", "plant",
+                              "street", "building", "field", "forest", "hill", "sunset_sunrise", "outdoor") >= 0.3
+        let sunUp = s.sky.map { $0.sunAltitude > 0 } ?? (s.brightness > 0.15)
+        let golden = (s.sky.map { (-4...6).contains($0.sunAltitude) } ?? false) || s.score("sunset_sunrise") >= 0.3
+        func suggest(_ id: String, _ icon: String, _ title: String, _ detail: String, _ keywords: [String]) -> [SceneSuggestion] {
+            guard let value = whiteBalanceOption(keywords), value != wb.value else { return [] }
+            let name = PropertyFormat.display("wbvalue", value)
+            return [SceneSuggestion(id: id, icon: icon, title: title, detail: detail,
+                                    actionTitle: "\(name) WB", action: .setting(property: "wbvalue", value: value))]
+        }
+        if isAuto, outdoor, golden {
+            return suggest("wb-golden", "sun.horizon.fill", "Golden light",
+                           "Auto white balance cools the warm glow. Sunny keeps it", ["sunny", "daylight", "fine"])
+        }
+        if isAuto, indoor, let cast = s.cast, cast.warmth >= 0.08 {
+            if cast.orange >= 0.04 {
+                return suggest("wb-lamps", "lamp.table.fill", "Warm lamp light",
+                               "Whites come out orange. Incandescent makes them white, or keep Auto for a cosy look",
+                               ["incandescent", "tungsten"])
+            }
+            return suggest("wb-tubes", "lightbulb.fill", "Tube light",
+                           "White walls come out cream under this light. Fluorescent neutralises it", ["fluorescent"])
+        }
+        if isAuto, outdoor, sunUp, let cast = s.cast, cast.warmth <= -0.06 {
+            return s.brightness < 0.12
+                ? suggest("wb-shade", "tree.fill", "In the shade", "Shade turns everything blue. Shade white balance warms it back", ["shade"])
+                : suggest("wb-cloudy", "cloud.fill", "Overcast", "A grey sky turns things blue. Cloudy warms them back", ["cloudy", "overcast"])
+        }
+        let indoorSetting = ["incandescent", "tungsten", "fluorescent"].contains { current.localizedCaseInsensitiveContains($0) }
+        if !isAuto, indoorSetting, outdoor, sunUp {
+            return suggest("wb-outdoors", "sun.max.fill", "Indoor white balance outside",
+                           "\(current) turns daylight blue. Back to Auto", ["auto"])
+        }
+        return []
+    }
+
+    /// The first white balance the camera offers whose name contains one of `keywords`.
+    func whiteBalanceOption(_ keywords: [String]) -> String? {
+        settableProperty("wbvalue")?.options.first { option in
+            let name = PropertyFormat.display("wbvalue", option)
+            return keywords.contains { name.localizedCaseInsensitiveContains($0) }
+        }
+    }
+
+    /// The ISO that brings the shutter to about 1/(2 × focal length), up to ISO 6400.
+    func isoForSteadyShutter(_ shutter: Double, focal35: Double, iso: Int) -> (value: String, iso: Int)? {
+        let target = Double(iso) * shutter * 2 * focal35
+        let numeric = (settableProperty("isospeedvalue")?.options ?? [])
+            .compactMap { option in Int(option).map { (option, $0) } }
+            .filter { $0.1 > iso && $0.1 <= 6400 }
+            .sorted { $0.1 < $1.1 }
+        guard let pick = numeric.first(where: { Double($0.1) >= target * 0.9 }) ?? numeric.last else { return nil }
+        return (pick.0, pick.1)
+    }
+
+    static func shutterText(_ seconds: Double) -> String {
+        seconds >= 1 ? "\(Int(seconds.rounded())) s" : "1/\(Int((1 / seconds).rounded())) s"
     }
 
     /// A change of `thirds` of a stop: exposure compensation in P/A/S, else the shutter in M.
@@ -172,10 +289,20 @@ extension CameraModel {
                 if !sceneAssistantOn { sceneSuggestion = nil }
                 continue
             }
+            let motion = await frameChange(from: frame)
             let labels = await Self.classify(frame)
+            let tilt = await Self.horizonTilt(frame)
             guard !Task.isCancelled else { return }
             var signals = SceneSignals(labels: labels, brightness: FrameMeter.brightness(frame) ?? 0.2,
                                        clipped: FrameMeter.clipped(frame) ?? 0)
+            signals.motion = motion
+            signals.tilt = tilt
+            signals.cast = FrameMeter.neutralCast(frame)
+            signals.shutter = liveInfo.shutter.flatMap(PropertyFormat.seconds(fromDisplay:))
+                ?? properties["shutspeedvalue"].flatMap { PropertyFormat.seconds(fromShutter: $0.value) }
+            signals.focal35 = liveInfo.focalLength.map { Double($0) * cropFactor }
+            signals.iso = liveInfo.iso.flatMap { Int($0.split(separator: " ").first { Int($0) != nil } ?? "") }
+                ?? properties["isospeedvalue"].flatMap { Int($0.value) }
             if let location = locationLog.lastKnown {
                 signals.sky = Astronomy.sky(at: Date(), latitude: location.coordinate.latitude,
                                             longitude: location.coordinate.longitude)
@@ -183,6 +310,24 @@ extension CameraModel {
             sceneSignals = signals
             showBest(of: sceneSuggestions(for: signals))
         }
+    }
+
+    /// Share of the frame that changed between `frame` and the live-view frame a quarter-second later.
+    private func frameChange(from frame: CGImage) async -> Double {
+        guard let before = FrameMeter.grey(frame, width: 32, height: 24) else { return 0 }
+        try? await Task.sleep(for: .milliseconds(250))
+        guard let later = recentFrame, later !== frame,
+              let after = FrameMeter.grey(later, width: 32, height: 24), after.count == before.count else { return 0 }
+        let changed = zip(before, after).reduce(0) { $0 + (abs(Int($1.0) - Int($1.1)) > 16 ? 1 : 0) }
+        return Double(changed) / Double(before.count)
+    }
+
+    /// How far the picture leans, from Apple's horizon detection, off the main thread.
+    nonisolated static func horizonTilt(_ image: CGImage) async -> Double? {
+        await Task.detached(priority: .utility) {
+            guard let horizon = try? await DetectHorizonRequest().perform(on: image) else { return nil }
+            return horizon.angle.converted(to: .degrees).value
+        }.value
     }
 
     /// Apple's on-device scene classification, off the main thread.
@@ -265,6 +410,21 @@ extension CameraModel {
             await exposeToTheRight()
         case .openND, .openMotion:
             sceneSnoozed[suggestion.id] = Date().addingTimeInterval(600)
+        case .freezeMotion:
+            sceneSnoozed[suggestion.id] = Date().addingTimeInterval(600)
+            await runPreset(id: "freeze", title: "Freeze movement") {
+                let (mode, inS) = modeStep("S", why: "You pick the shutter, the camera the aperture")
+                return [
+                    mode,
+                    presetStep("Shutter 1/500 s", "Freezes people moving and most sport indoors", "shutspeedvalue",
+                               shutter(near: 1.0 / 500), mode: "S", inMode: inS),
+                    presetStep("Auto ISO", "Raises ISO to keep the fast shutter in this light", "isospeedvalue", autoISO,
+                               unavailable: "Set Auto ISO on the camera"),
+                ]
+            }
+        case .showGrid:
+            sceneSnoozed[suggestion.id] = Date().addingTimeInterval(600)
+            UserDefaults.standard.set(true, forKey: "ui.grid")
         }
     }
 }

@@ -290,7 +290,7 @@ struct LiveViewPane: View {
                     Image(systemName: "video.slash").font(.title)
                     Text("No live view frames are arriving.")
                         .font(.headline)
-                    Text("The camera sends live view to UDP port \(camera.udpPort). Check that Local Network access is on for Shutterlink in Settings ▸ Privacy & Security, then restart live view.")
+                    Text("The camera sends live view to UDP port \(camera.udpPort). Check that Local Network access is on for Shutterlink in \(Platform.settings) ▸ Privacy & Security, then restart live view.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

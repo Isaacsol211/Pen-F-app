@@ -132,7 +132,7 @@ final class NikonDriver: CameraDriver {
         var failure: Error?
         for attempt in 1...3 {
             do {
-                try await ptp.connect(guid: Self.guid, name: UIDevice.current.name.isEmpty ? "iPhone" : UIDevice.current.name)
+                try await ptp.connect(guid: Self.guid, name: UIDevice.current.name.isEmpty ? Platform.device : UIDevice.current.name)
                 failure = nil
                 break
             } catch {
@@ -186,7 +186,7 @@ final class NikonDriver: CameraDriver {
                 } else if self.hasProperty(PTPProp.batteryLevel) {
                     failures += 1
                     if failures == 3 {
-                        self.camera.lastError = "Lost contact with the camera. Check that this iPhone is still on the camera's Wi-Fi."
+                        self.camera.lastError = "Lost contact with the camera. Check that this \(Platform.device) is still on the camera's Wi-Fi."
                     }
                 }
                 try? await Task.sleep(for: .seconds(5))
@@ -586,9 +586,23 @@ final class NikonDriver: CameraDriver {
                 if let thumb = try? await ptp.run(op, [handle], timeout: 10).data, let image = UIImage(data: thumb) {
                     camera.lastShot = image.preparingForDisplay() ?? image
                 }
+                if camera.autoSaveApplies { await autoSave(objects) }
                 return
             }
             try? await Task.sleep(for: .milliseconds(300))
+        }
+    }
+
+    /// Auto-save: hands the JPEG or HEIF of each new capture (not the NEF) to the save queue.
+    private func autoSave(_ objects: [UInt32]) async {
+        for handle in objects {
+            guard let data = try? await ptp.run(PTPOp.getObjectInfo, [handle], timeout: 5).data else { continue }
+            let info = PTPObjectInfo(data)
+            guard ["JPG", "JPEG", "HIF", "HEIF"].contains((info.filename as NSString).pathExtension.uppercased()) else { continue }
+            let ptp = ptp
+            camera.autoSave(name: info.filename) {
+                try await ptp.run(PTPOp.getObject, [handle], timeout: 120).data
+            }
         }
     }
 

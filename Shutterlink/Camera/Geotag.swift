@@ -167,7 +167,7 @@ extension CameraModel {
     /// Logs location only while connected and geotagging is on.
     func updateLocationLogging() {
         locationLog.onDenied = { [weak self] in
-            self?.lastError = "Location is off for Shutterlink, so photos can't be geotagged. Turn it on in Settings ▸ Privacy & Security ▸ Location Services."
+            self?.lastError = "Location is off for Shutterlink, so photos can't be geotagged. Turn it on in \(Platform.settings) ▸ Privacy & Security ▸ Location Services."
         }
         if geotagging { locationLog.requestPermission() }
         if geotagging && phase == .connected {

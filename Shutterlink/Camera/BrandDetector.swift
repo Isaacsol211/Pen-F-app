@@ -62,9 +62,9 @@ enum BrandDetector {
 
     static func notFoundMessage(wifi: String?) -> String {
         guard let wifi else {
-            return "This iPhone isn't on Wi-Fi. Turn on the camera's smartphone Wi-Fi, join its network in Settings ▸ Wi-Fi, then tap Connect."
+            return "This \(Platform.device) isn't on Wi-Fi. Turn on the camera's smartphone Wi-Fi, join its network in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) Connect."
         }
-        return "No camera answered (this iPhone is at \(wifi)). Check that Settings ▸ Wi-Fi shows the camera's network and that Local Network is on for this app in Settings ▸ Privacy & Security, or pick your brand above."
+        return "No camera answered (this \(Platform.device) is at \(wifi)). Check that \(Platform.settings) ▸ Wi-Fi shows the camera's network and that Local Network is on for this app in \(Platform.settings) ▸ Privacy & Security, or pick your brand above."
     }
 
     // MARK: - Probes

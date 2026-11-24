@@ -21,7 +21,7 @@ struct PanasonicError: LocalizedError {
     var errorDescription: String? {
         switch code {
         case "err_user_refused":
-            return "The camera said No to this iPhone. Start Remote Shooting & View on the camera again and choose Yes."
+            return "The camera said No to this \(Platform.device). Start Remote Shooting & View on the camera again and choose Yes."
         case "err_others_requesting", "err_already_connected":
             return "Another phone or app is connected to the camera. Close Image App or LUMIX Sync on other devices, then try again."
         case "err_unsuitable_app":
@@ -222,9 +222,9 @@ final class PanasonicDriver: CameraDriver {
                                                     ("value2", PanasonicSession.deviceName)], timeout: 5)
                 let result = Self.lumixResult(reply)
                 if result.hasPrefix("ok_under_research") {
-                    camera.status = "On the camera, choose Yes to allow this iPhone…"
+                    camera.status = "On the camera, choose Yes to allow this \(Platform.device)…"
                     guard Date() < deadline else {
-                        throw CameraError("The camera is still waiting. Choose Yes on the camera's screen, then tap Connect again.")
+                        throw CameraError("The camera is still waiting. Choose Yes on the camera's screen, then \(Platform.tap) Connect again.")
                     }
                     try await Task.sleep(for: .seconds(1))
                     continue
@@ -308,10 +308,10 @@ final class PanasonicDriver: CameraDriver {
                 return
             }
             guard Date() < deadline else {
-                throw CameraError("The camera didn't accept this iPhone. Choose Yes on the camera's screen if it asks, then tap Connect again. (Newer LUMIX pairing is new in Shutterlink; if it keeps failing, please tell us.)")
+                throw CameraError("The camera didn't accept this \(Platform.device). Choose Yes on the camera's screen if it asks, then \(Platform.tap) Connect again. (Newer LUMIX pairing is new in Shutterlink; if it keeps failing, please tell us.)")
             }
             if fields.first?.hasPrefix("ok_under_research") == true {
-                camera.status = "On the camera, choose Yes to allow this iPhone…"
+                camera.status = "On the camera, choose Yes to allow this \(Platform.device)…"
             }
             try await Task.sleep(for: .seconds(1))
         }
@@ -401,7 +401,7 @@ final class PanasonicDriver: CameraDriver {
                 } catch {
                     failures += 1
                     if failures == 3 {
-                        self.camera.lastError = "Lost contact with the camera. Check that this iPhone is still on the camera's Wi-Fi."
+                        self.camera.lastError = "Lost contact with the camera. Check that this \(Platform.device) is still on the camera's Wi-Fi."
                     }
                 }
             }
@@ -633,6 +633,8 @@ final class PanasonicDriver: CameraDriver {
             // capture returns straight away; keep the countdown honest for long exposures.
             if seconds >= 1 { try? await Task.sleep(for: .seconds(seconds + 0.5)) }
             camera.shotCounter += 1
+            // LUMIX can't send files during live view: auto-save takes it from the card later.
+            camera.autoSaveLater()
             _ = try? await lumixCommand([("mode", "camcmd"), ("value", "autoreviewunlock")], timeout: 3, log: false)
         } catch {
             camera.lastError = CameraModel.describe(error, host: camera.connectionHost)
@@ -646,6 +648,7 @@ final class PanasonicDriver: CameraDriver {
             camera.isShooting = false
             camera.exposureStartedAt = nil
             camera.shotCounter += 1
+            camera.autoSaveLater()
             return
         }
         camera.isShooting = true

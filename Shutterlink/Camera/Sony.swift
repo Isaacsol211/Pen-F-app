@@ -153,7 +153,7 @@ final class SonyDriver: CameraDriver {
                 } catch {
                     failures += 1
                     if failures == 3 {
-                        self.camera.lastError = "Lost contact with the camera. Check that this iPhone is still on the camera's Wi-Fi."
+                        self.camera.lastError = "Lost contact with the camera. Check that this \(Platform.device) is still on the camera's Wi-Fi."
                     }
                 }
             }
@@ -452,6 +452,10 @@ final class SonyDriver: CameraDriver {
                     guard let data = try? await client.fetch(url, timeout: 10, log: false),
                           let image = UIImage(data: data) else { return }
                     self?.camera.lastShot = image.preparingForDisplay() ?? image
+                }
+                // Auto-save: the postview, which is the full JPEG when the camera's postview size is Original.
+                camera.autoSave(name: url.lastPathComponent) {
+                    try await client.fetch(url, timeout: 60, log: false)
                 }
             }
         } catch {

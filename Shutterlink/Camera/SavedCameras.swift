@@ -10,6 +10,8 @@ struct SavedCamera: Codable, Identifiable, Hashable {
     /// The address it answered at; empty for the brand's usual one.
     var host: String
     var lastUsed: Date
+    /// The camera's Wi-Fi network when Shutterlink joined it itself (password in the Keychain).
+    var ssid: String?
 
     private static let key = "savedCameras"
 
@@ -31,8 +33,14 @@ extension CameraModel {
     func rememberConnectedCamera() {
         let name = (cameraName?.isEmpty == false ? cameraName : nil) ?? brand.title
         let address = activeHost ?? host
-        let saved = SavedCamera(brand: brand, name: name,
+        var saved = SavedCamera(brand: brand, name: name,
                                 host: address == brand.defaultHost ? "" : address, lastUsed: Date())
+        if let network = joinedNetwork {
+            saved.ssid = network.ssid
+            CameraWiFiPasswords.save(network.password, for: network.ssid)
+        } else {
+            saved.ssid = savedCameras.first { $0.id == saved.id }?.ssid
+        }
         var list = savedCameras.filter { $0.id != saved.id }
         list.insert(saved, at: 0)
         savedCameras = list
@@ -40,17 +48,27 @@ extension CameraModel {
     }
 
     func forget(_ saved: SavedCamera) {
+        if let ssid = saved.ssid, !savedCameras.contains(where: { $0.id != saved.id && $0.ssid == ssid }) {
+            CameraWiFiPasswords.delete(for: ssid)
+        }
         savedCameras.removeAll { $0.id == saved.id }
         SavedCamera.save(savedCameras)
     }
 
-    /// Reconnects to a camera from the home screen: its brand and address, no auto-detect.
-    func connect(to saved: SavedCamera) async {
+    /// Reconnects to a camera from the home screen: its brand and address, no auto-detect. When
+    /// Shutterlink joined the camera's Wi-Fi before, it joins it again first, so one tap does it all.
+    /// `waitingUntil` gives iOS time to rejoin by itself (the Action button).
+    func connect(to saved: SavedCamera, waitingUntil deadline: Date? = nil) async {
         guard phase == .disconnected else { return }
         brand = saved.brand
         autoDetectBrand = false
         host = saved.host.isEmpty ? saved.brand.defaultHost : saved.host
         capabilities = saved.brand.defaultCapabilities
-        await connect()
+        if let network = savedNetwork(for: saved) {
+            guard await join(network) else { return }
+            await connect(waitingUntil: max(deadline ?? .distantPast, Date().addingTimeInterval(30)))
+        } else {
+            await connect(waitingUntil: deadline)
+        }
     }
 }
