@@ -57,7 +57,7 @@ struct ExposureGrid: View {
         let property = camera.properties[name].map(camera.dialOptions(for:))
         let locked = !(property?.settable ?? false)
         let selected = active == name
-        let auto = locked && name != "drivemode"
+        let auto = locked && !["drivemode", "quality"].contains(name)
         let value = Self.value(name, property, camera: camera)
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return Button {
@@ -124,6 +124,7 @@ struct ExposureGrid: View {
         case "expcomp": "EV"
         case "wbvalue": "WB"
         case "drivemode": "Drive"
+        case "quality": "Quality"
         case "exposemovie": "Video"
         default: name
         }

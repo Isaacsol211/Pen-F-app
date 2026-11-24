@@ -17,6 +17,7 @@ struct SettingSpec {
         SettingSpec(name: "expcomp", title: "EV", icon: "plusminus.circle", style: .dial),
         SettingSpec(name: "wbvalue", title: "White balance", icon: "thermometer.sun", style: .dial),
         SettingSpec(name: "drivemode", title: "Drive", icon: "square.stack.3d.up", style: .grid),
+        SettingSpec(name: "quality", title: "Quality", icon: "photo", style: .grid),
         SettingSpec(name: "colorphase", title: "Hue", icon: "swatchpalette", style: .dial),
         SettingSpec(name: "exposemovie", title: "Movie", icon: "video", style: .grid),
     ]

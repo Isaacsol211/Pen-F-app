@@ -336,39 +336,43 @@ final class LiveViewReceiver: @unchecked Sendable {
         var buffer = [UInt8](repeating: 0, count: 65_536)
         var assembler = RTPFrameAssembler()
         while isRunning {
-            let count = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, 0) }
-            if count > 0, format == .jpegPerDatagram {
-                stats.packets += 1
-                if let jpeg = buffer.withUnsafeBufferPointer({ jpegInDatagram(UnsafeBufferPointer(rebasing: $0[0..<count])) }) {
-                    stats.completed += 1
-                    stats.jpegBytes += jpeg.count
-                    deliver(jpeg: jpeg, ext: nil)
-                } else {
-                    stats.dropped += 1
+            // Each frame's decoded image is autoreleased. Without a pool per pass this thread, which
+            // runs as long as live view does, keeps every frame: gigabytes after a few minutes.
+            autoreleasepool {
+                let count = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, 0) }
+                if count > 0, format == .jpegPerDatagram {
+                    stats.packets += 1
+                    if let jpeg = buffer.withUnsafeBufferPointer({ jpegInDatagram(UnsafeBufferPointer(rebasing: $0[0..<count])) }) {
+                        stats.completed += 1
+                        stats.jpegBytes += jpeg.count
+                        deliver(jpeg: jpeg, ext: nil)
+                    } else {
+                        stats.dropped += 1
+                    }
+                } else if count > 0 {
+                    stats.packets += 1
+                    let output = buffer.withUnsafeBufferPointer {
+                        assembler.push(UnsafeBufferPointer(rebasing: $0[0..<count]))
+                    }
+                    switch output {
+                    case .frame(let jpeg, let ext)?:
+                        stats.completed += 1
+                        stats.jpegBytes += jpeg.count
+                        if let ext { stats.lastExtension = ext }
+                        deliver(jpeg: jpeg, ext: ext)
+                    case .infoOnly(let ext)?:
+                        stats.lastExtension = ext
+                        deliver(jpeg: nil, ext: ext)
+                    case .dropped?:
+                        stats.dropped += 1
+                    case nil:
+                        break
+                    }
                 }
-            } else if count > 0 {
-                stats.packets += 1
-                let output = buffer.withUnsafeBufferPointer {
-                    assembler.push(UnsafeBufferPointer(rebasing: $0[0..<count]))
+                if CACurrentMediaTime() - stats.since >= 2 {
+                    if stats.packets > 0 { debugLog(stats.summary(info: info)) }
+                    stats = LiveViewStats()
                 }
-                switch output {
-                case .frame(let jpeg, let ext)?:
-                    stats.completed += 1
-                    stats.jpegBytes += jpeg.count
-                    if let ext { stats.lastExtension = ext }
-                    deliver(jpeg: jpeg, ext: ext)
-                case .infoOnly(let ext)?:
-                    stats.lastExtension = ext
-                    deliver(jpeg: nil, ext: ext)
-                case .dropped?:
-                    stats.dropped += 1
-                case nil:
-                    break
-                }
-            }
-            if CACurrentMediaTime() - stats.since >= 2 {
-                if stats.packets > 0 { debugLog(stats.summary(info: info)) }
-                stats = LiveViewStats()
             }
         }
         close(fd)

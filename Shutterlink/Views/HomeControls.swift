@@ -118,7 +118,7 @@ struct ExposureStrip: View {
 
     /// The values that get a cell, here and in the workspace's `ExposureGrid`.
     static func items(_ camera: CameraModel) -> [String] {
-        var names = ["focalvalue", "shutspeedvalue", "isospeedvalue", "expcomp", "wbvalue", "drivemode"]
+        var names = ["focalvalue", "shutspeedvalue", "isospeedvalue", "expcomp", "wbvalue", "drivemode", "quality"]
         if camera.isMovieMode { names.append("exposemovie") }
         return names.filter { camera.properties[$0] != nil }
     }
@@ -144,7 +144,7 @@ struct ExposureStrip: View {
         let property = camera.properties[name].map(camera.dialOptions(for:))
         let locked = !(property?.settable ?? false)
         let selected = active == name
-        let auto = locked && name != "drivemode"
+        let auto = locked && !["drivemode", "quality"].contains(name)
         return Button {
             active = selected ? nil : name
         } label: {
