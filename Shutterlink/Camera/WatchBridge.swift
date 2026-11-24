@@ -86,6 +86,12 @@ final class WatchBridge: NSObject, WCSessionDelegate {
             return s
         }
         s.cameraName = camera.cameraName
+        // The Watch remote is part of Shutterlink Pro.
+        guard ShutterlinkPro.shared.isUnlocked else {
+            s.canShoot = false
+            s.message = "The Watch remote is part of Shutterlink Pro. Try it free in the iPhone app"
+            return s
+        }
         s.battery = camera.liveInfo.battery
         s.shotsLeft = camera.liveInfo.shotsRemaining
         func shown(_ name: String) -> String? {
@@ -143,6 +149,11 @@ final class WatchBridge: NSObject, WCSessionDelegate {
     private func handle(_ command: WatchCommand, delay: Double, value: String?, on: Bool) {
         guard let camera else { return }
         if command != .preview && command != .hello { debugLog("watch: \(command.rawValue) delay=\(delay) value=\(value ?? "-")") }
+        if [.shutter, .setEV].contains(command) || (command == .preview && on), !ShutterlinkPro.shared.isUnlocked {
+            previewOn = false
+            flash("The Watch remote is part of Shutterlink Pro")
+            return
+        }
         switch command {
         case .hello:
             lastSent = nil   // send everything again

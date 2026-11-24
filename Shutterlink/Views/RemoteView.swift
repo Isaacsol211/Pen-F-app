@@ -6,6 +6,8 @@ struct RemoteView: View {
     @State private var showLog = false
     @State private var showAllSettings = false
     @State private var showAstro = false
+    /// The Pro screen, with the locked tool that opened it.
+    @State private var proPrompt: ProPrompt?
     @State private var showPresets = false
     @State private var showND = false
     @State private var showMotion = false
@@ -79,6 +81,7 @@ struct RemoteView: View {
         .sheet(isPresented: $showAllSettings) { AllSettingsView() }
         .sheet(isPresented: $showLog) { LogView() }
         .sheet(isPresented: $showAstro) { AstroView() }
+        .sheet(item: $proPrompt) { ProView(feature: $0.feature) }
         .sheet(isPresented: phoneSheet($showHighRes)) { HighResView().presentationDetents([.medium, .large]) }
         .sheet(isPresented: phoneSheet($showInterval)) {
             IntervalView().presentationDetents([.medium, .large])
@@ -536,6 +539,16 @@ struct RemoteView: View {
 
     /// Recipes and settings run straight away; ND and Motion open their panel, ready to go.
     private func applySuggestion(_ suggestion: SceneSuggestion) {
+        // Suggestions that change one setting (exposure, ISO, white balance) are free; the ones that
+        // run a setup or open a Pro tool need Pro.
+        let needsPro: Bool = switch suggestion.action {
+        case .setting, .showGrid: false
+        case .recipe, .freezeMotion, .exposeToTheRight, .openND, .openMotion: true
+        }
+        if needsPro, !ShutterlinkPro.shared.isUnlocked {
+            proPrompt = ProPrompt(feature: suggestion.actionTitle)
+            return
+        }
         Task { await camera.applySceneSuggestion(suggestion) }
         switch suggestion.action {
         case .openND: open(.nd)
@@ -576,6 +589,16 @@ struct RemoteView: View {
                 }
                 Toggle(isOn: Binding(get: { camera.autoSaveNewPhotos }, set: { camera.autoSaveNewPhotos = $0 })) {
                     Label("Save new photos to Photos", systemImage: "square.and.arrow.down.on.square")
+                }
+                Button {
+                    proPrompt = ProPrompt(feature: nil)
+                } label: {
+                    Label {
+                        Text("Shutterlink Pro")
+                        Text(ShutterlinkPro.shared.statusText)
+                    } icon: {
+                        Image(systemName: "star.circle")
+                    }
                 }
             }
             Section {
@@ -620,19 +643,34 @@ struct RemoteView: View {
         .accessibilityLabel("More")
     }
 
+    /// Runs a Pro tool's action when Pro is unlocked; otherwise opens the Pro screen for it.
+    private func pro(_ feature: String, _ action: @escaping () -> Void) -> () -> Void {
+        {
+            if ShutterlinkPro.shared.isUnlocked {
+                action()
+            } else {
+                withAnimation(.snappy) { toolsOpen = false }
+                proPrompt = ProPrompt(feature: feature)
+            }
+        }
+    }
+
     private var tools: [ToolItem] {
+        let locked = !ShutterlinkPro.shared.isUnlocked
         let all = [
             ToolItem(id: "presets", icon: "wand.and.stars", title: "Presets",
-                     on: sidePanel == .presets, opens: true) {
+                     on: sidePanel == .presets, opens: true, locked: locked, action: pro("Presets") {
                 toolsOpen = false; toggle(.presets)
-            },
-            ToolItem(id: "astro", icon: "moon.stars.fill", title: "Astro", on: false, opens: true) {
+            }),
+            ToolItem(id: "astro", icon: "moon.stars.fill", title: "Astro", on: false, opens: true, locked: locked,
+                     action: pro("Astro") {
                 toolsOpen = false; showAstro = true
-            },
+            }),
             ToolItem(id: "interval", icon: "timer", title: "Interval",
-                     on: camera.interval.running || sidePanel == .interval, opens: true) {
+                     on: camera.interval.running || sidePanel == .interval, opens: true, locked: locked,
+                     action: pro("The interval timer") {
                 toolsOpen = false; toggle(.interval)
-            },
+            }),
             ToolItem(id: "loupe", icon: "plus.magnifyingglass", title: "Loupe", on: showLoupe) {
                 showLoupe.toggle(); withAnimation(.snappy) { toolsOpen = false }
             },
@@ -643,16 +681,19 @@ struct RemoteView: View {
                 camera.focusPeaking.toggle()
             },
             ToolItem(id: "bracket", icon: "square.stack.3d.down.right", title: "Bracket",
-                     on: camera.bracket.running || sidePanel == .bracket, opens: true) {
+                     on: camera.bracket.running || sidePanel == .bracket, opens: true, locked: locked,
+                     action: pro("Bracketing and focus stacking") {
                 toolsOpen = false; toggle(.bracket)
-            },
-            ToolItem(id: "nd", icon: "camera.filters", title: "ND filter", on: sidePanel == .nd, opens: true) {
+            }),
+            ToolItem(id: "nd", icon: "camera.filters", title: "ND filter", on: sidePanel == .nd, opens: true,
+                     locked: locked, action: pro("The ND filter calculator") {
                 toolsOpen = false; toggle(.nd)
-            },
+            }),
             ToolItem(id: "motion", icon: "figure.walk.motion", title: "Motion",
-                     on: camera.motion.armed || sidePanel == .motion, opens: true) {
+                     on: camera.motion.armed || sidePanel == .motion, opens: true, locked: locked,
+                     action: pro("The motion trigger") {
                 toolsOpen = false; toggle(.motion)
-            },
+            }),
             ToolItem(id: "pocket", icon: "moon.zzz", title: "Pocket", on: false, opens: true) {
                 toolsOpen = false; pocketMode = true
             },
@@ -667,9 +708,9 @@ struct RemoteView: View {
                 camera.touchShutter.toggle()
             },
             ToolItem(id: "highres", icon: "square.grid.3x3.square", title: "High Res", on: sidePanel == .highRes,
-                     opens: true) {
+                     opens: true, locked: locked, action: pro("The High Res Shot helper") {
                 toolsOpen = false; toggle(.highRes)
-            },
+            }),
         ]
         let caps = camera.capabilities
         var shown = all.filter { item in
@@ -728,6 +769,8 @@ struct ToolItem: Identifiable {
     let on: Bool
     /// Opens its own screen (Astro, Interval…) rather than switching something on and off.
     var opens = false
+    /// A Pro tool while Pro is locked: shows a lock, and tapping it opens the Pro screen.
+    var locked = false
     let action: () -> Void
 }
 
@@ -756,7 +799,12 @@ struct ToolButton: View {
             .overlay(shape.stroke(item.on ? Theme.accent.opacity(0.85) : Theme.stroke, lineWidth: item.on ? 1.5 : 1))
             // Tools that open their own screen say so; the rest are switches.
             .overlay(alignment: .topTrailing) {
-                if item.opens {
+                if item.locked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Theme.accent)
+                        .padding(7)
+                } else if item.opens {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(item.on ? Theme.accent : Theme.tertiary)
@@ -769,7 +817,7 @@ struct ToolButton: View {
         .sensoryFeedback(.selection, trigger: item.on)
         .accessibilityLabel(item.title)
         .accessibilityValue(item.opens ? "" : (item.on ? "On" : "Off"))
-        .accessibilityHint(item.opens ? "Opens \(item.title)" : "")
+        .accessibilityHint(item.locked ? "Part of Shutterlink Pro" : (item.opens ? "Opens \(item.title)" : ""))
     }
 }
 

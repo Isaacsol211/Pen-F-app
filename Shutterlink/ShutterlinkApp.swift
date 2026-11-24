@@ -8,6 +8,7 @@ struct ShutterlinkApp: App {
     #endif
 
     init() {
+        ShutterlinkPro.shared.start()
         #if targetEnvironment(macCatalyst)
         // Start finding out which interface is Wi-Fi (not always en0 on a Mac).
         _ = WiFiInterface.shared

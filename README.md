@@ -275,6 +275,38 @@ stacks aren't saved one by one, so a time-lapse doesn't fill Photos.
 - **LUMIX:** the camera can't send files during live view, so new photos are saved the next time you open
   the card.
 
+### Shutterlink Pro
+
+Free does what the camera makers' own apps do, better and for every brand. Pro ($9.99, once) is
+what they can't do. One purchase covers iPhone, iPad and Mac (universal purchase).
+
+- **Pro:** Presets (Astro, Moon, Fireworks, Landscape, Action, Macro, Star trails, Undo, My
+  presets), Interval and day-to-night ramping, Bracket and focus stacking, ND filter, expose to the
+  right, Motion trigger, High Res helper, the Apple Watch remote, and scene suggestions that run a
+  setup (the ones that change one setting, such as exposure, ISO or white balance, stay free).
+- **Free:** everything else, including Wi-Fi joining, auto-save and geotagging.
+- **Trial:** a free non-consumable, `com.apexcommerce.shutterlink.pro.trial` ("7-Day Pro Trial"),
+  unlocks Pro for 7 days from its purchase date. This is the guideline 3.1.1 way to try a one-time
+  purchase.
+- **Purchase:** `com.apexcommerce.shutterlink.pro`, a non-consumable at $9.99.
+- **Early users keep Pro:** anyone whose original install was 1.0 (builds 1–4 on iOS) gets Pro. So
+  every Pro build must be 5 or later (1.1 (5) is the first). On the Mac the check is "first
+  installed before 1.1". This only applies to production installs, not TestFlight or Xcode.
+- Locked tools show a lock and open the Pro screen. The ⋯ menu shows the Pro status. Without Pro
+  the Watch says the remote is part of Pro. All of it hangs off `ShutterlinkPro.shared.isUnlocked`
+  (`Camera/ShutterlinkPro.swift`).
+
+**Testing.**
+- **In Xcode:** Product ▸ Scheme ▸ Edit Scheme ▸ Run ▸ Options ▸ StoreKit Configuration ▸
+  `Shutterlink.storekit` tests the trial, the purchase and Restore without App Store Connect.
+- **Debug builds:** launch with `-pro locked`, `-pro unlocked` or `-pro trial` to pin the state.
+
+**Before release.**
+1. The Account Holder accepts the Paid Apps Agreement and adds banking and tax.
+2. In App Store Connect, create the two in-app purchases with the IDs above: the trial at Free, Pro
+   at $9.99.
+3. Submit both with the 1.1 build.
+
 ### Friends: try this first
 
 Only the PEN-F has been tried on a real camera. If you have another body, these few checks tell the most.
