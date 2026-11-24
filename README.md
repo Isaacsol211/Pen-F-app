@@ -218,6 +218,13 @@ on the left. Live view keeps running through a fold. Checked in the Simulator on
 the old PEN-F Remote from the iPhone, and on the Watch install Shutterlink from the Watch app ▸ Available Apps.
 Settings (brand, address, stars) start fresh, and iOS asks for Local Network, Photos and Location again.
 
+## Run it on a Mac
+
+The Mac app is the same target built with Mac Catalyst (same bundle ID, so one purchase covers iPhone, iPad and
+Mac). In Xcode pick **My Mac (Mac Catalyst)** and press ▶. It uses the iPad workspace layouts in a resizable
+window, with Camera, Exposure and Tools menus (Space takes a picture). See [MAC.md](MAC.md) for what works,
+what doesn't yet, and what App Store Connect needs.
+
 ## Connect to the camera
 
 The home screen lists **your cameras**: every camera this iPhone has connected to, most recent first.
@@ -543,12 +550,14 @@ Shutterlink/
   Camera/Geotag.swift        location log (When In Use) and nearest-point lookup
   Camera/Shortcuts.swift     "Connect to Camera" App Intent and App Shortcut
   Camera/WatchBridge.swift   iPhone end of the Watch remote: status, commands, preview frames
+  Camera/Platform.swift      Mac vs iOS wording, keeping the device awake while connected
   Camera/StripValues.swift   the exposure strip's values (shared with the Watch)
   Camera/XML.swift           tiny XML parser + camera command list
   Camera/PropertyFormat.swift labels for raw property values
   Views/Design.swift         colours, surfaces and button styles shared by every screen
   Views/BrandMark.swift      the Shutterlink aperture mark, name lockup and launch hand-off
   Views/ExtrasViews.swift    bracketing sheet, pocket mode, bulb timer, RAW download bar
+  Views/KeyCommands.swift    Mac menu bar and iPad keyboard shortcuts
   Views/…                    SwiftUI screens
 ShutterlinkWatch/            Apple Watch remote (SwiftUI, WatchConnectivity)
   PhoneLink.swift            Watch end of the link to the iPhone app
