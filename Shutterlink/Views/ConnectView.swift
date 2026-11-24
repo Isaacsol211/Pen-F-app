@@ -6,38 +6,140 @@ struct ConnectView: View {
     @Environment(CameraModel.self) private var camera
     @State private var showAdd = false
     @State private var connectingID: String?
+    /// The canvas is big enough for the two-pane home (see `Workspace`).
+    @State private var isWorkspace = false
+    /// Brand whose steps the connection guide shows; until one is picked, the last camera's.
+    @State private var guideBrand: CameraBrand?
+    @State private var guidePicked = false
 
     var body: some View {
         GeometryReader { geo in
+            let workspace = Workspace.isWorkspace(geo)
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    if camera.savedCameras.isEmpty {
-                        cover(compact: geo.size.height < 600)
-                        emptyState
-                    } else {
-                        BrandLockup(markSize: 40)
-                            .padding(.top, 20)
-                        cameraList
-                        tip
+                if workspace {
+                    workspaceContent(width: geo.size.width)
+                } else {
+                    VStack(alignment: .leading, spacing: 24) {
+                        if camera.savedCameras.isEmpty {
+                            cover(compact: geo.size.height < 600)
+                            emptyState
+                        } else {
+                            BrandLockup(markSize: 40)
+                                .padding(.top, 20)
+                            cameraList(grid: false)
+                            tip
+                        }
                     }
+                    .frame(maxWidth: 560, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
                 }
-                .frame(maxWidth: 560, alignment: .leading)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 24)
             }
             .scrollEdgeEffectStyle(.soft, for: .top)
-            .safeAreaInset(edge: .bottom, spacing: 0) { footer }
+            .safeAreaInset(edge: .bottom, spacing: 0) { footer(workspace: workspace) }
+            .onAppear { isWorkspace = workspace }
+            .onChange(of: workspace) { _, value in isWorkspace = value }
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .background { ConnectBackground() }
         .sheet(isPresented: $showAdd) {
-            AddCameraSheet()
+            AddCameraSheet(twoColumns: isWorkspace)
                 .environment(camera)
         }
         .onChange(of: camera.phase) { _, phase in
             if phase != .connecting { connectingID = nil }
         }
+    }
+
+    // MARK: - Workspace (large canvases)
+
+    /// Widest the two-pane home gets, so lines stay readable on a 13-inch screen.
+    static let workspaceMaxWidth: CGFloat = 1180
+
+    /// Two panes: your cameras as a grid of cards, and beside them the connection guide that is
+    /// otherwise a sheet away.
+    private func workspaceContent(width: CGFloat) -> some View {
+        let guideWidth = min(440, max(330, (width * 0.36).rounded()))
+        return HStack(alignment: .top, spacing: 32) {
+            VStack(alignment: .leading, spacing: 24) {
+                if camera.savedCameras.isEmpty {
+                    cover(compact: false)
+                    emptyState
+                } else {
+                    BrandLockup(markSize: 44)
+                        .padding(.top, 28)
+                    cameraList(grid: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 20) {
+                guide
+                if !camera.savedCameras.isEmpty { tip }
+            }
+            .frame(width: guideWidth)
+            .padding(.top, 28)
+        }
+        .frame(maxWidth: Self.workspaceMaxWidth, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 32)
+        .padding(.bottom, 24)
+    }
+
+    private var shownGuideBrand: CameraBrand? {
+        guidePicked ? guideBrand : camera.savedCameras.max { $0.lastUsed < $1.lastUsed }?.brand
+    }
+
+    /// The connection steps for one brand, with the brands to switch between.
+    private var guide: some View {
+        let brand = shownGuideBrand
+        return VStack(alignment: .leading, spacing: 16) {
+            CapsLabel("How to connect", color: Theme.accent)
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    guideChip(nil, selected: brand == nil)
+                    ForEach(CameraBrand.allCases) { guideChip($0, selected: brand == $0) }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .scrollClipDisabled()
+            ForEach(Array(Self.steps(for: brand).enumerated()), id: \.offset) { index, step in
+                StepRow(number: index + 1, title: step.title, detail: step.detail)
+            }
+            if let note = brand?.supportNote {
+                Label(note, systemImage: "flask")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.secondary)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: 20, style: .continuous))
+        .animation(.smooth, value: brand)
+        .sensoryFeedback(.selection, trigger: brand)
+    }
+
+    private func guideChip(_ brand: CameraBrand?, selected: Bool) -> some View {
+        Button {
+            guideBrand = brand
+            guidePicked = true
+        } label: {
+            Text(brand?.shortTitle ?? "Any")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(selected ? Theme.onAccent : .white)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 36)
+                .background(selected ? Theme.accent : Theme.surfaceRaised, in: .capsule)
+                .overlay(Capsule().stroke(selected ? Color.clear : Theme.stroke, lineWidth: 1))
+                // 44 pt to tap, 36 pt to look at.
+                .frame(minHeight: Theme.target)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(brand?.title ?? "Any camera")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     // MARK: - First run
@@ -82,7 +184,8 @@ struct ConnectView: View {
 
     // MARK: - Saved cameras
 
-    private var cameraList: some View {
+    /// `grid`: cards side by side where the column is wide enough (the workspace home).
+    private func cameraList(grid: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             CapsLabel("Your cameras")
             Text("Turn on the camera's Wi-Fi and join it in Settings ▸ Wi-Fi, then tap it.")
@@ -90,23 +193,36 @@ struct ConnectView: View {
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 4)
-            ForEach(camera.savedCameras) { saved in
-                card(saved)
+            if grid {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), spacing: 12)], spacing: 12) {
+                    ForEach(camera.savedCameras) { saved in
+                        card(saved)
+                    }
+                    addButton(minHeight: 84)
+                }
+            } else {
+                ForEach(camera.savedCameras) { saved in
+                    card(saved)
+                }
+                addButton(minHeight: 60)
             }
-            Button {
-                showAdd = true
-            } label: {
-                Label("Add a camera", systemImage: "plus")
-                    .font(.headline)
-                    .foregroundStyle(Theme.accent)
-                    .frame(maxWidth: .infinity, minHeight: 60)
-                    .background(RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
-                    .contentShape(.rect(cornerRadius: 20))
-            }
-            .buttonStyle(.plain)
-            .disabled(camera.phase != .disconnected)
         }
+    }
+
+    private func addButton(minHeight: CGFloat) -> some View {
+        Button {
+            showAdd = true
+        } label: {
+            Label("Add a camera", systemImage: "plus")
+                .font(.headline)
+                .foregroundStyle(Theme.accent)
+                .frame(maxWidth: .infinity, minHeight: minHeight)
+                .background(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
+                .contentShape(.rect(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
+        .disabled(camera.phase != .disconnected)
     }
 
     private func card(_ saved: SavedCamera) -> some View {
@@ -188,7 +304,7 @@ struct ConnectView: View {
     // MARK: - Footer
 
     /// Problems and the Wi-Fi state stay in view; first run gets the Add button here too.
-    private var footer: some View {
+    private func footer(workspace: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if let error = camera.lastError, !showAdd {
                 ConnectErrorBanner(text: error)
@@ -203,12 +319,14 @@ struct ConnectView: View {
                     Label("Add your camera", systemImage: "plus").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.accent)
+                // In the workspace the button stays a button, not a bar across a 13-inch screen.
+                .frame(maxWidth: workspace ? 360 : .infinity)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, workspace ? 32 : 20)
         .padding(.top, 12)
         .padding(.bottom, 8)
-        .frame(maxWidth: 600)
+        .frame(maxWidth: workspace ? Self.workspaceMaxWidth + 64 : 600, alignment: workspace ? .leading : .center)
         .frame(maxWidth: .infinity)
         .background(Theme.background)
     }
@@ -276,23 +394,43 @@ struct ConnectView: View {
 struct AddCameraSheet: View {
     @Environment(CameraModel.self) private var camera
     @Environment(\.dismiss) private var dismiss
+    /// Opened from the workspace home: brands and steps go side by side when the sheet is wide enough.
+    var twoColumns = false
     @State private var showAdvanced = false
+    @State private var sheetWidth: CGFloat = 0
 
     private var selection: CameraBrand? { camera.autoDetectBrand ? nil : camera.brand }
+    private var sideBySide: Bool { twoColumns && sheetWidth >= 660 }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    brandList
-                    stepsCard
-                    advanced
+                Group {
+                    if sideBySide {
+                        HStack(alignment: .top, spacing: 20) {
+                            brandList
+                                .frame(maxWidth: .infinity)
+                            VStack(alignment: .leading, spacing: 24) {
+                                stepsCard
+                                advanced
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .frame(maxWidth: 960)
+                    } else {
+                        VStack(alignment: .leading, spacing: 24) {
+                            brandList
+                            stepsCard
+                            advanced
+                        }
+                        .frame(maxWidth: 560, alignment: .leading)
+                    }
                 }
-                .frame(maxWidth: 560, alignment: .leading)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sheetWidth = $0 }
             .safeAreaInset(edge: .bottom, spacing: 0) { connectBar }
             .scrollDismissesKeyboard(.interactively)
             .background(Theme.background)
@@ -306,6 +444,7 @@ struct AddCameraSheet: View {
             }
         }
         .presentationBackground(Theme.background)
+        .presentationSizing(WorkspaceSheetSizing(page: twoColumns))
         .tint(Theme.accent)
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
         .interactiveDismissDisabled(camera.phase == .connecting)

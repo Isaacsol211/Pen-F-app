@@ -59,6 +59,7 @@ APIS = {
         ("shooting/liveview", "o"), ("shooting/liveview/flip", "g"), ("shooting/liveview/afframeposition", "p"),
         ("shooting/control/shutterbutton", "o"), ("shooting/control/shutterbutton/manual", "o"),
         ("shooting/control/moviemode", "o"), ("shooting/control/recbutton", "o"),
+        ("shooting/control/drivefocus", "o"),
         ("event/polling", "gd"), ("contents", "g"), ("functions/wificonnection", "o"),
     ],
     "ver110": [("devicestatus/batterylist", "g"), ("shooting/control/recbutton", "o")],
@@ -239,6 +240,16 @@ class Handler(BaseHTTPRequestHandler):
                     cam.bulb_since = None
                 return self.reply(200)
             raise BadValue()
+        if feature == "shooting/control/drivefocus":
+            steps = {"near3": -300, "near2": -100, "near1": -20, "far1": 20, "far2": 100, "far3": 300}
+            value = payload.get("value")
+            if value not in steps:
+                raise BadValue()
+            if not cam.liveview:
+                return self.reply(503, {"message": "Live view not started"})
+            cam.focus_pos = max(0, min(10000, getattr(cam, "focus_pos", 2000) + steps[value]))
+            print(f"  drive focus {value} -> {cam.focus_pos}/10000")
+            return self.reply(200)
         if feature == "shooting/control/moviemode":
             cam.movie_mode = payload.get("action") == "on"
             return self.reply(200)

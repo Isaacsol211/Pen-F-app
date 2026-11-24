@@ -99,25 +99,13 @@ struct CompositionGrid: View {
 
 /// Interval timer (time-lapse / star stacking) setup and progress.
 struct IntervalView: View {
-    @Environment(CameraModel.self) private var camera
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("interval.count") private var count = 60
-    @AppStorage("interval.seconds") private var seconds = 20.0
-
-    private var plan: IntervalPlan { IntervalPlan(count: count, seconds: seconds) }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if camera.interval.running {
-                        progressCard
-                    } else {
-                        setupCards
-                    }
-                }
-                .padding(16)
-                .animation(.smooth, value: camera.interval.running)
+                IntervalPanel()
+                    .padding(16)
             }
             .navigationTitle("Interval timer")
             .navigationBarTitleDisplayMode(.inline)
@@ -127,6 +115,30 @@ struct IntervalView: View {
                 }
             }
         }
+    }
+}
+
+/// The interval timer's cards: in a sheet on a phone, in the inspector on a large canvas.
+struct IntervalPanel: View {
+    @Environment(CameraModel.self) private var camera
+    @AppStorage("interval.count") private var count = 60
+    @AppStorage("interval.seconds") private var seconds = 20.0
+    @AppStorage("interval.ramp") private var ramp = false
+    @AppStorage("interval.maxISO") private var maxISO = 3200
+
+    private var plan: IntervalPlan {
+        IntervalPlan(count: count, seconds: seconds, ramp: ramp && camera.canRampExposure, maxISO: maxISO)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if camera.interval.running {
+                progressCard
+            } else {
+                setupCards
+            }
+        }
+        .animation(.smooth, value: camera.interval.running)
     }
 
     @ViewBuilder private var setupCards: some View {
@@ -152,6 +164,27 @@ struct IntervalView: View {
                       systemImage: "exclamationmark.triangle")
                     .font(.footnote).foregroundStyle(.orange)
             }
+        }
+        glassCard {
+            Toggle(isOn: $ramp) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Follow the light")
+                    Text("Day to night (or night to day)").font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!camera.canRampExposure)
+            if ramp && camera.canRampExposure {
+                Text("Highest ISO").font(.subheadline)
+                Picker("Highest ISO", selection: $maxISO) {
+                    ForEach([1600, 3200, 6400, 12800], id: \.self) { Text(verbatim: "\($0)").tag($0) }
+                }
+                .pickerStyle(.segmented)
+            }
+            Text(camera.canRampExposure
+                 ? "Keeps live view as bright as when you start: as it gets dark the shutter gets longer (up to what the interval leaves room for), then the ISO goes up, a third of a stop at a time, and back at sunrise. Needs live view to show the exposure (Live View Boost off)."
+                 : "Switch the camera to M so the app can change the shutter speed.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
         Button {
             camera.startInterval(plan)
@@ -198,6 +231,9 @@ struct IntervalView: View {
                     }
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    if let note = camera.interval.rampNote {
+                        Text(note).font(.footnote).foregroundStyle(Theme.accent)
+                    }
                 }
             }
             Button(role: .destructive) {

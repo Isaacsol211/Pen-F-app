@@ -25,6 +25,28 @@ struct CameraCapabilities: Equatable {
     var powerOff = false
     /// Olympus: the User-Agent can be switched under Advanced.
     var userAgentChoice = false
+    /// The lens can be stepped nearer or farther from the app, for focus stacking.
+    var focusDrive = false
+}
+
+/// How far one focus-stacking step moves the lens.
+enum FocusStepSize: Int, CaseIterable, Identifiable, Codable {
+    case fine = 1, medium = 2, coarse = 3
+
+    var id: Int { rawValue }
+    var title: String {
+        switch self {
+        case .fine: "Fine"
+        case .medium: "Medium"
+        case .coarse: "Coarse"
+        }
+    }
+}
+
+enum FocusDriveResult: Equatable {
+    case moved
+    /// The lens is already at the end of its travel in that direction (infinity or the closest point).
+    case endOfTravel
 }
 
 /// One camera brand's protocol. The model owns all state the UI shows; a driver reads and
@@ -67,6 +89,8 @@ protocol CameraDriver: AnyObject {
     func toggleMovie() async
     func fetchLastShot() async
     func syncClock() async -> Bool
+    /// Steps manual focus nearer or farther (focus stacking). Only called when `capabilities.focusDrive`.
+    func driveFocus(farther: Bool, step: FocusStepSize) async throws -> FocusDriveResult
 
     /// Fills `camera.images` and `camera.cardFolders`.
     func openGallery() async
@@ -84,6 +108,9 @@ extension CameraDriver {
     func toggleMovie() async {}
     func fetchLastShot() async {}
     func syncClock() async -> Bool { false }
+    func driveFocus(farther: Bool, step: FocusStepSize) async throws -> FocusDriveResult {
+        throw CameraError("This camera can't move its focus over Wi-Fi.")
+    }
 }
 
 extension CameraBrand {

@@ -43,7 +43,17 @@ final class CanonDriver: CameraDriver {
                            openEndedExposure: has("shooting/control/shutterbutton/manual"),
                            movie: has("shooting/control/recbutton"), videoSwitch: true,
                            lastShotReview: has("event/polling"), clockSync: false, highResShot: false,
-                           cardBrowser: has("contents"), powerOff: false)
+                           cardBrowser: has("contents"), powerOff: false,
+                           focusDrive: has("shooting/control/drivefocus"))
+    }
+
+    /// `POST shooting/control/drivefocus {"value": "near1…3" | "far1…3"}`, in live view with the lens on AF.
+    /// CCAPI doesn't say when the lens reaches infinity, so a stack runs to its frame count.
+    func driveFocus(farther: Bool, step: FocusStepSize) async throws -> FocusDriveResult {
+        let value = (farther ? "far" : "near") + "\(step.rawValue)"
+        _ = try await client.request("POST", path("shooting/control/drivefocus"), json: ["value": value], timeout: 8)
+        try? await Task.sleep(for: .milliseconds(200))
+        return .moved
     }
 
     private func has(_ feature: String, _ method: String? = nil) -> Bool {

@@ -6,6 +6,9 @@ struct RemoteView: View {
     @State private var showLog = false
     @State private var showAllSettings = false
     @State private var showAstro = false
+    @State private var showPresets = false
+    @State private var showND = false
+    @State private var showMotion = false
     @State private var showInterval = false
     @State private var showHighRes = false
     @State private var confirmPowerOff = false
@@ -13,7 +16,11 @@ struct RemoteView: View {
     @State private var toolsOpen = false
     /// Exposure value whose dial is open (nil = closed, keeps the screen clean).
     @State private var activeSetting: String?
-    @State private var isLandscape = false
+    /// The canvas is big enough for the workspace layouts (see `Workspace`): tools that are sheets on a
+    /// phone open as panels in the inspector instead.
+    @State private var isWorkspace = false
+    /// The scene showing this screen (not just the first connected one).
+    @State private var windowScene: UIWindowScene?
     @AppStorage("ui.histogram") private var showHistogram = false
     @AppStorage("ui.grid") private var showGrid = false
     @AppStorage("ui.nightMode") private var nightMode = false
@@ -24,21 +31,40 @@ struct RemoteView: View {
     var body: some View {
         GeometryReader { geo in
             let landscape = geo.size.width > geo.size.height
+            let workspace = Workspace.isWorkspace(geo)
             ZStack {
                 Theme.background.ignoresSafeArea()
-                if landscape {
-                    // Keep the shutter rail on the side away from the Dynamic Island.
-                    landscapeLayout(railOnLeading: !Self.islandOnLeading(size: geo.size), size: geo.size)
-                        .transition(.opacity)
+                if workspace {
+                    // The inspector (and with it the shutter) keeps to the side away from the
+                    // system's vertical bar; with no bar it sits on the trailing side.
+                    VerticalBarEdgeReader { barEdge in
+                        if landscape {
+                            workspaceLandscape(inspectorOnLeading: barEdge == .trailing, size: geo.size)
+                        } else {
+                            workspacePortrait(shutterOnLeading: barEdge == .trailing, size: geo.size)
+                        }
+                    }
+                    .transition(.opacity)
+                } else if landscape {
+                    // Keep the shutter rail on the side away from the system's vertical bar, or,
+                    // where there's no such bar, away from the Dynamic Island.
+                    VerticalBarEdgeReader { barEdge in
+                        landscapeLayout(railOnLeading: barEdge.map { $0 == .trailing } ?? !Self.islandOnLeading(in: windowScene),
+                                        size: geo.size)
+                    }
+                    .transition(.opacity)
                 } else {
                     portraitLayout(height: geo.size.height)
                         .transition(.opacity)
                 }
             }
             .animation(.smooth(duration: 0.35), value: landscape)
-            .onAppear { isLandscape = landscape }
-            .onChange(of: landscape) { _, value in isLandscape = value }
+            .animation(.smooth(duration: 0.35), value: workspace)
+            .onAppear { isWorkspace = workspace }
+            .onChange(of: workspace) { _, value in isWorkspace = value }
         }
+        .background(WindowSceneReader { windowScene = $0 })
+        .task { await camera.runSceneAssistant() }
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
         // Red night-vision mode keeps your eyes dark-adapted under the stars. Applied only when on:
         // a colour filter over the whole screen forces it to re-render offscreen on every frame.
@@ -47,12 +73,25 @@ struct RemoteView: View {
         .sheet(isPresented: $showAllSettings) { AllSettingsView() }
         .sheet(isPresented: $showLog) { LogView() }
         .sheet(isPresented: $showAstro) { AstroView() }
-        .sheet(isPresented: $showHighRes) { HighResView().presentationDetents([.medium, .large]) }
-        .sheet(isPresented: $showInterval) {
+        .sheet(isPresented: phoneSheet($showHighRes)) { HighResView().presentationDetents([.medium, .large]) }
+        .sheet(isPresented: phoneSheet($showInterval)) {
             IntervalView().presentationDetents([.medium, .large])
         }
-        .sheet(isPresented: $showBracket) {
+        .sheet(isPresented: phoneSheet($showBracket)) {
             BracketView().presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: phoneSheet($showPresets)) {
+            PresetsView(openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: phoneSheet($showND)) {
+            NDView().presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: phoneSheet($showMotion)) {
+            // Live view stays usable above it, so the box can be dragged into place.
+            MotionView()
+                .presentationDetents([.medium, .large])
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }
         .fullScreenCover(isPresented: $pocketMode) { PocketModeView() }
         .fullScreenCover(isPresented: $showGallery) { GalleryView() }
@@ -82,18 +121,19 @@ struct RemoteView: View {
 
     // MARK: - Layouts
 
-    /// Landscape safe-area insets are symmetric, so ask the scene which way round the phone is.
+    /// Widest the portrait controls get, so they stay within reach on an iPad.
+    static let controlsMaxWidth: CGFloat = 640
+
+    /// Fallback for scenes with no vertical bar (iPhones without one, iOS before 27.1). Landscape
+    /// safe-area insets are symmetric there, so ask this view's scene which way round the phone is.
     /// `.landscapeRight` means the top of the phone (and the island) is on the left.
-    static func islandOnLeading(size: CGSize) -> Bool {
+    static func islandOnLeading(in scene: UIWindowScene?) -> Bool {
         // TODO: Modernization - Window bounds can't replace this check: it tells landscape-left from
         // landscape-right to keep the rail away from the Dynamic Island, and bounds don't say which way
-        // round the phone is. But orientation doesn't say where the island is in a resized scene either
-        // (iPhone Duo's inner screen, or a scene with a vertical bar on one edge), and
-        // connectedScenes.first may not be the scene showing this view. Decide whether to keep this
-        // heuristic, place the rail from @Environment(\.toolbarVerticalEdge) (iOS 27.1) where the
-        // system puts a vertical bar, or fix the rail to one side when the island isn't beside it.
-        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
-        return scene?.effectiveGeometry.interfaceOrientation == .landscapeRight
+        // round the phone is. Where the system has a vertical bar the rail already follows
+        // @Environment(\.toolbarVerticalEdge); this orientation heuristic only runs where that is nil.
+        // Decide whether to keep it there or fix the rail to one side when the island isn't beside it.
+        scene?.effectiveGeometry.interfaceOrientation == .landscapeRight
     }
 
     /// Portrait, like the iPhone Camera app: status on top, a clean viewfinder, and everything you
@@ -107,7 +147,7 @@ struct RemoteView: View {
             // Viewfinder and readouts are one block, centred in the spare height like a camera's
             // rear screen (on short screens such as the Duo's outer one the spacers collapse).
             Spacer(minLength: 0)
-            liveView
+            liveView(cornerRadius: 0)
                 .aspectRatio(4.0 / 3.0, contentMode: .fit)
                 .overlay(alignment: .top) { ErrorBanner().padding(.top, 8) }
             VStack(spacing: 10) {
@@ -125,14 +165,18 @@ struct RemoteView: View {
                 }
             }
             .padding(.horizontal, 12)
+            // On an iPad the picture can use the full width; the controls stay a hand's width.
+            .frame(maxWidth: Self.controlsMaxWidth)
             .zIndex(1)
             Spacer(minLength: 0)
             // LUMIX bodies have a physical mode dial the app can't read or turn.
             if camera.properties["takemode"] != nil {
                 ModeCarousel()
                     .padding(.vertical, 2)
+                    .frame(maxWidth: Self.controlsMaxWidth)
             }
             shutterRow
+                .frame(maxWidth: Self.controlsMaxWidth)
                 .padding(.bottom, 4)
         }
     }
@@ -147,7 +191,7 @@ struct RemoteView: View {
         return HStack(spacing: 10) {
             if railOnLeading { landscapeRail }
             VStack(spacing: 8) {
-                liveView
+                liveView(cornerRadius: 18, hudTopInset: 46)
                     .aspectRatio(4.0 / 3.0, contentMode: .fit)
                     .overlay(alignment: .top) {
                         VStack(spacing: 8) {
@@ -215,12 +259,249 @@ struct RemoteView: View {
         .padding(.vertical, 6)
     }
 
+    // MARK: - Workspace layouts (large canvases)
+
+    /// A wide canvas: the picture as large as it goes, the status line above it, the aids under it,
+    /// and an inspector column that keeps every exposure value, the histogram, the tools, the mode
+    /// dial and the shutter in view. Nothing is hidden behind a tray.
+    private func workspaceLandscape(inspectorOnLeading: Bool, size: CGSize) -> some View {
+        let inspectorWidth = min(420, max(320, (size.width * 0.29).rounded()))
+        // Five tiles in a row once they're wide enough for their labels.
+        let tileColumns = inspectorWidth >= 390 ? 5 : 4
+        // A tall inspector has height to spare: give it to the histogram.
+        let histogramHeight: CGFloat = size.height >= 900 ? 132 : 76
+        return HStack(spacing: 0) {
+            if inspectorOnLeading {
+                inspector(tileColumns: tileColumns, histogramHeight: histogramHeight).frame(width: inspectorWidth)
+                Hairline(axis: .vertical).ignoresSafeArea(edges: .vertical)
+            }
+            VStack(spacing: 10) {
+                InfoBar { menuButton }
+                Spacer(minLength: 0)
+                liveView(cornerRadius: 18, histogramOverImage: false)
+                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                    .overlay(alignment: .top) { ErrorBanner().padding(.top, 10) }
+                Spacer(minLength: 0)
+                QuickAidStrip(tools: workspaceAids)
+                    .frame(maxWidth: 520)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if !inspectorOnLeading {
+                Hairline(axis: .vertical).ignoresSafeArea(edges: .vertical)
+                inspector(tileColumns: tileColumns, histogramHeight: histogramHeight).frame(width: inspectorWidth)
+            }
+        }
+    }
+
+    /// A tall canvas: the picture across the full width, and under it a two-column deck: values
+    /// and tools on one side, the histogram, aids, mode dial and shutter on the other.
+    private func workspacePortrait(shutterOnLeading: Bool, size: CGSize) -> some View {
+        // The deck keeps a usable height; in a nearly square window the picture gives way.
+        let imageHeight = max(200, min(size.width * 3 / 4, size.height - 53 - 400))
+        let shootWidth = min(360, max(300, (size.width * 0.38).rounded()))
+        return VStack(spacing: 0) {
+            InfoBar { menuButton }
+            Hairline()
+            liveView(cornerRadius: 0, histogramOverImage: false)
+                .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .frame(height: imageHeight)
+                .overlay(alignment: .top) { ErrorBanner().padding(.top, 8) }
+            Hairline()
+            HStack(spacing: 0) {
+                if shutterOnLeading {
+                    shootColumn.frame(width: shootWidth)
+                    Hairline(axis: .vertical)
+                }
+                ScrollView {
+                    controlSections(histogramHeight: nil, tileColumns: nil)
+                        .padding(14)
+                }
+                .scrollIndicators(.hidden)
+                .frame(maxWidth: .infinity)
+                if !shutterOnLeading {
+                    Hairline(axis: .vertical)
+                    shootColumn.frame(width: shootWidth)
+                }
+            }
+            .frame(maxHeight: .infinity)
+        }
+    }
+
+    /// The inspector of the wide layout: everything you set, scrolling if it has to, over the
+    /// shutter, which never scrolls away.
+    private func inspector(tileColumns: Int, histogramHeight: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                controlSections(histogramHeight: histogramHeight, tileColumns: tileColumns)
+                    .padding(14)
+            }
+            .scrollIndicators(.hidden)
+            Hairline()
+            shutterCluster
+                .padding(.top, 8)
+                .padding(.bottom, 6)
+        }
+    }
+
+    /// The shooting column of the tall layout: histogram and aids over the mode dial and shutter.
+    private var shootColumn: some View {
+        VStack(spacing: 12) {
+            HistogramCard(height: 72)
+            QuickAidStrip(tools: workspaceAids)
+            Spacer(minLength: 0)
+            shutterCluster
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+    }
+
+    /// Values, the open dial and the tools; or, while a tool's panel is open, that panel.
+    /// `histogramHeight`: nil where the histogram is shown elsewhere (the tall layout's shooting column).
+    @ViewBuilder private func controlSections(histogramHeight: CGFloat?, tileColumns: Int?) -> some View {
+        if let panel = sidePanel {
+            SidePanelView(panel: panel, onClose: { withAnimation(.snappy) { close(panel) } },
+                          openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
+            .transition(.opacity)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                if let histogramHeight {
+                    HistogramCard(height: histogramHeight)
+                }
+                if camera.properties.isEmpty {
+                    Text("Reading camera settings…")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 68)
+                } else {
+                    ExposureGrid(active: $activeSetting)
+                }
+                optionPanel
+                ToolTiles(tools: tools.filter { item in !quickAids.contains { $0.id == item.id } },
+                          minimum: 108, columns: tileColumns)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    /// Mode dial over the shutter, with the last shot and the interval timer either side.
+    private var shutterCluster: some View {
+        VStack(spacing: 6) {
+            // LUMIX bodies have a physical mode dial the app can't read or turn.
+            if camera.properties["takemode"] != nil {
+                ModeCarousel()
+            }
+            HStack {
+                LastShotButton { showGallery = true }
+                    .disabled(camera.isBusyExposing || camera.interval.running || !camera.capabilities.cardBrowser)
+                    .frame(width: 72)
+                Spacer(minLength: 0)
+                ShutterButton()
+                Spacer(minLength: 0)
+                IntervalBadge { withAnimation(.snappy) { toggle(.interval) } }
+                    .frame(width: 72)
+            }
+            .padding(.horizontal, 18)
+        }
+    }
+
+    // MARK: - Panels (sheets on a phone)
+
+    /// The tool panel that is open. One at a time: in the workspace they share the inspector.
+    private var sidePanel: SidePanel? {
+        guard isWorkspace else { return nil }
+        if showInterval { return .interval }
+        if showBracket { return .bracket }
+        if showHighRes { return .highRes }
+        if showPresets { return .presets }
+        if showND { return .nd }
+        if showMotion { return .motion }
+        return nil
+    }
+
+    private func open(_ panel: SidePanel) {
+        showInterval = panel == .interval
+        showBracket = panel == .bracket
+        showHighRes = panel == .highRes
+        showPresets = panel == .presets
+        showND = panel == .nd
+        showMotion = panel == .motion
+        if isWorkspace { activeSetting = nil }
+    }
+
+    private func close(_ panel: SidePanel) {
+        switch panel {
+        case .interval: showInterval = false
+        case .bracket: showBracket = false
+        case .highRes: showHighRes = false
+        case .presets: showPresets = false
+        case .nd: showND = false
+        case .motion: showMotion = false
+        }
+    }
+
+    private func toggle(_ panel: SidePanel) {
+        if sidePanel == panel { close(panel) } else { open(panel) }
+    }
+
+    /// Presets → Astro: Astro is a sheet everywhere, so close the presets first (on a phone the sheet
+    /// has to go before another can come up).
+    private func openAstroFromPresets() {
+        let wasSheet = !isWorkspace
+        close(.presets)
+        if wasSheet {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showAstro = true }
+        } else {
+            showAstro = true
+        }
+    }
+
+    /// Presets → Macro → Focus stack: the Bracket tool on its Focus tab.
+    private func openFocusStackFromPresets() {
+        UserDefaults.standard.set(true, forKey: "bracket.focus")
+        let wasSheet = !isWorkspace
+        close(.presets)
+        if wasSheet {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { open(.bracket) }
+        } else {
+            withAnimation(.snappy) { open(.bracket) }
+        }
+    }
+
+    /// A tool's sheet is only for the phone layouts; in the workspace the same flag opens its panel.
+    private func phoneSheet(_ flag: Binding<Bool>) -> Binding<Bool> {
+        Binding(get: { flag.wrappedValue && !isWorkspace }, set: { flag.wrappedValue = $0 })
+    }
+
     // MARK: - Pieces
 
-    private var liveView: some View {
-        LiveViewPane(showGrid: showGrid, showHistogram: showHistogram, showLoupe: $showLoupe,
-                     hudTopInset: isLandscape ? 46 : 0)
-            .clipShape(.rect(cornerRadius: isLandscape ? 18 : 0, style: .continuous))
+    /// `histogramOverImage` is off in the workspace layouts, which always show a big histogram in
+    /// the inspector instead.
+    private func liveView(cornerRadius: CGFloat, hudTopInset: CGFloat = 0, histogramOverImage: Bool = true) -> some View {
+        LiveViewPane(showGrid: showGrid, showHistogram: showHistogram && histogramOverImage, showLoupe: $showLoupe,
+                     hudTopInset: hudTopInset)
+            .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(alignment: .bottom) {
+                if let suggestion = camera.sceneSuggestion, !showLoupe {
+                    SceneSuggestionPill(suggestion: suggestion) { applySuggestion(suggestion) }
+                        .padding(10)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy, value: camera.sceneSuggestion?.id)
+    }
+
+    /// Recipes and settings run straight away; ND and Motion open their panel, ready to go.
+    private func applySuggestion(_ suggestion: SceneSuggestion) {
+        Task { await camera.applySceneSuggestion(suggestion) }
+        switch suggestion.action {
+        case .openND: open(.nd)
+        case .openMotion: open(.motion)
+        default: break
+        }
     }
 
     @ViewBuilder private var optionPanel: some View {
@@ -250,10 +531,13 @@ struct RemoteView: View {
                 Button { Task { await camera.restartLiveView() } } label: {
                     Label("Restart live view", systemImage: "arrow.clockwise")
                 }
+                Toggle(isOn: Binding(get: { camera.sceneAssistantOn }, set: { camera.sceneAssistantOn = $0 })) {
+                    Label("Scene suggestions", systemImage: "sparkle.magnifyingglass")
+                }
             }
             Section {
                 if camera.capabilities.highResShot {
-                    Button { showHighRes = true } label: {
+                    Button { open(.highRes) } label: {
                         Label("High Res Shot helper", systemImage: "square.grid.3x3.square")
                     }
                 }
@@ -295,11 +579,16 @@ struct RemoteView: View {
 
     private var tools: [ToolItem] {
         let all = [
+            ToolItem(id: "presets", icon: "wand.and.stars", title: "Presets",
+                     on: sidePanel == .presets, opens: true) {
+                toolsOpen = false; toggle(.presets)
+            },
             ToolItem(id: "astro", icon: "moon.stars.fill", title: "Astro", on: false, opens: true) {
                 toolsOpen = false; showAstro = true
             },
-            ToolItem(id: "interval", icon: "timer", title: "Interval", on: camera.interval.running, opens: true) {
-                toolsOpen = false; showInterval = true
+            ToolItem(id: "interval", icon: "timer", title: "Interval",
+                     on: camera.interval.running || sidePanel == .interval, opens: true) {
+                toolsOpen = false; toggle(.interval)
             },
             ToolItem(id: "loupe", icon: "plus.magnifyingglass", title: "Loupe", on: showLoupe) {
                 showLoupe.toggle(); withAnimation(.snappy) { toolsOpen = false }
@@ -310,9 +599,16 @@ struct RemoteView: View {
             ToolItem(id: "peaking", icon: "scope", title: "Peaking", on: camera.focusPeaking) {
                 camera.focusPeaking.toggle()
             },
-            ToolItem(id: "bracket", icon: "square.stack.3d.down.right", title: "Bracket", on: camera.bracket.running,
-                     opens: true) {
-                toolsOpen = false; showBracket = true
+            ToolItem(id: "bracket", icon: "square.stack.3d.down.right", title: "Bracket",
+                     on: camera.bracket.running || sidePanel == .bracket, opens: true) {
+                toolsOpen = false; toggle(.bracket)
+            },
+            ToolItem(id: "nd", icon: "camera.filters", title: "ND filter", on: sidePanel == .nd, opens: true) {
+                toolsOpen = false; toggle(.nd)
+            },
+            ToolItem(id: "motion", icon: "figure.walk.motion", title: "Motion",
+                     on: camera.motion.armed || sidePanel == .motion, opens: true) {
+                toolsOpen = false; toggle(.motion)
             },
             ToolItem(id: "pocket", icon: "moon.zzz", title: "Pocket", on: false, opens: true) {
                 toolsOpen = false; pocketMode = true
@@ -327,8 +623,9 @@ struct RemoteView: View {
                      title: camera.touchShutter ? "Tap shoots" : "Tap AF", on: camera.touchShutter) {
                 camera.touchShutter.toggle()
             },
-            ToolItem(id: "highres", icon: "square.grid.3x3.square", title: "High Res", on: false, opens: true) {
-                toolsOpen = false; showHighRes = true
+            ToolItem(id: "highres", icon: "square.grid.3x3.square", title: "High Res", on: sidePanel == .highRes,
+                     opens: true) {
+                toolsOpen = false; toggle(.highRes)
             },
         ]
         let caps = camera.capabilities
@@ -357,6 +654,11 @@ struct RemoteView: View {
         let order = ["grid", "histogram", "peaking", "loupe", "night"]
         let all = tools
         return order.compactMap { id in all.first { $0.id == id } }
+    }
+
+    /// The workspace layouts keep the histogram in view in the inspector, so it isn't a switch there.
+    private var workspaceAids: [ToolItem] {
+        quickAids.filter { $0.id != "histogram" }
     }
 
     private var shutterRow: some View {
@@ -728,5 +1030,27 @@ struct ShutterButton: View {
                 }
             }
         }
+    }
+}
+
+/// Hands its content the edge where the system places its vertical bar (iOS 27.1), or nil where
+/// the system never places one (iPhones without one, earlier iOS).
+private struct VerticalBarEdgeReader<Content: View>: View {
+    @ViewBuilder var content: (HorizontalEdge?) -> Content
+
+    var body: some View {
+        if #available(iOS 27.1, *) {
+            Reader(content: content)
+        } else {
+            content(nil)
+        }
+    }
+
+    @available(iOS 27.1, *)
+    private struct Reader: View {
+        @Environment(\.toolbarVerticalEdge) private var edge
+        var content: (HorizontalEdge?) -> Content
+
+        var body: some View { content(edge) }
     }
 }

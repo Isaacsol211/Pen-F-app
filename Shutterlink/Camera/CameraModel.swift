@@ -143,6 +143,39 @@ final class CameraModel {
 
     var presetSteps: [PresetStep] = []
     var presetRunning = false
+    /// Which preset `presetSteps` belong to (a recipe id or a saved preset's UUID).
+    var presetResultsFor: String?
+    /// Settings from before the last preset, for Undo.
+    var presetUndo: SettingsSnapshot?
+    var savedPresets: [SavedPreset] = SavedPreset.load() {
+        didSet { SavedPreset.store(savedPresets) }
+    }
+
+    // MARK: Motion trigger, exposing to the right
+
+    var motion = MotionTrigger()
+    /// How much the trigger box changed between the last two frames analysed (0…1).
+    var motionLevel: Double = 0
+    @ObservationIgnored var motionPrevious: [UInt8]?
+    @ObservationIgnored var motionAnalyzedAt: CFTimeInterval = 0
+    @ObservationIgnored var motionQuietUntil: CFTimeInterval = 0
+    var ettrRunning = false
+
+    // MARK: Scene assistant
+
+    /// Suggestions from what live view shows (on by default; ⋯ menu).
+    var sceneAssistantOn = UserDefaults.standard.object(forKey: "assistant.on") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(sceneAssistantOn, forKey: "assistant.on")
+            if !sceneAssistantOn { sceneSuggestion = nil }
+        }
+    }
+    var sceneSuggestion: SceneSuggestion?
+    /// What the last look saw (for the request log and the self-test).
+    var sceneSignals: SceneSignals?
+    @ObservationIgnored var sceneSnoozed: [String: Date] = [:]
+    @ObservationIgnored var sceneCandidate: String?
+    @ObservationIgnored var sceneMisses = 0
 
     // MARK: Card browser
 
@@ -431,6 +464,13 @@ final class CameraModel {
         cameraNote = nil
         stopInterval()
         cancelBracket()
+        // Undo and the motion trigger belong to this camera's session.
+        presetUndo = nil
+        presetSteps = []
+        presetResultsFor = nil
+        armMotion(false)
+        sceneSuggestion = nil
+        sceneCandidate = nil
         openExposureStopTask?.cancel()
         openExposureStopTask = nil
         rawImportTask?.cancel()
@@ -561,6 +601,7 @@ final class CameraModel {
                 fpsUpdatedAt = now
                 if fps != frameTimes.count { fps = frameTimes.count }
             }
+            if motion.armed || motion.editing { analyzeMotion(image) }
         }
         if let info, info != liveInfo { liveInfo = info }
     }

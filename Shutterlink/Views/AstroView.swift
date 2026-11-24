@@ -11,7 +11,11 @@ struct AstroView: View {
     @State private var applied = false
 
     private var plan: AstroPlan {
-        AstroPlan(focalLength: focalLength, strict: strict, iso: iso, trails: trails)
+        AstroPlan(focalLength: focalLength, strict: strict, iso: iso, trails: trails, cropFactor: camera.cropFactor)
+    }
+
+    private var hasLiveComposite: Bool {
+        camera.properties["shutspeedvalue"]?.options.contains { $0.lowercased() == "livecomp" } ?? false
     }
 
     var body: some View {
@@ -78,8 +82,10 @@ struct AstroView: View {
                         tip("Put the camera on a tripod and turn image stabilisation off on the camera.")
                         tip("Focus manually on a bright star: switch the lens to MF and use the camera's magnify view.")
                         tip("Shoot from the phone so nothing touches the camera.")
-                        if trails {
+                        if trails && hasLiveComposite {
                             tip("Set the base exposure for Live Composite on the camera (Shooting menu ▸ Composite Settings). Tap the shutter to start and again to stop.")
+                        } else if trails {
+                            tip("This camera has no Live Composite. For trails, shoot a series with the interval timer and stack it afterwards.")
                         }
                     }
                 }
@@ -156,7 +162,7 @@ struct AstroView: View {
     }
 }
 
-private struct StepResultRow: View {
+struct StepResultRow: View {
     let step: PresetStep
 
     var body: some View {
@@ -182,7 +188,8 @@ private struct StepResultRow: View {
         case .running: ProgressView().controlSize(.small)
         case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .failed: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-        case .skipped: Image(systemName: "minus.circle").foregroundStyle(.orange)
+        // Not an error: the caption says what to do on the camera instead.
+        case .skipped: Image(systemName: "info.circle").foregroundStyle(.secondary)
         }
     }
 

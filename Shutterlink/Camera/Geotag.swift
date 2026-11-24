@@ -76,6 +76,13 @@ final class LocationLog: NSObject, CLLocationManagerDelegate {
         save()
     }
 
+    /// Roughly where the iPhone is, without asking for anything: the system's last fix when Location is
+    /// already allowed, or the last logged point. Good enough for where the sun and moon are.
+    var lastKnown: CLLocation? {
+        if isAuthorized, let location = manager.location { return location }
+        return points.last.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }
+    }
+
     /// The logged position closest in time to `date`, if one is within `window` seconds.
     func location(near date: Date, within window: TimeInterval = 600) -> CLLocation? {
         guard date > .distantPast,

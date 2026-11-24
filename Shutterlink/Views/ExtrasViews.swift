@@ -4,28 +4,13 @@ import UIKit
 // MARK: - Exposure bracketing
 
 struct BracketView: View {
-    @Environment(CameraModel.self) private var camera
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("bracket.frames") private var frames = 3
-    @AppStorage("bracket.thirds") private var thirds = 3
-    @AppStorage("bracket.target") private var targetRaw = BracketTarget.auto.rawValue
-
-    private var plan: BracketPlan {
-        BracketPlan(frames: frames, thirds: thirds, target: BracketTarget(rawValue: targetRaw) ?? .auto)
-    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if camera.bracket.running {
-                        progressCard
-                    } else {
-                        setupCards
-                    }
-                }
-                .padding(16)
-                .animation(.smooth, value: camera.bracket.running)
+                BracketPanel()
+                    .padding(16)
             }
             .navigationTitle("Bracketing")
             .navigationBarTitleDisplayMode(.inline)
@@ -35,6 +20,41 @@ struct BracketView: View {
                 }
             }
         }
+    }
+}
+
+/// The bracketing cards: in a sheet on a phone, in the inspector on a large canvas.
+struct BracketPanel: View {
+    @Environment(CameraModel.self) private var camera
+    @AppStorage("bracket.frames") private var frames = 3
+    @AppStorage("bracket.thirds") private var thirds = 3
+    @AppStorage("bracket.target") private var targetRaw = BracketTarget.auto.rawValue
+    @AppStorage("bracket.focus") private var focusMode = false
+    @AppStorage("focusStack.frames") private var focusFrames = 10
+    @AppStorage("focusStack.step") private var focusStepRaw = FocusStepSize.fine.rawValue
+
+    private var plan: BracketPlan {
+        BracketPlan(frames: frames, thirds: thirds, target: BracketTarget(rawValue: targetRaw) ?? .auto)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if camera.bracket.running {
+                progressCard
+            } else {
+                Picker("Bracket", selection: $focusMode) {
+                    Label("Exposure", systemImage: "plusminus.circle").tag(false)
+                    Label("Focus", systemImage: "scope").tag(true)
+                }
+                .pickerStyle(.segmented)
+                if focusMode {
+                    focusCards
+                } else {
+                    setupCards
+                }
+            }
+        }
+        .animation(.smooth, value: camera.bracket.running)
     }
 
     @ViewBuilder private var setupCards: some View {
@@ -46,7 +66,7 @@ struct BracketView: View {
             .pickerStyle(.segmented)
             Text("Step").font(.headline)
             Picker("Step", selection: $thirds) {
-                ForEach(1...6, id: \.self) { Text(Self.stepLabel($0)).tag($0) }
+                ForEach(1...6, id: \.self) { Text(BracketPanel.stepLabel($0)).tag($0) }
             }
             .pickerStyle(.segmented)
             Text("Vary").font(.headline)
@@ -101,8 +121,61 @@ struct BracketView: View {
             Text("Bracketing needs a timed shutter speed, not Bulb or Live modes.")
                 .font(.footnote).foregroundStyle(.secondary)
         }
-        Text("No focus bracketing here: there's no Wi-Fi command to step the focus. Use the camera's own Focus BKT in its Bracketing menu.")
-            .font(.footnote).foregroundStyle(.secondary)
+    }
+
+    // MARK: Focus stacking
+
+    @ViewBuilder private var focusCards: some View {
+        if camera.capabilities.focusDrive {
+            glassCard {
+                Stepper(value: $focusFrames, in: 2...200) {
+                    HStack {
+                        Text("Frames").font(.headline)
+                        Spacer()
+                        Text("\(focusFrames)").font(.body.monospacedDigit().weight(.semibold))
+                    }
+                }
+                Text("Step").font(.headline)
+                Picker("Step", selection: $focusStepRaw) {
+                    ForEach(FocusStepSize.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented)
+                Text("Fine for macro and wide apertures, coarser for landscapes and stopped-down lenses. The stack stops early if the lens reaches infinity.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            glassCard {
+                Label("Before you start", systemImage: "lightbulb").font(.headline)
+                Text(camera.focusStackSetup)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Label("Not yet tried on a real camera of this brand: shoot a short stack first.", systemImage: "flask")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Button {
+                camera.startFocusStack(frames: focusFrames, step: FocusStepSize(rawValue: focusStepRaw) ?? .fine)
+            } label: {
+                Label("Shoot \(focusFrames)-frame focus stack", systemImage: "square.stack.3d.forward.dottedline")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.accent)
+            .tint(Theme.accent)
+            .disabled(!camera.canFocusStack)
+            if camera.isOpenEndedShutter {
+                Text("Focus stacking needs a timed shutter speed, not Bulb or Live modes.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        } else {
+            glassCard {
+                Label("Use the camera's own focus bracketing", systemImage: "scope").font(.headline)
+                Text(camera.focusStackUnavailable)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var progressCard: some View {
@@ -121,7 +194,7 @@ struct BracketView: View {
                 }
                 .frame(width: 84, height: 84)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Bracketing").font(.headline)
+                    Text(camera.bracket.isFocusStack ? "Focus stack" : "Bracketing").font(.headline)
                     if let label = camera.bracket.label {
                         Text(label).font(.subheadline.monospaced()).foregroundStyle(.secondary)
                     }
@@ -345,13 +418,9 @@ struct PocketModeView: View {
         .onTapGesture(count: 2) { dismiss() }
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
+        .background(WindowSceneReader { dim($0?.screen) })
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
-            if let screen = Self.screen {
-                savedBrightness = screen.brightness
-                dimmedScreen = screen
-                screen.brightness = 0.02
-            }
         }
         .onDisappear {
             if let savedBrightness, let dimmedScreen { dimmedScreen.brightness = savedBrightness }
@@ -363,8 +432,14 @@ struct PocketModeView: View {
         .accessibilityAction(named: "Leave pocket mode") { dismiss() }
     }
 
-    private static var screen: UIScreen? {
-        UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.screen }.first
+    /// Dims the screen showing this view. When the scene moves to another screen (folding or
+    /// unfolding an iPhone Duo), the old screen gets its brightness back and the new one is dimmed.
+    private func dim(_ screen: UIScreen?) {
+        guard screen !== dimmedScreen else { return }
+        if let savedBrightness, let dimmedScreen { dimmedScreen.brightness = savedBrightness }
+        savedBrightness = screen?.brightness
+        dimmedScreen = screen
+        screen?.brightness = 0.02
     }
 
     private func headline(at now: Date) -> String {

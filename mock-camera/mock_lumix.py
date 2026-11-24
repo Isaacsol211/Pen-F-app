@@ -7,7 +7,7 @@ implementations (the real GH5 has not been checked against this):
 
   * cam.cgi commands on HTTP (the real camera uses port 80 at 192.168.54.1):
     pairing (accctrl req_acc), getstate, getinfo, getsetting/setsetting,
-    camcmd (recmode, playmode, capture, video, poweroff), camctrl touch AF,
+    camcmd (recmode, playmode, capture, video, poweroff), camctrl touch AF and focus drive,
     startstream/stopstream.
   * Live view over UDP: one JPEG per datagram after a 32-byte header whose
     bytes 30-31 give the length of an extra header that follows it.
@@ -410,6 +410,16 @@ class CamHandler(BaseHTTPRequestHandler):
 
     def mode_camctrl(self, q):
         cam = self.cam
+        if q.get("type") == "focus":
+            # Manual focus drive: wide-* nearer, tele-* farther; "-fast" moves 8x as far.
+            # Replies "ok,<position>,<end>" as plain text (not XML), like the real cameras.
+            steps = {"wide-normal": -8, "wide-fast": -64, "tele-normal": 8, "tele-fast": 64}
+            value = q.get("value", "")
+            if value not in steps:
+                return self.result("err_param")
+            cam.focus_pos = max(0, min(1024, getattr(cam, "focus_pos", 200) + steps[value]))
+            print(f"  focus {value} -> {cam.focus_pos}/1024")
+            return self.reply(200, f"ok,{cam.focus_pos},1024", "text/plain")
         if q.get("type") != "touch":
             return self.result("err_param")
         if q.get("value2") == "off":

@@ -7,8 +7,12 @@ struct GalleryView: View {
     @Environment(\.dismiss) private var dismiss
     @Namespace private var zoom
     @State private var starredOnly = false
+    /// Workspace only: the photo in the preview pane.
+    @State private var selectedID: CameraImage.ID?
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 3)]
+    /// Larger thumbnails where there's a large canvas to fill.
+    private static let workspaceColumns = [GridItem(.adaptive(minimum: 120), spacing: 3)]
 
     private var visibleImages: [CameraImage] {
         starredOnly ? camera.images.filter { camera.isStarred($0) } : camera.images
@@ -18,57 +22,122 @@ struct GalleryView: View {
     private var importing: Bool { camera.rawImport != nil && camera.rawImport?.message == nil }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if camera.galleryLoading && camera.images.isEmpty {
-                    ProgressView("Reading the card…")
-                } else if let error = camera.galleryError, camera.images.isEmpty {
-                    ContentUnavailableView("Couldn't read the card", systemImage: "sdcard",
-                                           description: Text(error))
-                } else if camera.images.isEmpty && camera.cardFolders.isEmpty {
-                    ContentUnavailableView("No photos", systemImage: "photo.on.rectangle",
-                                           description: Text("Nothing on the card yet."))
-                } else if starredOnly && starredCount == 0 {
-                    ContentUnavailableView("No starred photos", systemImage: "star",
-                                           description: Text("Tap and hold a photo to star it, or use the star when viewing it."))
-                } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14, pinnedViews: [.sectionHeaders]) {
-                            ForEach(camera.cardFolders.filter { folder in
-                                !starredOnly || visibleImages.contains { $0.directory == folder.path }
-                            }) { folder in
-                                Section {
-                                    folderContent(folder)
-                                } header: {
-                                    FolderHeader(folder: folder)
-                                }
-                            }
+        GeometryReader { geo in
+            let workspace = Workspace.isWorkspace(geo)
+            let landscape = geo.size.width > geo.size.height
+            NavigationStack {
+                Group {
+                    if workspace, !camera.images.isEmpty {
+                        split(landscape: landscape, size: geo.size)
+                    } else {
+                        browser(workspace: false)
+                            .safeAreaBar(edge: .bottom) { bottomBar }
+                    }
+                }
+                .navigationTitle(camera.images.isEmpty ? "On the card" : "On the card · \(camera.images.count)")
+                .navigationBarTitleDisplayMode(.inline)
+                .navigationDestination(for: CameraImage.self) { image in
+                    PhotoPager(images: visibleImages, start: image)
+                        .navigationTransition(.zoom(sourceID: image.id, in: zoom))
+                }
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done", systemImage: "checkmark") {
+                            dismiss()
+                            Task { await camera.closeGallery() }
                         }
-                        .padding(.bottom, 20)
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Reload", systemImage: "arrow.clockwise") { Task { await camera.openGallery() } }
+                            .disabled(camera.galleryLoading)
                     }
                 }
+                .animation(.smooth, value: camera.rawImport)
+                .task { await camera.openGallery() }
             }
-            .navigationTitle(camera.images.isEmpty ? "On the card" : "On the card · \(camera.images.count)")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: CameraImage.self) { image in
-                PhotoPager(images: visibleImages, start: image)
-                    .navigationTransition(.zoom(sourceID: image.id, in: zoom))
-            }
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") {
-                        dismiss()
-                        Task { await camera.closeGallery() }
+        }
+    }
+
+    /// The card's folders and thumbnails, or why there's nothing to show.
+    @ViewBuilder private func browser(workspace: Bool) -> some View {
+        if camera.galleryLoading && camera.images.isEmpty {
+            ProgressView("Reading the card…")
+        } else if let error = camera.galleryError, camera.images.isEmpty {
+            ContentUnavailableView("Couldn't read the card", systemImage: "sdcard",
+                                   description: Text(error))
+        } else if camera.images.isEmpty && camera.cardFolders.isEmpty {
+            ContentUnavailableView("No photos", systemImage: "photo.on.rectangle",
+                                   description: Text("Nothing on the card yet."))
+        } else if starredOnly && starredCount == 0 {
+            ContentUnavailableView("No starred photos", systemImage: "star",
+                                   description: Text("Tap and hold a photo to star it, or use the star when viewing it."))
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14, pinnedViews: [.sectionHeaders]) {
+                    ForEach(camera.cardFolders.filter { folder in
+                        !starredOnly || visibleImages.contains { $0.directory == folder.path }
+                    }) { folder in
+                        Section {
+                            folderContent(folder, selects: workspace)
+                        } header: {
+                            FolderHeader(folder: folder)
+                        }
                     }
                 }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Reload", systemImage: "arrow.clockwise") { Task { await camera.openGallery() } }
-                        .disabled(camera.galleryLoading)
-                }
+                .padding(.bottom, 20)
             }
+        }
+    }
+
+    // MARK: - Workspace (large canvases)
+
+    /// The photo shown in the preview pane: the one you picked, else the first JPEG listed (cameras
+    /// don't serve a preview for every RAW), else the first photo.
+    private var previewed: CameraImage? {
+        visibleImages.first { $0.id == selectedID }
+            ?? visibleImages.first { $0.fileExtension == "JPG" }
+            ?? visibleImages.first
+    }
+
+    /// Browser and preview together: side by side on a wide canvas, preview over the browser on a
+    /// tall one. Tapping a thumbnail shows it in the preview; the preview opens full screen.
+    @ViewBuilder private func split(landscape: Bool, size: CGSize) -> some View {
+        let grid = browser(workspace: true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaBar(edge: .bottom) { bottomBar }
-            .animation(.smooth, value: camera.rawImport)
-            .task { await camera.openGallery() }
+        if landscape {
+            HStack(spacing: 0) {
+                grid.frame(width: min(560, max(330, (size.width * 0.38).rounded())))
+                Hairline(axis: .vertical).ignoresSafeArea(edges: .bottom)
+                previewPane
+            }
+        } else {
+            VStack(spacing: 0) {
+                previewPane.frame(height: (size.height * 0.5).rounded())
+                Hairline()
+                grid
+            }
+        }
+    }
+
+    @ViewBuilder private var previewPane: some View {
+        if let image = previewed {
+            PhotoPage(image: image)
+                .id(image.id)
+                .overlay(alignment: .topTrailing) {
+                    NavigationLink(value: image) {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.footnote.weight(.bold))
+                    }
+                    .buttonStyle(.surfaceCircle)
+                    .padding(12)
+                    .accessibilityLabel("Full screen")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView("No photo selected", systemImage: "photo",
+                                   description: Text("Pick a photo to see it here."))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -101,7 +170,8 @@ struct GalleryView: View {
         }
     }
 
-    @ViewBuilder private func folderContent(_ folder: CardFolder) -> some View {
+    /// `selects`: a tap shows the photo in the preview pane (the workspace split) instead of opening it.
+    @ViewBuilder private func folderContent(_ folder: CardFolder, selects: Bool) -> some View {
         let items = visibleImages.filter { $0.directory == folder.path }
         if items.isEmpty && starredOnly {
             EmptyView()
@@ -117,11 +187,32 @@ struct GalleryView: View {
                 .surface(.regular, in: .rect(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 10)
         } else {
-            LazyVGrid(columns: columns, spacing: 3) {
+            LazyVGrid(columns: selects ? Self.workspaceColumns : columns, spacing: 3) {
                 ForEach(items) { image in
-                    NavigationLink(value: image) {
-                        ThumbnailCell(image: image)
-                            .matchedTransitionSource(id: image.id, in: zoom)
+                    Group {
+                        if selects {
+                            // In the split, a tap shows the photo in the preview pane.
+                            let selected = previewed?.id == image.id
+                            Button {
+                                selectedID = image.id
+                            } label: {
+                                ThumbnailCell(image: image)
+                                    .matchedTransitionSource(id: image.id, in: zoom)
+                                    .overlay {
+                                        if selected {
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .strokeBorder(Theme.accent, lineWidth: 3)
+                                        }
+                                    }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                        } else {
+                            NavigationLink(value: image) {
+                                ThumbnailCell(image: image)
+                                    .matchedTransitionSource(id: image.id, in: zoom)
+                            }
+                        }
                     }
                     .contextMenu {
                         let starred = camera.isStarred(image)

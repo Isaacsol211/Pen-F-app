@@ -37,6 +37,7 @@ from mock_penf import load_frames  # noqa: E402  (same live-view frames as the P
 
 OK, BUSY, NOT_SUPPORTED, INVALID_VALUE, SESSION_OPEN = 0x2001, 0x2019, 0x2005, 0x201C, 0x201E
 NOT_LIVE_VIEW = 0xA00B
+MF_DRIVE_STEP_END = 0xA00C
 STORAGE = 0x00010001
 
 # PTP data types
@@ -178,7 +179,7 @@ class MockNikon:
 
     def operations(self):
         ops = [0x1001, 0x1002, 0x1003, 0x1004, 0x1007, 0x1008, 0x1009, 0x100A, 0x1014, 0x1015, 0x1016, 0x101B,
-               0x90C1, 0x90C2, 0x90C4, 0x90C8, 0x9201, 0x9202, 0x9203, 0x9205]
+               0x90C1, 0x90C2, 0x90C4, 0x90C8, 0x9201, 0x9202, 0x9203, 0x9204, 0x9205]
         if self.dslr:
             return ops + [0x100E, 0x90C0, 0x90C7]
         return ops + [0x9207, 0x920A, 0x920B, 0x941C]
@@ -263,6 +264,22 @@ class MockNikon:
             if now < self.busy_until:
                 return BUSY, None
             return OK, self.live_view_image()
+        if op == 0x9204:
+            # MfDrive: direction 1 = towards the closest point, 2 = towards infinity; amount 1-32767.
+            if not self.live_view:
+                return NOT_LIVE_VIEW, None
+            if now < self.busy_until:
+                return BUSY, None
+            direction, amount = (list(p) + [0, 0])[:2]
+            position = getattr(self, "focus_pos", 2000)
+            target = position + amount if direction == 2 else position - amount
+            if (direction == 2 and position >= 10000) or (direction == 1 and position <= 0):
+                print("  focus at the end of travel")
+                return MF_DRIVE_STEP_END, None
+            self.focus_pos = max(0, min(10000, target))
+            self.busy_until = now + 0.15
+            print(f"  focus {'far' if direction == 2 else 'near'} {amount} -> {self.focus_pos}/10000")
+            return OK, None
         if op == 0x9205:
             print(f"  AF area at {p[0]}, {p[1]}")
             return OK, None

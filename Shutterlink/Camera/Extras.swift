@@ -33,6 +33,8 @@ struct BracketState: Equatable {
     var total = 0
     /// What the frame being shot is set to, e.g. "−1 EV · 1/500".
     var label: String?
+    /// A focus stack rather than an exposure bracket.
+    var isFocusStack = false
 }
 
 /// The settings a bracket will shoot, worked out before it starts.
@@ -207,6 +209,80 @@ extension CameraModel {
             self.bracket = BracketState()
             self.bracketTask = nil
             if finished > 0 { self.showToast("Bracket: \(finished) of \(set.values.count) frames") }
+        }
+    }
+
+    // MARK: - Focus stacking
+
+    /// Where the user puts focus before starting, and what the lens switch has to be on.
+    var focusStackSetup: String {
+        switch brand {
+        case .panasonic:
+            "Set the camera to MF and focus on the nearest thing you want sharp. Each frame moves focus a step farther away."
+        case .nikon, .canon:
+            // The camera drives the lens's AF motor, so the lens has to stay on AF.
+            "Leave the lens on AF, focus on the nearest thing you want sharp, and keep live view on. Each frame moves focus a step farther away."
+        case .olympus, .sony:
+            "Focus on the nearest thing you want sharp. Each frame moves focus a step farther away."
+        }
+    }
+
+    /// Where to look instead, on cameras the app can't step the focus of.
+    var focusStackUnavailable: String {
+        switch brand {
+        case .olympus:
+            "Olympus and OM System cameras have no Wi-Fi command to move focus. Use Focus BKT, or Focus Stacking where the body has it, in the camera's Bracketing menu, then press the shutter here."
+        case .sony:
+            "Sony's Camera Remote API has no command to move focus. Use the camera's own Focus Bracket where it has one."
+        case .panasonic, .nikon, .canon:
+            "This camera doesn't offer a Wi-Fi command to move focus. Use its own focus bracketing from the camera's menu."
+        }
+    }
+
+    var canFocusStack: Bool { capabilities.focusDrive && canBracket }
+
+    /// Shoots a frame, steps focus farther, and repeats until the frame count or infinity. Uses the
+    /// bracket's state, so its progress ring, Watch read-out and Cancel work for it too.
+    func startFocusStack(frames: Int, step: FocusStepSize) {
+        guard canFocusStack, let driver, frames > 0 else { return }
+        bracket = BracketState(running: true, done: 0, total: frames, isFocusStack: true)
+        bracketTask = Task { [weak self] in
+            guard let self else { return }
+            var reachedEnd = false
+            var failure: String?
+            for index in 0..<frames {
+                if Task.isCancelled { break }
+                self.bracket.label = "Focus \(index + 1) of \(frames)"
+                let before = self.shotCounter
+                await self.shutterPressed()
+                await self.shutterReleased()
+                while self.isShooting, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
+                guard self.shotCounter > before else {
+                    failure = self.lastError ?? "The camera didn't take frame \(index + 1)."
+                    break
+                }
+                self.bracket.done = index + 1
+                if index == frames - 1 || Task.isCancelled { break }
+                do {
+                    if try await driver.driveFocus(farther: true, step: step) == .endOfTravel {
+                        reachedEnd = true
+                        break
+                    }
+                } catch {
+                    failure = error.localizedDescription
+                    break
+                }
+                // Let the lens settle before the next frame.
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            let shot = self.bracket.done
+            self.bracket = BracketState()
+            self.bracketTask = nil
+            if let failure {
+                self.lastError = shot > 0 ? "Focus stack stopped after \(shot) frames: \(failure)" : failure
+            } else if shot > 0 {
+                self.showToast(reachedEnd ? "Focus stack: \(shot) frames, reached infinity" : "Focus stack: \(shot) of \(frames) frames")
+            }
         }
     }
 

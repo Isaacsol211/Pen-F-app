@@ -119,12 +119,41 @@ final class PanasonicDriver: CameraDriver {
         CameraCapabilities(liveViewSizes: CameraBrand.panasonic.defaultLiveViewSizes, tapToFocus: true,
                            openEndedExposure: !(camera.profile?.fixedExposure ?? false),
                            movie: !(camera.profile?.noVideo ?? false), videoSwitch: true, lastShotReview: false,
-                           clockSync: false, highResShot: false, cardBrowser: true, powerOff: true)
+                           clockSync: false, highResShot: false, cardBrowser: true, powerOff: true,
+                           focusDrive: true)
     }
 
     func teardown() {
         keepAlive?.cancel()
         keepAlive = nil
+    }
+
+    // MARK: - Focus stacking
+
+    /// `camctrl&type=focus`: "wide-…" steps nearer, "tele-…" farther, "-fast" in bigger steps. The camera
+    /// has to be in MF (it answers err_reject otherwise) and replies "ok,<position>,<end>".
+    func driveFocus(farther: Bool, step: FocusStepSize) async throws -> FocusDriveResult {
+        let direction = farther ? "tele" : "wide"
+        let (speed, repeats) = switch step {
+        case .fine: ("normal", 1)
+        case .medium: ("normal", 3)
+        case .coarse: ("fast", 1)
+        }
+        var reply = ""
+        for _ in 0..<repeats {
+            do {
+                reply = try await lumixCommand([("mode", "camctrl"), ("type", "focus"), ("value", "\(direction)-\(speed)")],
+                                               timeout: 5)
+            } catch let error as PanasonicError where error.code == "err_reject" {
+                throw CameraError("The camera won't move focus: switch it to MF (manual focus) and try again.")
+            }
+        }
+        // Community notes read the two numbers as position and end of travel; unconfirmed on a real body.
+        let numbers = reply.split(separator: ",").dropFirst().compactMap { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        if numbers.count >= 2, numbers[1] > 0, farther ? numbers[0] >= numbers[1] : numbers[0] <= 0 {
+            return .endOfTravel
+        }
+        return .moved
     }
 
     // MARK: - Commands
