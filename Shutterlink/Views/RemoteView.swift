@@ -64,6 +64,7 @@ struct RemoteView: View {
             .onChange(of: workspace) { _, value in isWorkspace = value }
         }
         .background(WindowSceneReader { windowScene = $0 })
+        .task { await camera.runSceneAssistant() }
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
         // Red night-vision mode keeps your eyes dark-adapted under the stars. Applied only when on:
         // a colour filter over the whole screen forces it to re-render offscreen on every frame.
@@ -483,6 +484,24 @@ struct RemoteView: View {
         LiveViewPane(showGrid: showGrid, showHistogram: showHistogram && histogramOverImage, showLoupe: $showLoupe,
                      hudTopInset: hudTopInset)
             .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(alignment: .bottom) {
+                if let suggestion = camera.sceneSuggestion, !showLoupe {
+                    SceneSuggestionPill(suggestion: suggestion) { applySuggestion(suggestion) }
+                        .padding(10)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.snappy, value: camera.sceneSuggestion?.id)
+    }
+
+    /// Recipes and settings run straight away; ND and Motion open their panel, ready to go.
+    private func applySuggestion(_ suggestion: SceneSuggestion) {
+        Task { await camera.applySceneSuggestion(suggestion) }
+        switch suggestion.action {
+        case .openND: open(.nd)
+        case .openMotion: open(.motion)
+        default: break
+        }
     }
 
     @ViewBuilder private var optionPanel: some View {
@@ -511,6 +530,9 @@ struct RemoteView: View {
                 }
                 Button { Task { await camera.restartLiveView() } } label: {
                     Label("Restart live view", systemImage: "arrow.clockwise")
+                }
+                Toggle(isOn: Binding(get: { camera.sceneAssistantOn }, set: { camera.sceneAssistantOn = $0 })) {
+                    Label("Scene suggestions", systemImage: "sparkle.magnifyingglass")
                 }
             }
             Section {

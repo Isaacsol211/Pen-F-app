@@ -161,6 +161,22 @@ final class CameraModel {
     @ObservationIgnored var motionQuietUntil: CFTimeInterval = 0
     var ettrRunning = false
 
+    // MARK: Scene assistant
+
+    /// Suggestions from what live view shows (on by default; ⋯ menu).
+    var sceneAssistantOn = UserDefaults.standard.object(forKey: "assistant.on") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(sceneAssistantOn, forKey: "assistant.on")
+            if !sceneAssistantOn { sceneSuggestion = nil }
+        }
+    }
+    var sceneSuggestion: SceneSuggestion?
+    /// What the last look saw (for the request log and the self-test).
+    var sceneSignals: SceneSignals?
+    @ObservationIgnored var sceneSnoozed: [String: Date] = [:]
+    @ObservationIgnored var sceneCandidate: String?
+    @ObservationIgnored var sceneMisses = 0
+
     // MARK: Card browser
 
     var images: [CameraImage] = []
@@ -453,6 +469,8 @@ final class CameraModel {
         presetSteps = []
         presetResultsFor = nil
         armMotion(false)
+        sceneSuggestion = nil
+        sceneCandidate = nil
         openExposureStopTask?.cancel()
         openExposureStopTask = nil
         rawImportTask?.cancel()

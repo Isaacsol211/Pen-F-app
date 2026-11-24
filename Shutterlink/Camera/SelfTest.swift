@@ -146,6 +146,27 @@ enum DriverSelfTest {
         let refused = camera.presetSteps.filter { if case .failed = $0.state { true } else { false } }
         check("astro preset", refused.isEmpty, refused.map(\.title).joined(separator: ", "))
 
+        // Scene assistant: sky positions against known dates, rules against known scenes, and live analysis.
+        let iso = ISO8601DateFormatter()
+        let noon = Astronomy.sky(at: iso.date(from: "2026-06-21T12:00:00Z")!, latitude: 51.48, longitude: 0)
+        let fullMoon = Astronomy.sky(at: iso.date(from: "2026-11-24T15:00:00Z")!, latitude: 51.48, longitude: 0)
+        let newMoon = Astronomy.sky(at: iso.date(from: "2026-11-09T12:00:00Z")!, latitude: 51.48, longitude: 0)
+        check("sky positions", abs(noon.sunAltitude - 62) < 1.5 && fullMoon.moonIllumination > 0.95 && newMoon.moonIllumination < 0.05,
+              String(format: "sun %.1f° (≈62), full %.2f, new %.2f", noon.sunAltitude, fullMoon.moonIllumination, newMoon.moonIllumination))
+        func top(_ signals: SceneSignals) -> String { camera.sceneSuggestions(for: signals).first?.id ?? "-" }
+        let night = top(SceneSignals(labels: ["night_sky": 0.97, "sky": 0.97], brightness: 0.004))
+        let moon = top(SceneSignals(labels: ["moon": 0.8], brightness: 0.01))
+        let water = top(SceneSignals(labels: ["waterfall": 0.8], brightness: 0.3))
+        let bird = top(SceneSignals(labels: ["bird": 0.7], brightness: 0.25))
+        let clipping = camera.sceneSuggestions(for: SceneSignals(brightness: 0.4, clipped: 0.06)).map(\.id)
+        check("scene rules", night == "astro" && moon == "moon" && water == "water-nd" && bird == "bird"
+                && (clipping.contains("clipping") || camera.exposureChange(thirds: -2) == nil),
+              "night=\(night) moon=\(moon) water=\(water) bird=\(bird) clipping=\(clipping)")
+        await wait(8) { camera.sceneSignals != nil }
+        check("scene analysis", camera.sceneSignals != nil,
+              (camera.sceneSignals?.labels.sorted { $0.value > $1.value }.prefix(3).map { "\($0.key) \(String(format: "%.2f", $0.value))" } ?? []).joined(separator: ", ")
+                + " suggestion=\(camera.sceneSuggestion?.id ?? "-")")
+
         // One-tap recipes: every step applies or says why it can't; none is refused.
         for recipe in PresetRecipe.allCases where recipe != .astro {
             let ok = await camera.apply(recipe)
