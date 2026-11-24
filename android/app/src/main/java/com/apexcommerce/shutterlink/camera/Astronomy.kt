@@ -57,10 +57,7 @@ object Astronomy {
         return ra to dec
     }
 
-    private fun normalized(degrees: Double): Double {
-        val r = degrees % 360
-        return if (r < 0) r + 360 else r
-    }
+    private fun normalized(degrees: Double) = degrees.mod(360.0)
 
     private fun rad(degrees: Double) = degrees * PI / 180
     private fun deg(radians: Double) = radians * 180 / PI

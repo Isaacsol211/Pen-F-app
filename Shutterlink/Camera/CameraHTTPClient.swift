@@ -49,10 +49,7 @@ struct LogEntry: Identifiable, Sendable {
     let millis: Int
     let summary: String
 
-    var ok: Bool {
-        guard let status else { return false }
-        return (200...204).contains(status)
-    }
+    var ok: Bool { (200...204).contains(status ?? 0) }
 
     var line: String {
         let time = date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute().second())
@@ -148,17 +145,15 @@ final class CameraHTTPClient: @unchecked Sendable {
             body = try JSONSerialization.data(withJSONObject: json)
             headers["Content-Type"] = "application/json"
         }
-        if urgent {
-            return try await perform(using: urgentSession, method: method, path: path, body: body, timeout: timeout,
-                                     log: log, headers: headers)
-        }
-        return try await send(method: method, path: path, body: body, timeout: timeout, log: log, headers: headers)
+        return try await urgent
+            ? perform(using: urgentSession, method: method, path: path, body: body, timeout: timeout, log: log, headers: headers)
+            : send(method: method, path: path, body: body, timeout: timeout, log: log, headers: headers)
     }
 
     /// Like `request`, decoding a JSON object reply ([:] for an empty body).
     func requestJSON(_ method: String, _ path: String, json: Any? = nil, timeout: TimeInterval = 10,
-                     log: Bool = true, urgent: Bool = false) async throws -> [String: Any] {
-        let data = try await request(method, path, json: json, timeout: timeout, log: log, urgent: urgent)
+                     log: Bool = true) async throws -> [String: Any] {
+        let data = try await request(method, path, json: json, timeout: timeout, log: log)
         if data.isEmpty { return [:] }
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw CameraError("The camera's reply to \(path) wasn't JSON.")
@@ -167,11 +162,7 @@ final class CameraHTTPClient: @unchecked Sendable {
     }
 
     static func path(_ cgi: String, _ params: [(String, String)]) -> String {
-        var path = "/\(cgi).cgi"
-        if !params.isEmpty {
-            path += "?" + params.map { "\($0.0)=\($0.1)" }.joined(separator: "&")
-        }
-        return path
+        "/\(cgi).cgi" + (params.isEmpty ? "" : "?" + params.map { "\($0.0)=\($0.1)" }.joined(separator: "&"))
     }
 
     private func send(method: String, path: String, body: Data?, timeout: TimeInterval, log: Bool,

@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 #if targetEnvironment(macCatalyst)
 import Network
@@ -42,16 +41,13 @@ final class WiFiInterface: @unchecked Sendable {
     private var current: String?
 
     /// nil until the first path update (a few milliseconds after launch) or while Wi-Fi is off.
-    var name: String? {
-        lock.lock(); defer { lock.unlock() }
-        return current
-    }
+    var name: String? { lock.withLock { current } }
 
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let name = path.availableInterfaces.first { $0.type == .wifi }?.name
             guard let self else { return }
-            self.lock.lock(); self.current = name; self.lock.unlock()
+            self.lock.withLock { self.current = name }
         }
         monitor.start(queue: DispatchQueue(label: "shutterlink.wifi-interface"))
     }

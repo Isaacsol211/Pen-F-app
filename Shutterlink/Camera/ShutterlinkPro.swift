@@ -127,14 +127,9 @@ final class ShutterlinkPro {
         purchased = bought
         trialStarted = trial
         if let result = try? await AppTransaction.shared {
-            switch result {
-            case .verified(let app):
-                environment = app.environment
-                if !bought { earlyUser = Self.isEarlyUser(app) }
-            case .unverified(let app, _):
-                // Still says where the app came from; early-user status needs a verified one.
-                environment = app.environment
-            }
+            // An unverified one still says where the app came from; early-user status needs a verified one.
+            environment = result.unsafePayloadValue.environment
+            if case .verified(let app) = result, !bought { earlyUser = Self.isEarlyUser(app) }
         }
     }
 
@@ -186,10 +181,7 @@ final class ShutterlinkPro {
                 await refresh()
             case .pending:
                 message = "Waiting for approval (Ask to Buy). Pro unlocks once it's approved."
-            case .userCancelled:
-                break
-            @unknown default:
-                break
+            default: break   // the user cancelled
             }
         } catch {
             message = error.localizedDescription

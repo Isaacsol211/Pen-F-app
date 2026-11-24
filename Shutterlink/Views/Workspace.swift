@@ -37,17 +37,12 @@ struct Hairline: View {
 struct ExposureGrid: View {
     @Environment(CameraModel.self) private var camera
     @Binding var active: String?
-    var columns = 3
     @ScaledMetric(relativeTo: .title2) private var valueSize: CGFloat = 23
 
-    private var items: [String] {
-        var names = ["focalvalue", "shutspeedvalue", "isospeedvalue", "expcomp", "wbvalue", "drivemode"]
-        if camera.isMovieMode { names.append("exposemovie") }
-        return names.filter { camera.properties[$0] != nil }
-    }
+    private var items: [String] { ExposureStrip.items(camera) }
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
             ForEach(items, id: \.self) { name in
                 cell(name)
             }
@@ -162,14 +157,13 @@ struct HistogramCard: View {
 /// (the arrow on a tile says so), then the switches.
 struct ToolTiles: View {
     let tools: [ToolItem]
-    /// Narrowest a tile gets; the grid fits as many per row as the column allows.
-    var minimum: CGFloat = 84
-    /// A fixed number of tiles per row instead (the inspector, whose width is known).
+    /// A fixed number of tiles per row (the inspector, whose width is known); else as many 108 pt
+    /// tiles as the column fits.
     var columns: Int?
 
     var body: some View {
         let grid = columns.map { Array(repeating: GridItem(.flexible(), spacing: 8), count: $0) }
-            ?? [GridItem(.adaptive(minimum: minimum), spacing: 8)]
+            ?? [GridItem(.adaptive(minimum: 108), spacing: 8)]
         VStack(alignment: .leading, spacing: 8) {
             CapsLabel("Tools", color: Theme.tertiary)
                 .padding(.leading, 2)
@@ -212,34 +206,55 @@ enum SidePanel: String, Identifiable {
     }
 }
 
-/// A tool's panel in the inspector: a title bar with a close button over the same content its
-/// sheet shows on a phone. The live view and the shutter stay in view beside it.
+/// A tool's panel. In the inspector: a title bar with a close button over its content, with the live
+/// view and the shutter in view beside it. With no `onClose`, the phone's sheet: the same content in
+/// a scroll view with a Done button.
 struct SidePanelView: View {
     let panel: SidePanel
-    let onClose: () -> Void
+    var onClose: (() -> Void)?
     var openAstro: () -> Void = {}
     var openFocusStack: () -> Void = {}
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: panel.icon).foregroundStyle(Theme.accent)
-                CapsLabel(panel.title, color: Theme.accent)
-                Spacer(minLength: 0)
-                Button(action: onClose) {
-                    Image(systemName: "xmark").font(.footnote.weight(.bold))
+        if let onClose {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: panel.icon).foregroundStyle(Theme.accent)
+                    CapsLabel(panel.title, color: Theme.accent)
+                    Spacer(minLength: 0)
+                    Button(action: onClose) {
+                        Image(systemName: "xmark").font(.footnote.weight(.bold))
+                    }
+                    .buttonStyle(.surfaceCircle)
+                    .accessibilityLabel("Close \(panel.title)")
                 }
-                .buttonStyle(.surfaceCircle)
-                .accessibilityLabel("Close \(panel.title)")
+                content
             }
-            switch panel {
-            case .interval: IntervalPanel()
-            case .bracket: BracketPanel()
-            case .highRes: HighResPanel()
-            case .presets: PresetsPanel(openAstro: openAstro, openFocusStack: openFocusStack)
-            case .nd: NDPanel()
-            case .motion: MotionPanel()
+        } else {
+            NavigationStack {
+                ScrollView {
+                    content.padding(16)
+                }
+                .navigationTitle(panel.title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done", systemImage: "checkmark") { dismiss() }
+                    }
+                }
             }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        switch panel {
+        case .interval: IntervalPanel()
+        case .bracket: BracketPanel()
+        case .highRes: HighResPanel()
+        case .presets: PresetsPanel(openAstro: openAstro, openFocusStack: openFocusStack)
+        case .nd: NDPanel()
+        case .motion: MotionPanel()
         }
     }
 }

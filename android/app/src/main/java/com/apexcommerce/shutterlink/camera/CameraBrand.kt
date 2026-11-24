@@ -70,16 +70,12 @@ enum class CameraBrand(val id: String) {
     val defaultCapabilities: CameraCapabilities
         get() = when (this) {
             OLYMPUS -> CameraCapabilities(
-                liveViewSizes = defaultLiveViewSizes, openEndedExposure = true, movie = true,
-                lastShotReview = true, clockSync = true, highResShot = true, powerOff = true,
-                userAgentChoice = true,
+                liveViewSizes = defaultLiveViewSizes, movie = true, lastShotReview = true, clockSync = true,
+                highResShot = true, powerOff = true,
             )
-            PANASONIC -> CameraCapabilities(
-                liveViewSizes = defaultLiveViewSizes, openEndedExposure = true, movie = true,
-                videoSwitch = true, powerOff = true,
-            )
-            NIKON -> CameraCapabilities(tapToFocus = true)
-            CANON, SONY -> CameraCapabilities(tapToFocus = true, movie = true, videoSwitch = true)
+            PANASONIC -> CameraCapabilities(liveViewSizes = defaultLiveViewSizes, movie = true, videoSwitch = true, powerOff = true)
+            NIKON -> CameraCapabilities()
+            CANON, SONY -> CameraCapabilities(movie = true, videoSwitch = true)
         }
 
     /** Drivers tried only against mock cameras so far. */

@@ -1,7 +1,6 @@
 package com.apexcommerce.shutterlink.camera
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -40,10 +39,8 @@ object PtpOp {
     const val INITIATE_CAPTURE = 0x100E
     const val GET_PARTIAL_OBJECT = 0x101B
     const val GET_DEVICE_PROP_DESC = 0x1014
-    const val GET_DEVICE_PROP_VALUE = 0x1015
     const val SET_DEVICE_PROP_VALUE = 0x1016
 
-    const val NIKON_CAPTURE_TO_SDRAM = 0x90C0
     const val NIKON_AF_DRIVE = 0x90C1
     const val NIKON_CHANGE_CAMERA_MODE = 0x90C2
     const val NIKON_GET_LARGE_THUMB = 0x90C4
@@ -77,7 +74,6 @@ object PtpProp {
 
 object NikonResponse {
     const val OUT_OF_FOCUS = 0xA002
-    const val CHANGE_CAMERA_MODE_FAILED = 0xA003
     const val INVALID_STATUS = 0xA004
     const val NOT_LIVE_VIEW = 0xA00B
     const val MF_DRIVE_STEP_END = 0xA00C
@@ -114,12 +110,9 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
 
     override val capabilities: CameraCapabilities
         get() = CameraCapabilities(
-            liveViewSizes = emptyList(), tapToFocus = supports(PtpOp.NIKON_AF_DRIVE),
-            openEndedExposure = false,
-            movie = supports(PtpOp.NIKON_START_MOVIE), videoSwitch = true,
+            tapToFocus = supports(PtpOp.NIKON_AF_DRIVE), movie = supports(PtpOp.NIKON_START_MOVIE), videoSwitch = true,
             lastShotReview = supports(PtpOp.NIKON_GET_EVENT) || supports(PtpOp.NIKON_GET_EVENT_EX),
-            clockSync = false, highResShot = false, cardBrowser = supports(PtpOp.GET_OBJECT_HANDLES),
-            powerOff = false, focusDrive = supports(PtpOp.NIKON_MF_DRIVE),
+            cardBrowser = supports(PtpOp.GET_OBJECT_HANDLES), focusDrive = supports(PtpOp.NIKON_MF_DRIVE),
         )
 
     /**
@@ -169,24 +162,14 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
             camera.scope.launch { camera.appendLog(LogEntry(System.currentTimeMillis(), "PTP", line, 200, 0, "")) }
         }
         camera.status = "Connecting (PTP/IP)…"
-        var failure: Exception? = null
-        for (attempt in 1..3) {
+        camera.retryConnect({ it !is CameraException }) {
             try {
                 ptp.connect(guid(), deviceName)
-                failure = null
-                break
-            } catch (e: CancellationException) {
+            } catch (e: Exception) {
                 withContext(Dispatchers.IO) { ptp.close() }
                 throw e
-            } catch (e: Exception) {
-                failure = e
-                withContext(Dispatchers.IO) { ptp.close() }
-                if (attempt >= 3 || e is CameraException) break
-                camera.status = "No answer yet, retrying (${attempt + 1}/3)…"
-                delay(1500)
             }
         }
-        failure?.let { throw it }
 
         ptp.run(PtpOp.OPEN_SESSION, listOf(1L))
         camera.status = "Reading camera info…"
@@ -203,7 +186,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
     }
 
     override suspend fun disconnect() {
-        ptpOrNull { ptp.transaction(PtpOp.CLOSE_SESSION, timeout = 3.0) }
+        attempt { ptp.transaction(PtpOp.CLOSE_SESSION, timeout = 3.0) }
     }
 
     override fun teardown() {
@@ -224,15 +207,12 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
         statusJob = camera.scope.launch {
             var failures = 0
             while (isActive) {
-                val level = ptpOrNull { readRaw(PtpProp.BATTERY_LEVEL) }
+                val level = attempt { readRaw(PtpProp.BATTERY_LEVEL) }
                 if (level != null) {
                     failures = 0
                     if (camera.liveInfo.battery != level.toInt()) camera.liveInfo = camera.liveInfo.copy(battery = level.toInt())
                 } else if (hasProperty(PtpProp.BATTERY_LEVEL)) {
-                    failures++
-                    if (failures == 3) {
-                        camera.lastError = "Lost contact with the camera. Check that this phone is still on the camera's Wi-Fi."
-                    }
+                    if (++failures == 3) camera.lastError = LOST_CONTACT
                 }
                 delay(5000)
             }
@@ -263,7 +243,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
         }
         val deadline = System.currentTimeMillis() + (timeout * 1000).toLong()
         while (System.currentTimeMillis() < deadline) {
-            val response = ptpOrNull { ptp.transaction(PtpOp.NIKON_DEVICE_READY, timeout = 5.0) } ?: break
+            val response = attempt { ptp.transaction(PtpOp.NIKON_DEVICE_READY, timeout = 5.0) } ?: break
             if (response.code == NikonResponse.SILENT_RELEASE_BUSY) return PtpException.OK
             if (response.code != PtpException.DEVICE_BUSY && response.code != NikonResponse.BULB_RELEASE_BUSY) return response.code
             delay(100)
@@ -271,26 +251,12 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
         return PtpException.DEVICE_BUSY
     }
 
-    private suspend fun decode(bytes: ByteArray, maxSide: Int = 0): Bitmap? = withContext(Dispatchers.Default) {
-        if (maxSide <= 0) return@withContext BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        var sample = 1
-        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-    }
-
     // MARK: - Live view
 
-    override suspend fun enterRecMode() {
-        camera.isSwitchingMode = true
-        try {
-            camera.mode = CameraMode.REC
-            camera.refreshProperties()
-            camera.startLiveView()
-        } finally {
-            camera.isSwitchingMode = false
-        }
+    override suspend fun enterRecMode() = camera.switchingMode {
+        camera.mode = CameraMode.REC
+        camera.refreshProperties()
+        camera.startLiveView()
     }
 
     private val liveViewOp: Int
@@ -306,7 +272,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
         try {
             // Remote ("PC") mode first, as libgphoto2 does; bodies that are already there say 0xA003.
             if (supports(PtpOp.NIKON_CHANGE_CAMERA_MODE)) {
-                ptpOrNull { ptp.transaction(PtpOp.NIKON_CHANGE_CAMERA_MODE, listOf(1L)) }
+                attempt { ptp.transaction(PtpOp.NIKON_CHANGE_CAMERA_MODE, listOf(1L)) }
             }
             ptp.run(PtpOp.NIKON_START_LIVE_VIEW)
             waitUntilReady(5.0)
@@ -331,7 +297,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
                 }
                 NikonResponse.NOT_LIVE_VIEW -> {
                     // The camera left live view (e.g. after a shot or on its own): start it again.
-                    ptpOrNull { ptp.transaction(PtpOp.NIKON_START_LIVE_VIEW) }
+                    attempt { ptp.transaction(PtpOp.NIKON_START_LIVE_VIEW) }
                     delay(300)
                     null
                 }
@@ -343,7 +309,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
     override suspend fun stopLiveView() {
         liveJob?.cancel()
         liveJob = null
-        ptpOrNull { ptp.transaction(PtpOp.NIKON_END_LIVE_VIEW, timeout = 5.0) }
+        attempt { ptp.transaction(PtpOp.NIKON_END_LIVE_VIEW, timeout = 5.0) }
     }
 
     // MARK: - Settings
@@ -354,7 +320,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
 
         suspend fun desc(code: Int): PtpPropDesc? {
             if (!hasProperty(code)) return null
-            val data = ptpOrNull { ptp.run(PtpOp.GET_DEVICE_PROP_DESC, listOf(code.toLong()), timeout = 5.0).data } ?: return null
+            val data = attempt { ptp.run(PtpOp.GET_DEVICE_PROP_DESC, listOf(code.toLong()), timeout = 5.0).data } ?: return null
             return PtpPropDesc(data).also { descs[code] = it }
         }
 
@@ -427,28 +393,13 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
             if (reportErrors) camera.lastError = "This setting can't be changed on a Nikon from the app."
             return false
         }
-        val previous = camera.properties[name]?.value
-        camera.updateValue(name, value)
-        try {
+        return applySetting(camera, name, value, reportErrors) {
             if (name == "isospeedvalue" && hasProperty(PtpProp.NIKON_AUTO_ISO)) {
                 setRaw(PtpProp.NIKON_AUTO_ISO, if (value == "auto") 1L else 0L)
-                if (value == "auto") {
-                    refreshProperties()
-                    return true
-                }
+                if (value == "auto") return@applySetting
             }
-            val raw = valueMap[name]?.get(value) ?: throw CameraException("The camera doesn't offer $value.")
-            setRaw(code, raw)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (previous != null) camera.updateValue(name, previous)
-            if (reportErrors) camera.report(e)
-            refreshProperties()
-            return false
+            setRaw(code, valueMap[name]?.get(value) ?: throw CameraException("The camera doesn't offer $value."))
         }
-        refreshProperties()
-        return true
     }
 
     companion object {
@@ -511,7 +462,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
     override suspend fun focus(x: Double, y: Double) {
         val (px, py) = camera.pixelPoint(x, y)
         if (supports(PtpOp.NIKON_CHANGE_AF_AREA)) {
-            ptpOrNull { ptp.transaction(PtpOp.NIKON_CHANGE_AF_AREA, listOf(maxOf(0.0, px).toLong(), maxOf(0.0, py).toLong())) }
+            attempt { ptp.transaction(PtpOp.NIKON_CHANGE_AF_AREA, listOf(maxOf(0.0, px).toLong(), maxOf(0.0, py).toLong())) }
         }
         try {
             ptp.run(PtpOp.NIKON_AF_DRIVE)
@@ -527,11 +478,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
 
     override suspend fun shutterPressed() {
         camera.isShooting = true
-        val seconds = PropertyFormat.seconds(camera.properties["shutspeedvalue"]?.value ?: "") ?: 0.0
-        if (seconds >= 1) {
-            camera.exposureStartedAt = System.currentTimeMillis()
-            camera.exposureDuration = seconds
-        }
+        val seconds = camera.startTimedExposure()
         try {
             // 0x9207 (0xFFFFFFFF = no AF in live view, 0 = to the card) keeps live view running;
             // older bodies fall back to PTP's InitiateCapture, which also saves to the card.
@@ -565,28 +512,17 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
         camera.lastError = "Bulb and Time can't be run from the app on a Nikon. Pick a shutter speed (up to 30 s) or use the camera's own interval timer."
     }
 
-    override suspend fun toggleMovie() {
-        if (camera.isRecordingMovie) {
-            ptpOrNull { ptp.transaction(PtpOp.NIKON_END_MOVIE) }
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = null
-            camera.shotCounter++
-            return
-        }
-        try {
-            ptp.run(PtpOp.NIKON_START_MOVIE)
-            camera.isRecordingMovie = true
-            camera.movieStartedAt = System.currentTimeMillis()
-        } catch (e: PtpException) {
-            camera.lastError = if (e.code == 0xA00B || e.code == 0xA002)
-                "The camera won't record now. Set its photo/video switch to video, then try again."
-            else e.message
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            camera.report(e)
-        }
-    }
+    override suspend fun toggleMovie() = camera.recordMovie(
+        start = {
+            try {
+                ptp.run(PtpOp.NIKON_START_MOVIE)
+            } catch (e: PtpException) {
+                if (e.code != NikonResponse.NOT_LIVE_VIEW && e.code != NikonResponse.OUT_OF_FOCUS) throw e
+                throw CameraException("The camera won't record now. Set its photo/video switch to video, then try again.")
+            }
+        },
+        stop = { ptp.transaction(PtpOp.NIKON_END_MOVIE) },
+    )
 
     /**
      * ObjectAdded handles from Nikon's event queue: GetEventEx (Z bodies: u16 count, then from
@@ -596,7 +532,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
     private suspend fun addedObjects(): List<Long>? {
         val added = mutableListOf<Long>()
         if (supports(PtpOp.NIKON_GET_EVENT_EX)) {
-            val data = ptpOrNull { ptp.run(PtpOp.NIKON_GET_EVENT_EX, timeout = 5.0).data } ?: return null
+            val data = attempt { ptp.run(PtpOp.NIKON_GET_EVENT_EX, timeout = 5.0).data } ?: return null
             val r = PtpReader(data)
             val count = r.u16()
             r.offset = 4
@@ -609,7 +545,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
             return added
         }
         if (!supports(PtpOp.NIKON_GET_EVENT)) return null
-        val data = ptpOrNull { ptp.run(PtpOp.NIKON_GET_EVENT, timeout = 5.0).data } ?: return null
+        val data = attempt { ptp.run(PtpOp.NIKON_GET_EVENT, timeout = 5.0).data } ?: return null
         val r = PtpReader(data)
         val count = r.u16()
         repeat(minOf(count, 512)) {
@@ -627,9 +563,8 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
             val handle = objects.lastOrNull()
             if (handle != null) {
                 val op = if (supports(PtpOp.NIKON_GET_LARGE_THUMB)) PtpOp.NIKON_GET_LARGE_THUMB else PtpOp.GET_THUMB
-                val thumb = ptpOrNull { ptp.run(op, listOf(handle), timeout = 10.0).data }
-                val image = thumb?.let { decode(it) }
-                if (image != null) camera.lastShot = image.asImageBitmap()
+                val thumb = attempt { ptp.run(op, listOf(handle), timeout = 10.0).data }
+                thumb?.let { decodeImage(it) }?.let { camera.lastShot = it.asImageBitmap() }
                 if (camera.autoSaveApplies) autoSave(objects)
                 return
             }
@@ -640,7 +575,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
     /** Auto-save: hands the JPEG or HEIF of each new capture (not the NEF) to the save queue. */
     private suspend fun autoSave(objects: List<Long>) {
         for (handle in objects) {
-            val data = ptpOrNull { ptp.run(PtpOp.GET_OBJECT_INFO, listOf(handle), timeout = 5.0).data } ?: continue
+            val data = attempt { ptp.run(PtpOp.GET_OBJECT_INFO, listOf(handle), timeout = 5.0).data } ?: continue
             val name = PtpObjectInfo(data).filename
             if (name.substringAfterLast('.', "").uppercase() !in listOf("JPG", "JPEG", "HIF", "HEIF")) continue
             camera.autoSave(name) { ptp.run(PtpOp.GET_OBJECT, listOf(handle), timeout = 120.0).data }
@@ -663,7 +598,7 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
                 val list = all.sorted().takeLast(300)
                 val folders = HashMap<Long, String>()
                 for (handle in list.asReversed()) {
-                    val data = ptpOrNull { ptp.run(PtpOp.GET_OBJECT_INFO, listOf(handle), timeout = 5.0).data } ?: continue
+                    val data = attempt { ptp.run(PtpOp.GET_OBJECT_INFO, listOf(handle), timeout = 5.0).data } ?: continue
                     val obj = PtpObjectInfo(data)
                     if (obj.isFolder) {
                         folders[handle] = obj.filename
@@ -691,28 +626,27 @@ class NikonDriver(private val camera: CameraModel) : CameraDriver {
 
     private suspend fun folderName(handle: Long): String? {
         if (handle == 0L || handle == 0xFFFF_FFFFL) return null
-        val data = ptpOrNull { ptp.run(PtpOp.GET_OBJECT_INFO, listOf(handle), timeout = 5.0).data } ?: return null
+        val data = attempt { ptp.run(PtpOp.GET_OBJECT_INFO, listOf(handle), timeout = 5.0).data } ?: return null
         return PtpObjectInfo(data).filename
     }
 
     override suspend fun thumbnail(image: CameraImage): Bitmap? {
         val handle = handles[image.path] ?: return null
-        val data = ptpOrNull { ptp.run(PtpOp.GET_THUMB, listOf(handle), timeout = 10.0).data } ?: return null
-        return decode(data)
+        return attempt { ptp.run(PtpOp.GET_THUMB, listOf(handle), timeout = 10.0).data }?.let { decodeImage(it) }
     }
 
     override suspend fun preview(image: CameraImage): Bitmap {
         val handle = handles[image.path] ?: throw CameraException("The camera no longer lists this file.")
         if (supports(PtpOp.NIKON_GET_LARGE_THUMB)) {
-            val data = ptpOrNull { ptp.run(PtpOp.NIKON_GET_LARGE_THUMB, listOf(handle), timeout = 20.0).data }
-            data?.let { decode(it) }?.let { return it }
+            val data = attempt { ptp.run(PtpOp.NIKON_GET_LARGE_THUMB, listOf(handle), timeout = 20.0).data }
+            data?.let { decodeImage(it) }?.let { return it }
         }
         if (image.fileExtension == "JPG" || image.fileExtension == "JPEG") {
             val data = ptp.run(PtpOp.GET_OBJECT, listOf(handle), timeout = 120.0).data
-            decode(data, maxSide = 2000)?.let { return it }
+            decodeImage(data, maxSide = 2000)?.let { return it }
         }
         val data = ptp.run(PtpOp.GET_THUMB, listOf(handle), timeout = 10.0).data
-        return decode(data) ?: throw CameraException("Couldn't decode the preview.")
+        return decodeImage(data) ?: throw CameraException("Couldn't decode the preview.")
     }
 
     /** Big transfers stall Nikon's Wi-Fi, so originals come in 1 MB pieces when the size is known. */

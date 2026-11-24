@@ -1,17 +1,11 @@
 package com.apexcommerce.shutterlink.camera
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.IOException
 
 // Canon Camera Control API (CCAPI): REST + JSON over HTTP on port 8080, built into recent EOS R,
 // EOS M, DSLR and PowerShot bodies (port of Canon.swift). Canon keeps it switched off until the
@@ -45,16 +39,11 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
 
     override val capabilities: CameraCapabilities
         get() = CameraCapabilities(
-            liveViewSizes = emptyList(),
             tapToFocus = has("shooting/liveview/afframeposition"),
-            openEndedExposure = has("shooting/control/shutterbutton/manual"),
             movie = has("shooting/control/recbutton"),
             videoSwitch = true,
             lastShotReview = has("event/polling"),
-            clockSync = false,
-            highResShot = false,
             cardBrowser = has("contents"),
-            powerOff = false,
             focusDrive = has("shooting/control/drivefocus"),
         )
 
@@ -69,49 +58,14 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
         return FocusDriveResult.MOVED
     }
 
-    private fun has(feature: String, method: String? = null): Boolean {
-        if (api[feature] == null) return false
-        if (method == null) return true
-        return methods[feature]?.contains(method) ?: false
-    }
+    private fun has(feature: String): Boolean = api[feature] != null
 
     private fun path(feature: String): String = api[feature] ?: "/ccapi/ver100/$feature"
-
-    /** Runs `block`, giving null instead of an error (cancellation still cancels). */
-    private inline fun <T> attempt(block: () -> T): T? = try {
-        block()
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Throwable) {
-        null
-    }
-
-    private suspend fun decode(bytes: ByteArray): Bitmap? = withContext(Dispatchers.Default) {
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-    }
 
     // MARK: - Connect
 
     override suspend fun connect() {
-        var root = JSONObject()
-        var failure: Throwable? = null
-        for (tryNumber in 1..3) {
-            try {
-                root = client.requestJson("GET", "/ccapi", timeout = 5.0)
-                failure = null
-                break
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                failure = e
-                // Only network failures are worth another try, not an answer from the camera.
-                if (tryNumber >= 3 || e !is IOException || e is CameraHttpException) break
-                camera.status = "No answer yet, retrying (${tryNumber + 1}/3)…"
-                delay(1500)
-            }
-        }
-        failure?.let { throw it }
-        parseApiList(root)
+        parseApiList(camera.retryConnect { client.requestJson("GET", "/ccapi", timeout = 5.0) })
         if (api.isEmpty()) {
             throw CameraException("The camera answered but lists no CCAPI functions. Check that CCAPI is activated on it.")
         }
@@ -122,7 +76,6 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
         camera.status = "Reading camera info…"
         attempt { client.requestJson("GET", path("deviceinformation")) }?.let { info ->
             (info.opt("productname") as? String)?.let { camera.cameraName = it.replace("Canon ", "") }
-            camera.rawDescList = info.toString()
         }
         if (camera.cameraName == null) camera.cameraName = "Canon"
         readBattery()
@@ -154,12 +107,9 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
     }
 
     private suspend fun readBattery() {
-        var reply: JSONObject? = null
-        if (has("devicestatus/batterylist")) {
-            reply = attempt { client.requestJson("GET", path("devicestatus/batterylist"), log = false) }
-                ?.optJSONArray("batterylist")?.optJSONObject(0)
-        }
-        if (reply == null) reply = attempt { client.requestJson("GET", path("devicestatus/battery"), log = false) }
+        val list = if (has("devicestatus/batterylist")) attempt { client.requestJson("GET", path("devicestatus/batterylist"), log = false) } else null
+        val reply = list?.optJSONArray("batterylist")?.optJSONObject(0)
+            ?: attempt { client.requestJson("GET", path("devicestatus/battery"), log = false) }
         val level = reply?.opt("level") as? String ?: return
         batteryPercent(level)?.let { camera.liveInfo = camera.liveInfo.copy(battery = it) }
     }
@@ -175,25 +125,11 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
     private fun startEvents() {
         if (!has("event/polling")) return
         eventJob?.cancel()
-        eventJob = camera.scope.launch {
-            var failures = 0
-            while (isActive) {
-                delay(2000)
-                if (camera.phase != ConnectionPhase.CONNECTED || camera.isShooting) continue
-                try {
-                    val changes = client.requestJson("GET", path("event/polling") + "?continue=off", timeout = 5.0, log = false)
-                    failures = 0
-                    applyChanges(changes)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    failures++
-                    if (failures == 3) {
-                        camera.lastError = "Lost contact with the camera. Check that this phone is still on the camera's Wi-Fi."
-                    }
-                }
-            }
-        }
+        eventJob = camera.pollEvents(
+            skip = { camera.isShooting },
+            fetch = { client.requestJson("GET", path("event/polling") + "?continue=off", timeout = 5.0, log = false) },
+            handle = { applyChanges(it) },
+        )
     }
 
     private suspend fun applyChanges(changes: JSONObject) {
@@ -212,15 +148,10 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
 
     // MARK: - Live view
 
-    override suspend fun enterRecMode() {
-        camera.isSwitchingMode = true
-        try {
-            camera.mode = CameraMode.REC
-            camera.refreshProperties()
-            camera.startLiveView()
-        } finally {
-            camera.isSwitchingMode = false
-        }
+    override suspend fun enterRecMode() = camera.switchingMode {
+        camera.mode = CameraMode.REC
+        camera.refreshProperties()
+        camera.startLiveView()
     }
 
     override suspend fun startLiveView() {
@@ -303,20 +234,9 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
             if (reportErrors) camera.lastError = "This setting can't be changed on this Canon from the app."
             return false
         }
-        val previous = camera.properties[name]?.value
-        camera.updateValue(name, value)
-        try {
+        return applySetting(camera, name, value, reportErrors) {
             client.request("PUT", path("shooting/settings/$canonName"), json = mapOf("value" to canonValue))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            if (previous != null) camera.updateValue(name, previous)
-            if (reportErrors) camera.report(e)
-            refreshProperties()
-            return false
         }
-        refreshProperties()
-        return true
     }
 
     // MARK: - Focus & shooting
@@ -341,11 +261,7 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
 
     override suspend fun shutterPressed() {
         camera.isShooting = true
-        val seconds = PropertyFormat.seconds(camera.properties["shutspeedvalue"]?.value ?: "") ?: 0.0
-        if (seconds >= 1) {
-            camera.exposureStartedAt = System.currentTimeMillis()
-            camera.exposureDuration = seconds
-        }
+        val seconds = camera.startTimedExposure()
         try {
             client.request("POST", path("shooting/control/shutterbutton"), json = mapOf("af" to true),
                 timeout = maxOf(30.0, seconds * 2 + 20))
@@ -368,56 +284,30 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
     /** Bulb: hold the shutter fully pressed until the second tap. */
     override suspend fun toggleOpenExposure() {
         val manual = path("shooting/control/shutterbutton/manual")
-        if (camera.isShooting) {
-            attempt { client.request("POST", manual, json = mapOf("action" to "release", "af" to false), urgent = true) }
-            camera.isShooting = false
-            camera.exposureStartedAt = null
-            camera.shotCounter++
-            return
-        }
-        camera.isShooting = true
-        camera.exposureStartedAt = System.currentTimeMillis()
-        camera.exposureDuration = null
-        try {
-            client.request("POST", manual, json = mapOf("action" to "full_press", "af" to false))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            camera.isShooting = false
-            camera.exposureStartedAt = null
-            camera.report(e)
-        }
+        camera.toggleBulb(
+            start = { client.request("POST", manual, json = mapOf("action" to "full_press", "af" to false)) },
+            stop = { client.request("POST", manual, json = mapOf("action" to "release", "af" to false), urgent = true) },
+        )
     }
 
     override suspend fun toggleMovie() {
-        if (camera.isRecordingMovie) {
-            attempt { client.request("POST", path("shooting/control/recbutton"), json = mapOf("action" to "stop")) }
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = null
-            camera.shotCounter++
-            if (has("shooting/control/moviemode")) {
-                attempt { client.request("POST", path("shooting/control/moviemode"), json = mapOf("action" to "off")) }
-            }
-            return
-        }
-        try {
-            if (has("shooting/control/moviemode")) {
-                client.request("POST", path("shooting/control/moviemode"), json = mapOf("action" to "on"))
-            }
-            client.request("POST", path("shooting/control/recbutton"), json = mapOf("action" to "start"))
-            camera.isRecordingMovie = true
-            camera.movieStartedAt = System.currentTimeMillis()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            camera.report(e)
-        }
+        val movieMode = has("shooting/control/moviemode")
+        camera.recordMovie(
+            start = {
+                if (movieMode) client.request("POST", path("shooting/control/moviemode"), json = mapOf("action" to "on"))
+                client.request("POST", path("shooting/control/recbutton"), json = mapOf("action" to "start"))
+            },
+            stop = { client.request("POST", path("shooting/control/recbutton"), json = mapOf("action" to "stop")) },
+            afterStop = {
+                if (movieMode) attempt { client.request("POST", path("shooting/control/moviemode"), json = mapOf("action" to "off")) }
+            },
+        )
     }
 
     private suspend fun showLastShot(file: String) {
         // kind=display is a screen-sized JPEG, also for RAW and HEIF files.
         val data = attempt { client.request("GET", "$file?kind=display", timeout = 10.0, log = false) } ?: return
-        decode(data)?.let { camera.lastShot = it.asImageBitmap() }
+        decodeImage(data)?.let { camera.lastShot = it.asImageBitmap() }
     }
 
     // MARK: - Card
@@ -432,11 +322,9 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
                 val dirs = client.requestJson("GET", storage).stringList("path")
                 for (dir in dirs) {
                     val pages = client.requestJson("GET", "$dir?kind=number").optInt("pagenumber", 1)
-                    val files = mutableListOf<CameraImage>()
-                    for (page in 1..maxOf(pages, 1)) {
-                        for (file in client.requestJson("GET", "$dir?page=$page").stringList("path")) {
-                            files.add(CameraImage(dir, file.trimEnd('/').substringAfterLast('/'), 0, 0, 0))
-                        }
+                    val files = (1..maxOf(pages, 1)).flatMap { page ->
+                        client.requestJson("GET", "$dir?page=$page").stringList("path")
+                            .map { CameraImage(dir, it.trimEnd('/').substringAfterLast('/'), 0, 0, 0) }
                     }
                     found += files
                     val name = dir.trimEnd('/').substringAfterLast('/')
@@ -453,15 +341,11 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
         }
     }
 
-    override suspend fun thumbnail(image: CameraImage): Bitmap? {
-        val data = attempt { client.request("GET", image.path + "?kind=thumbnail", log = false) } ?: return null
-        return decode(data)
-    }
+    override suspend fun thumbnail(image: CameraImage): Bitmap? =
+        attempt { client.request("GET", image.path + "?kind=thumbnail", log = false) }?.let { decodeImage(it) }
 
-    override suspend fun preview(image: CameraImage): Bitmap {
-        val data = client.request("GET", image.path + "?kind=display", timeout = 30.0)
-        return decode(data) ?: throw CameraException("Couldn't decode the preview.")
-    }
+    override suspend fun preview(image: CameraImage): Bitmap =
+        decodeImage(client.request("GET", image.path + "?kind=display", timeout = 30.0)) ?: throw CameraException("Couldn't decode the preview.")
 
     override suspend fun downloadOriginal(image: CameraImage): ByteArray =
         client.request("GET", image.path, timeout = 300.0)
@@ -472,10 +356,8 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
             "shutspeedvalue" to "tv", "isospeedvalue" to "iso", "expcomp" to "exposure", "wbvalue" to "wb",
         )
 
-        fun batteryPercent(level: String): Int? {
-            level.toIntOrNull()?.let { return it }
-            return mapOf("full" to 100, "high" to 75, "half" to 50, "quarter" to 25, "low" to 10, "empty" to 0)[level.lowercase()]
-        }
+        fun batteryPercent(level: String): Int? =
+            level.toIntOrNull() ?: mapOf("full" to 100, "high" to 75, "half" to 50, "quarter" to 25, "low" to 10, "empty" to 0)[level.lowercase()]
 
         /**
          * Canon spelling → the app's: "f5.6" → "5.6", "1/125" → "125", "0\"5" → "0.5\"",
@@ -487,10 +369,8 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
                 canon.lowercase() == "bulb" -> "bulb"
                 canon.startsWith("1/") -> canon.drop(2)
                 canon.contains("\"") -> {
-                    val parts = canon.split("\"")
-                    val whole = parts.firstOrNull() ?: "0"
-                    val fraction = parts.getOrNull(1) ?: ""
-                    (if (fraction.isEmpty()) whole else "$whole.$fraction") + "\""
+                    val fraction = canon.substringAfter('"').substringBefore('"')
+                    canon.substringBefore('"') + (if (fraction.isEmpty()) "" else ".$fraction") + "\""
                 }
                 else -> canon
             }
@@ -510,15 +390,9 @@ class CanonDriver(private val camera: CameraModel) : CameraDriver {
 
         /** "+1_1/3" → 1.333, "-0_2/3" → -0.667, "+2" → 2, "0" → 0. */
         fun evValue(canon: String): Double {
-            var text = canon.trim()
-            var sign = 1.0
-            if (text.startsWith("-")) {
-                sign = -1.0
-                text = text.drop(1)
-            } else if (text.startsWith("+")) {
-                text = text.drop(1)
-            }
-            val parts = text.split("_")
+            val text = canon.trim()
+            val sign = if (text.startsWith("-")) -1.0 else 1.0
+            val parts = text.removePrefix("-").removePrefix("+").split("_")
             var value = parts.firstOrNull()?.toDoubleOrNull() ?: 0.0
             if (parts.size > 1) {
                 val fraction = parts[1].split("/").mapNotNull { it.toDoubleOrNull() }

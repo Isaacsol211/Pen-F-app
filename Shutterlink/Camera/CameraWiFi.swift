@@ -16,11 +16,7 @@ struct CameraNetwork: Equatable, Sendable {
 /// capability). iOS asks once per network ("Shutterlink wants to join…"). On a Mac the user joins it in
 /// System Settings, so this isn't offered there.
 enum CameraWiFi {
-    #if targetEnvironment(macCatalyst)
-    static let canJoin = false
-    #else
-    static let canJoin = true
-    #endif
+    static let canJoin = !Platform.isMac
 
     static func join(_ network: CameraNetwork) async throws {
         #if targetEnvironment(macCatalyst)
@@ -175,43 +171,30 @@ enum WiFiQRCode {
 
 /// Camera Wi-Fi passwords, in the Keychain on this device, keyed by network name.
 enum CameraWiFiPasswords {
-    private static let service = "com.apexcommerce.shutterlink.camera-wifi"
+    /// The Keychain item for `ssid`, plus `extra` attributes.
+    private static func item(_ ssid: String, _ extra: [String: Any] = [:]) -> CFDictionary {
+        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                   kSecAttrService as String: "com.apexcommerce.shutterlink.camera-wifi",
+                                   kSecAttrAccount as String: ssid]
+        return base.merging(extra) { $1 } as CFDictionary
+    }
 
     static func save(_ password: String, for ssid: String) {
         delete(for: ssid)
-        let item: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: ssid,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecValueData as String: Data(password.utf8),
-        ]
-        let status = SecItemAdd(item as CFDictionary, nil)
+        let status = SecItemAdd(item(ssid, [kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                                            kSecValueData as String: Data(password.utf8)]), nil)
         if status != errSecSuccess { debugLog("keychain: couldn't save the password for \(ssid) (\(status))") }
     }
 
     static func password(for ssid: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: ssid,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+        guard SecItemCopyMatching(item(ssid, [kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]),
+                                  &result) == errSecSuccess,
               let data = result as? Data else { return nil }
         return String(decoding: data, as: UTF8.self)
     }
 
-    static func delete(for ssid: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: ssid,
-        ]
-        SecItemDelete(query as CFDictionary)
-    }
+    static func delete(for ssid: String) { SecItemDelete(item(ssid)) }
 }
 
 // MARK: - Joining, then connecting

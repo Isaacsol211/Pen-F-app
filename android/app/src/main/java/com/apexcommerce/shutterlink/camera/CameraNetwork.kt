@@ -32,11 +32,9 @@ object CameraNetwork {
 
     private var wifiCallback: ConnectivityManager.NetworkCallback? = null
     private var joinCallback: ConnectivityManager.NetworkCallback? = null
-    @Volatile var boundNetwork: Network? = null
-        private set
+    @Volatile private var boundNetwork: Network? = null
     /** The network the app joined itself (WifiNetworkSpecifier), while it holds it. */
-    @Volatile var joinedSsid: String? = null
-        private set
+    @Volatile private var joinedSsid: String? = null
     @Volatile private var joinedNetwork: Network? = null
 
     fun init(context: Context) {
@@ -52,11 +50,10 @@ object CameraNetwork {
     }
 
     /** IPv4 address of this phone on Wi-Fi, or null when it isn't on Wi-Fi. */
-    fun wifiAddress(): String? {
-        val network = wifiNetwork() ?: return null
-        return cm.getLinkProperties(network)?.linkAddresses
-            ?.firstOrNull { it.address is Inet4Address }?.address?.hostAddress
-    }
+    fun wifiAddress(): String? = wifiNetwork()?.let { ipv4(it) }?.hostAddress
+
+    private fun ipv4(network: Network) =
+        cm.getLinkProperties(network)?.linkAddresses?.firstOrNull { it.address is Inet4Address }?.address
 
     /**
      * The Wi-Fi network's name. Android only reveals it with location permission and location on;
@@ -191,9 +188,9 @@ object CameraNetwork {
         // report success while staying on a home Wi-Fi with the same 192.168.0.x range).
         val deadline = System.currentTimeMillis() + 10_000
         while (System.currentTimeMillis() < deadline) {
-            val address = cm.getLinkProperties(result)?.linkAddresses?.firstOrNull { it.address is Inet4Address }
+            val address = ipv4(result)
             if (address != null) {
-                debugLog("wifi: on $ssid at ${address.address.hostAddress}")
+                debugLog("wifi: on $ssid at ${address.hostAddress}")
                 break
             }
             kotlinx.coroutines.delay(300)

@@ -165,7 +165,6 @@ struct GalleryView: View {
                         Label(Platform.isMac ? "RAWs…" : "RAWs", systemImage: "arrow.down.circle")
                     }
                     .buttonStyle(.accent)
-                    .tint(Theme.accent)
                     .disabled(starredCount == 0 || importing)
                     .accessibilityLabel(Platform.isMac ? "Save the RAW files of starred photos to a folder"
                                                        : "Download the RAW files of starred photos")
@@ -183,9 +182,7 @@ struct GalleryView: View {
     /// `selects`: a tap shows the photo in the preview pane (the workspace split) instead of opening it.
     @ViewBuilder private func folderContent(_ folder: CardFolder, selects: Bool) -> some View {
         let items = visibleImages.filter { $0.directory == folder.path }
-        if items.isEmpty && starredOnly {
-            EmptyView()
-        } else if items.isEmpty {
+        if items.isEmpty, !starredOnly {
             Label(folder.isForeign
                   ? "The camera lists this folder (made by another camera) as empty, so nothing in it can be fetched over Wi-Fi. If it holds photos, \(Platform.isMac ? "put the card in your Mac's SD card slot or a card reader and import it with Photos or Finder" : "put the card in a USB-C SD reader on your iPhone and use Photos ▸ Import")."
                   : "No photos in this folder.",
@@ -196,7 +193,7 @@ struct GalleryView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .surface(.regular, in: .rect(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 10)
-        } else {
+        } else if !items.isEmpty {
             LazyVGrid(columns: selects ? Self.workspaceColumns : columns, spacing: 3) {
                 ForEach(items) { image in
                     Group {

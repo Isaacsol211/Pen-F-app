@@ -8,11 +8,8 @@ struct RemoteView: View {
     @State private var showAstro = false
     /// The Pro screen, with the locked tool that opened it.
     @State private var proPrompt: ProPrompt?
-    @State private var showPresets = false
-    @State private var showND = false
-    @State private var showMotion = false
-    @State private var showInterval = false
-    @State private var showHighRes = false
+    /// The tool panel that is open: a sheet on a phone, a panel in the workspace inspector.
+    @State private var openPanel: SidePanel?
     @State private var confirmPowerOff = false
     @State private var confirmDisconnect = false
     @State private var toolsOpen = false
@@ -29,7 +26,6 @@ struct RemoteView: View {
     @AppStorage("ui.grid") private var showGrid = false
     @AppStorage("ui.nightMode") private var nightMode = false
     @State private var showLoupe = false
-    @State private var showBracket = false
     @State private var pocketMode = false
 
     var body: some View {
@@ -82,25 +78,12 @@ struct RemoteView: View {
         .sheet(isPresented: $showLog) { LogView() }
         .sheet(isPresented: $showAstro) { AstroView() }
         .sheet(item: $proPrompt) { ProView(feature: $0.feature) }
-        .sheet(isPresented: phoneSheet($showHighRes)) { HighResView().presentationDetents([.medium, .large]) }
-        .sheet(isPresented: phoneSheet($showInterval)) {
-            IntervalView().presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: phoneSheet($showBracket)) {
-            BracketView().presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: phoneSheet($showPresets)) {
-            PresetsView(openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
+        // A tool's sheet is only for the phone layouts; in the workspace the same state opens its panel.
+        .sheet(item: Binding(get: { isWorkspace ? nil : openPanel }, set: { openPanel = $0 })) { panel in
+            SidePanelView(panel: panel, openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
                 .presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: phoneSheet($showND)) {
-            NDView().presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: phoneSheet($showMotion)) {
-            // Live view stays usable above it, so the box can be dragged into place.
-            MotionView()
-                .presentationDetents([.medium, .large])
-                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                // Live view stays usable above the motion trigger, so the box can be dragged into place.
+                .presentationBackgroundInteraction(panel == .motion ? .enabled(upThrough: .medium) : .automatic)
         }
         .fullScreenCover(isPresented: $pocketMode) { PocketModeView() }
         .fullScreenCover(isPresented: $showGallery) { GalleryView() }
@@ -133,28 +116,22 @@ struct RemoteView: View {
     /// Widest the portrait controls get, so they stay within reach on an iPad.
     static let controlsMaxWidth: CGFloat = 640
 
-    /// Whether the Dynamic Island is on the leading side (phone layouts in landscape).
+    /// Whether the Dynamic Island is on the leading side (phone layouts in landscape): the fallback
+    /// for scenes with no vertical bar (iPhones without one, iOS before 27.1). Landscape safe-area
+    /// insets are symmetric there, so ask this view's scene which way round the phone is.
+    /// `.landscapeRight` means the top of the phone (and the island) is on the left.
     private var islandOnLeading: Bool {
         #if targetEnvironment(macCatalyst)
         false   // A Mac window has no island, and it always gets the workspace layouts anyway.
         #else
-        Self.islandOnLeading(in: windowScene)
-        #endif
-    }
-
-    #if !targetEnvironment(macCatalyst)
-    /// Fallback for scenes with no vertical bar (iPhones without one, iOS before 27.1). Landscape
-    /// safe-area insets are symmetric there, so ask this view's scene which way round the phone is.
-    /// `.landscapeRight` means the top of the phone (and the island) is on the left.
-    static func islandOnLeading(in scene: UIWindowScene?) -> Bool {
         // TODO: Modernization - Window bounds can't replace this check: it tells landscape-left from
         // landscape-right to keep the rail away from the Dynamic Island, and bounds don't say which way
         // round the phone is. Where the system has a vertical bar the rail already follows
         // @Environment(\.toolbarVerticalEdge); this orientation heuristic only runs where that is nil.
         // Decide whether to keep it there or fix the rail to one side when the island isn't beside it.
-        scene?.effectiveGeometry.interfaceOrientation == .landscapeRight
+        windowScene?.effectiveGeometry.interfaceOrientation == .landscapeRight
+        #endif
     }
-    #endif
 
     /// Portrait, like the iPhone Camera app: status on top, a clean viewfinder, and everything you
     /// touch in one band at the bottom (values → modes → shutter).
@@ -274,7 +251,6 @@ struct RemoteView: View {
             Spacer(minLength: 0)
             HStack(spacing: 8) {
                 LastShotButton { showGallery = true }
-                    .disabled(camera.isBusyExposing || camera.interval.running || !camera.capabilities.cardBrowser)
                 ToolsButton(open: $toolsOpen)
                     .scaleEffect(0.85)
             }
@@ -290,13 +266,13 @@ struct RemoteView: View {
     /// dial and the shutter in view. Nothing is hidden behind a tray.
     private func workspaceLandscape(inspectorOnLeading: Bool, size: CGSize) -> some View {
         let inspectorWidth = min(420, max(320, (size.width * 0.29).rounded()))
-        // Five tiles in a row once they're wide enough for their labels.
-        let tileColumns = inspectorWidth >= 390 ? 5 : 4
-        // A tall inspector has height to spare: give it to the histogram.
-        let histogramHeight: CGFloat = size.height >= 900 ? 132 : 76
+        // Five tiles in a row once they're wide enough for their labels; a tall inspector has height
+        // to spare, so give it to the histogram.
+        let side = inspector(tileColumns: inspectorWidth >= 390 ? 5 : 4, histogramHeight: size.height >= 900 ? 132 : 76)
+            .frame(width: inspectorWidth)
         return HStack(spacing: 0) {
             if inspectorOnLeading {
-                inspector(tileColumns: tileColumns, histogramHeight: histogramHeight).frame(width: inspectorWidth)
+                side
                 Hairline(axis: .vertical).ignoresSafeArea(edges: .vertical)
             }
             VStack(spacing: 10) {
@@ -314,7 +290,7 @@ struct RemoteView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             if !inspectorOnLeading {
                 Hairline(axis: .vertical).ignoresSafeArea(edges: .vertical)
-                inspector(tileColumns: tileColumns, histogramHeight: histogramHeight).frame(width: inspectorWidth)
+                side
             }
         }
     }
@@ -404,8 +380,7 @@ struct RemoteView: View {
                     ExposureGrid(active: $activeSetting)
                 }
                 optionPanel
-                ToolTiles(tools: tools.filter { item in !quickAids.contains { $0.id == item.id } },
-                          minimum: 108, columns: tileColumns)
+                ToolTiles(tools: tools.filter { item in !quickAids.contains { $0.id == item.id } }, columns: tileColumns)
             }
             .transition(.opacity)
         }
@@ -420,7 +395,6 @@ struct RemoteView: View {
             }
             HStack {
                 LastShotButton { showGallery = true }
-                    .disabled(camera.isBusyExposing || camera.interval.running || !camera.capabilities.cardBrowser)
                     .frame(width: 72)
                 Spacer(minLength: 0)
                 ShutterButton()
@@ -445,7 +419,7 @@ struct RemoteView: View {
             activeSetting: activeSetting,
             toggleDial: { name in
                 // A dial lives where the tool panels do, so close any panel first.
-                for panel in [SidePanel.interval, .bracket, .highRes, .presets, .nd, .motion] { close(panel) }
+                openPanel = nil
                 withAnimation(.snappy) { activeSetting = activeSetting == name ? nil : name }
             },
             tools: tools)
@@ -453,70 +427,43 @@ struct RemoteView: View {
 
     // MARK: - Panels (sheets on a phone)
 
-    /// The tool panel that is open. One at a time: in the workspace they share the inspector.
-    private var sidePanel: SidePanel? {
-        guard isWorkspace else { return nil }
-        if showInterval { return .interval }
-        if showBracket { return .bracket }
-        if showHighRes { return .highRes }
-        if showPresets { return .presets }
-        if showND { return .nd }
-        if showMotion { return .motion }
-        return nil
-    }
+    /// The tool panel open in the inspector. One at a time: in the workspace they share it.
+    private var sidePanel: SidePanel? { isWorkspace ? openPanel : nil }
 
     private func open(_ panel: SidePanel) {
-        showInterval = panel == .interval
-        showBracket = panel == .bracket
-        showHighRes = panel == .highRes
-        showPresets = panel == .presets
-        showND = panel == .nd
-        showMotion = panel == .motion
+        openPanel = panel
         if isWorkspace { activeSetting = nil }
     }
 
     private func close(_ panel: SidePanel) {
-        switch panel {
-        case .interval: showInterval = false
-        case .bracket: showBracket = false
-        case .highRes: showHighRes = false
-        case .presets: showPresets = false
-        case .nd: showND = false
-        case .motion: showMotion = false
-        }
+        if openPanel == panel { openPanel = nil }
     }
 
     private func toggle(_ panel: SidePanel) {
         if sidePanel == panel { close(panel) } else { open(panel) }
     }
 
-    /// Presets → Astro: Astro is a sheet everywhere, so close the presets first (on a phone the sheet
-    /// has to go before another can come up).
+    /// Presets → Astro: Astro is a sheet everywhere, so close the presets first.
     private func openAstroFromPresets() {
-        let wasSheet = !isWorkspace
-        close(.presets)
-        if wasSheet {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showAstro = true }
-        } else {
-            showAstro = true
-        }
+        leavePresets { showAstro = true }
     }
 
     /// Presets → Macro → Focus stack: the Bracket tool on its Focus tab.
     private func openFocusStackFromPresets() {
         UserDefaults.standard.set(true, forKey: "bracket.focus")
+        leavePresets { withAnimation(.snappy) { open(.bracket) } }
+    }
+
+    /// Closes the presets, then runs `next`: on a phone the presets sheet has to go before another
+    /// sheet can come up.
+    private func leavePresets(then next: @escaping () -> Void) {
         let wasSheet = !isWorkspace
         close(.presets)
         if wasSheet {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { open(.bracket) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: next)
         } else {
-            withAnimation(.snappy) { open(.bracket) }
+            next()
         }
-    }
-
-    /// A tool's sheet is only for the phone layouts; in the workspace the same flag opens its panel.
-    private func phoneSheet(_ flag: Binding<Bool>) -> Binding<Bool> {
-        Binding(get: { flag.wrappedValue && !isWorkspace }, set: { flag.wrappedValue = $0 })
     }
 
     // MARK: - Pieces
@@ -543,18 +490,14 @@ struct RemoteView: View {
         // run a setup or open a Pro tool need Pro.
         let needsPro: Bool = switch suggestion.action {
         case .setting, .showGrid: false
-        case .recipe, .freezeMotion, .exposeToTheRight, .openND, .openMotion: true
+        case .recipe, .freezeMotion, .exposeToTheRight, .openND: true
         }
         if needsPro, !ShutterlinkPro.shared.isUnlocked {
             proPrompt = ProPrompt(feature: suggestion.actionTitle)
             return
         }
         Task { await camera.applySceneSuggestion(suggestion) }
-        switch suggestion.action {
-        case .openND: open(.nd)
-        case .openMotion: open(.motion)
-        default: break
-        }
+        if case .openND = suggestion.action { open(.nd) }
     }
 
     @ViewBuilder private var optionPanel: some View {
@@ -572,10 +515,10 @@ struct RemoteView: View {
     private var menuButton: some View {
         Menu {
             Section(camera.cameraName ?? "Camera") {
-                if !camera.availableLiveViewSizes.isEmpty {
+                if !camera.capabilities.liveViewSizes.isEmpty {
                     Picker(selection: Binding(get: { camera.liveViewQuality },
                                               set: { q in Task { await camera.changeLiveViewQuality(q) } })) {
-                        ForEach(camera.availableLiveViewSizes, id: \.self) { Text(CameraModel.liveViewLabel($0)).tag($0) }
+                        ForEach(camera.capabilities.liveViewSizes, id: \.self) { Text(CameraModel.liveViewLabel($0)).tag($0) }
                     } label: {
                         Label("Live view size", systemImage: "rectangle.dashed")
                     }
@@ -655,22 +598,22 @@ struct RemoteView: View {
         }
     }
 
+    /// A Pro tool that opens its panel; `running` keeps it lit while it works with the panel closed.
+    private func panelTool(_ panel: SidePanel, id: String, title: String, feature: String,
+                           running: Bool = false) -> ToolItem {
+        ToolItem(id: id, icon: panel.icon, title: title, on: running || sidePanel == panel, opens: true,
+                 locked: !ShutterlinkPro.shared.isUnlocked, action: pro(feature) { toolsOpen = false; toggle(panel) })
+    }
+
     private var tools: [ToolItem] {
-        let locked = !ShutterlinkPro.shared.isUnlocked
         let all = [
-            ToolItem(id: "presets", icon: "wand.and.stars", title: "Presets",
-                     on: sidePanel == .presets, opens: true, locked: locked, action: pro("Presets") {
-                toolsOpen = false; toggle(.presets)
-            }),
-            ToolItem(id: "astro", icon: "moon.stars.fill", title: "Astro", on: false, opens: true, locked: locked,
-                     action: pro("Astro") {
+            panelTool(.presets, id: "presets", title: "Presets", feature: "Presets"),
+            ToolItem(id: "astro", icon: "moon.stars.fill", title: "Astro", on: false, opens: true,
+                     locked: !ShutterlinkPro.shared.isUnlocked, action: pro("Astro") {
                 toolsOpen = false; showAstro = true
             }),
-            ToolItem(id: "interval", icon: "timer", title: "Interval",
-                     on: camera.interval.running || sidePanel == .interval, opens: true, locked: locked,
-                     action: pro("The interval timer") {
-                toolsOpen = false; toggle(.interval)
-            }),
+            panelTool(.interval, id: "interval", title: "Interval", feature: "The interval timer",
+                      running: camera.interval.running),
             ToolItem(id: "loupe", icon: "plus.magnifyingglass", title: "Loupe", on: showLoupe) {
                 showLoupe.toggle(); withAnimation(.snappy) { toolsOpen = false }
             },
@@ -680,20 +623,10 @@ struct RemoteView: View {
             ToolItem(id: "peaking", icon: "scope", title: "Peaking", on: camera.focusPeaking) {
                 camera.focusPeaking.toggle()
             },
-            ToolItem(id: "bracket", icon: "square.stack.3d.down.right", title: "Bracket",
-                     on: camera.bracket.running || sidePanel == .bracket, opens: true, locked: locked,
-                     action: pro("Bracketing and focus stacking") {
-                toolsOpen = false; toggle(.bracket)
-            }),
-            ToolItem(id: "nd", icon: "camera.filters", title: "ND filter", on: sidePanel == .nd, opens: true,
-                     locked: locked, action: pro("The ND filter calculator") {
-                toolsOpen = false; toggle(.nd)
-            }),
-            ToolItem(id: "motion", icon: "figure.walk.motion", title: "Motion",
-                     on: camera.motion.armed || sidePanel == .motion, opens: true, locked: locked,
-                     action: pro("The motion trigger") {
-                toolsOpen = false; toggle(.motion)
-            }),
+            panelTool(.bracket, id: "bracket", title: "Bracket", feature: "Bracketing and focus stacking",
+                      running: camera.bracket.running),
+            panelTool(.nd, id: "nd", title: "ND filter", feature: "The ND filter calculator"),
+            panelTool(.motion, id: "motion", title: "Motion", feature: "The motion trigger", running: camera.motion.armed),
             ToolItem(id: "pocket", icon: "moon.zzz", title: "Pocket", on: false, opens: true) {
                 toolsOpen = false; pocketMode = true
             },
@@ -707,10 +640,7 @@ struct RemoteView: View {
                      title: camera.touchShutter ? "Tap shoots" : "Tap AF", on: camera.touchShutter) {
                 camera.touchShutter.toggle()
             },
-            ToolItem(id: "highres", icon: "square.grid.3x3.square", title: "High Res", on: sidePanel == .highRes,
-                     opens: true, locked: locked, action: pro("The High Res Shot helper") {
-                toolsOpen = false; toggle(.highRes)
-            }),
+            panelTool(.highRes, id: "highres", title: "High Res", feature: "The High Res Shot helper"),
         ]
         let caps = camera.capabilities
         var shown = all.filter { item in
@@ -748,7 +678,6 @@ struct RemoteView: View {
     private var shutterRow: some View {
         HStack {
             LastShotButton { showGallery = true }
-                .disabled(camera.isBusyExposing || camera.interval.running || !camera.capabilities.cardBrowser)
                 .frame(width: 84)
             Spacer()
             ShutterButton()
@@ -776,7 +705,6 @@ struct ToolItem: Identifiable {
 
 struct ToolButton: View {
     let item: ToolItem
-    var compact = false
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -786,15 +714,13 @@ struct ToolButton: View {
                     .font(.system(size: 21, weight: .semibold))
                     .frame(height: 24)
                     .symbolEffect(.bounce, value: item.on)
-                if !compact {
-                    Text(item.title)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                }
+                Text(item.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .foregroundStyle(item.on ? Theme.accent : Color.white)
-            .frame(maxWidth: .infinity, minHeight: compact ? Theme.target : 66)
+            .frame(maxWidth: .infinity, minHeight: 66)
             .background(shape.fill(item.on ? Theme.accent.opacity(0.14) : Theme.surfaceRaised))
             .overlay(shape.stroke(item.on ? Theme.accent.opacity(0.85) : Theme.stroke, lineWidth: item.on ? 1.5 : 1))
             // Tools that open their own screen say so; the rest are switches.
@@ -822,6 +748,7 @@ struct ToolButton: View {
 }
 
 /// The latest capture as a thumbnail (opens the card browser); a card icon before the first shot.
+/// Greyed out while the card can't be browsed.
 struct LastShotButton: View {
     @Environment(CameraModel.self) private var camera
     let action: () -> Void
@@ -847,8 +774,9 @@ struct LastShotButton: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .surface(.regular.interactive(), in: .rect(cornerRadius: 17, style: .continuous))
+        .surface(.regular, in: .rect(cornerRadius: 17, style: .continuous))
         .animation(.bouncy(duration: 0.45), value: camera.shotCounter)
+        .disabled(camera.isBusyExposing || camera.interval.running || !camera.capabilities.cardBrowser)
         .accessibilityLabel(camera.lastShot == nil ? "Card" : "Last photo. Opens the card.")
     }
 }
@@ -875,7 +803,7 @@ struct IntervalBadge: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .surface(.regular.interactive(), in: .circle)
+        .surface(.regular, in: .circle)
         .accessibilityLabel(camera.interval.running ? "Interval running, \(camera.interval.done) shots" : "Interval timer")
     }
 }
@@ -914,64 +842,29 @@ struct ErrorBanner: View {
 
     var body: some View {
         if let error = camera.lastError {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
-                Text(error).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
-                Button { withAnimation { camera.lastError = nil } } label: { Image(systemName: "xmark") }
-                    .accessibilityLabel("Dismiss")
+            banner(error, icon: "exclamationmark.triangle.fill", color: .yellow, tint: .red.opacity(0.35)) {
+                camera.lastError = nil
             }
-            .padding(12)
-            .surface(.regular.tint(.red.opacity(0.35)), in: .rect(cornerRadius: 18, style: .continuous))
-            .padding(.horizontal, 12)
-            .transition(.blurReplace)
         } else if let note = camera.cameraNote {
             // Model-specific advice from the model table, until dismissed once for this model.
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "info.circle.fill").foregroundStyle(Theme.accent)
-                Text(note).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
-                Button { withAnimation { camera.dismissCameraNote() } } label: { Image(systemName: "xmark") }
-                    .accessibilityLabel("Dismiss")
+            banner(note, icon: "info.circle.fill", color: Theme.accent, tint: Theme.accent.opacity(0.18)) {
+                camera.dismissCameraNote()
             }
-            .padding(12)
-            .surface(.regular.tint(Theme.accent.opacity(0.18)), in: .rect(cornerRadius: 18, style: .continuous))
-            .padding(.horizontal, 12)
-            .transition(.blurReplace)
         }
     }
-}
 
-struct ReadoutBar: View {
-    @Environment(CameraModel.self) private var camera
-    var compact = false
-    /// Drawn on top of the live image (no outer padding, clear glass).
-    var overlay = false
-
-    var body: some View {
-        HStack(spacing: compact ? 10 : 14) {
-            Text(camera.liveInfo.shutter ?? formatted("shutspeedvalue"))
-            Text(camera.liveInfo.aperture ?? formatted("focalvalue"))
-            Text(camera.liveInfo.expComp ?? formatted("expcomp"))
-            Text(camera.liveInfo.iso ?? "ISO " + formatted("isospeedvalue"))
-            Spacer(minLength: 0)
-            Text("\(camera.fps) fps")
-                .foregroundStyle(.secondary)
-                .contentTransition(.numericText(value: Double(camera.fps)))
+    private func banner(_ text: String, icon: String, color: Color, tint: Color,
+                        dismiss: @escaping () -> Void) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon).foregroundStyle(color)
+            Text(text).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
+            Button { withAnimation { dismiss() } } label: { Image(systemName: "xmark") }
+                .accessibilityLabel("Dismiss")
         }
-        .contentTransition(.numericText())
-        .animation(.snappy, value: camera.liveInfo)
-        .font(.system(compact ? .footnote : .subheadline, design: .monospaced).weight(.semibold))
-        .lineLimit(1)
-        .minimumScaleFactor(0.6)
-        .minimumScaleFactor(0.8)
-        .padding(.horizontal, compact ? 14 : 18)
-        .padding(.vertical, compact ? 7 : 10)
-        .surface(overlay ? .clear : .regular, in: .capsule)
-        .padding(.horizontal, overlay ? 0 : 12)
-    }
-
-    private func formatted(_ name: String) -> String {
-        guard let p = camera.properties[name] else { return "–" }
-        return PropertyFormat.display(name, camera.dialOptions(for: p).value)
+        .padding(12)
+        .surface(.regular.tint(tint), in: .rect(cornerRadius: 18, style: .continuous))
+        .padding(.horizontal, 12)
+        .transition(.blurReplace)
     }
 }
 

@@ -18,7 +18,6 @@ without a camera (or a CCAPI activation).
 
 In the app: Connect screen > Canon (or Auto) > Advanced > Camera address = 127.0.0.1:8084.
 """
-import argparse
 import datetime
 import json
 import os
@@ -26,12 +25,11 @@ import random
 import sys
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlsplit
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-from mock_penf import load_frames  # noqa: E402  (same live-view frames as the PEN-F mock)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mock_penf import QuietHandler, arguments, load_frames, serve  # noqa: E402  (same frames as the PEN-F mock)
 
 V = "/ccapi/ver100/"
 PER_PAGE = 100
@@ -52,7 +50,7 @@ WB = ["auto", "awbwhite", "daylight", "shade", "cloudy", "tungsten", "whitefluor
 
 APIS = {
     "ver100": [
-        ("deviceinformation", "g"), ("devicestatus/battery", "g"), ("devicestatus/storage", "g"),
+        ("deviceinformation", "g"), ("devicestatus/battery", "g"),
         ("shooting/settings", "g"), ("shooting/settings/shootingmodedial", "g"),
         ("shooting/settings/tv", "gp"), ("shooting/settings/av", "gp"), ("shooting/settings/iso", "gp"),
         ("shooting/settings/exposure", "gp"), ("shooting/settings/wb", "gp"),
@@ -60,7 +58,7 @@ APIS = {
         ("shooting/control/shutterbutton", "o"), ("shooting/control/shutterbutton/manual", "o"),
         ("shooting/control/moviemode", "o"), ("shooting/control/recbutton", "o"),
         ("shooting/control/drivefocus", "o"),
-        ("event/polling", "gd"), ("contents", "g"), ("functions/wificonnection", "o"),
+        ("event/polling", "g"), ("contents", "g"),
     ],
     "ver110": [("devicestatus/batterylist", "g"), ("shooting/control/recbutton", "o")],
 }
@@ -124,39 +122,23 @@ def tv_seconds(value):
     return 0
 
 
-class Handler(BaseHTTPRequestHandler):
+class Handler(QuietHandler):
     cam = None
-    protocol_version = "HTTP/1.1"
+    content_type = "application/json"
 
-    def log_message(self, fmt, *args):
-        pass
+    def reply(self, status, body=None, ctype=None):
+        super().reply(status, body if isinstance(body, (bytes, str)) else json.dumps(body or {}), ctype)
 
-    def reply(self, status, body=None, ctype="application/json"):
-        if body is None:
-            body = {}
-        if isinstance(body, (dict, list)):
-            body = json.dumps(body)
-        if isinstance(body, str):
-            body = body.encode()
-        self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def body(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length) if length else b""
-        try:
-            return json.loads(raw) if raw else {}
-        except ValueError:
-            return {}
-
-    def handle_any(self, method):
+    def handle_any(self):
+        method = self.command
         url = urlsplit(self.path)
         q = dict(parse_qsl(url.query))
         path = url.path.rstrip("/")
-        payload = self.body() if method in ("PUT", "POST") else {}
+        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            payload = json.loads(self.rfile.read(length)) if length else {}
+        except ValueError:
+            payload = {}
         quiet = path.endswith("liveview/flip") or path.endswith("event/polling") or "kind" in q
         if not quiet:
             print(f"{method} {self.path} {json.dumps(payload) if payload else ''}")
@@ -181,9 +163,7 @@ class Handler(BaseHTTPRequestHandler):
     def route(self, method, feature, q, payload):
         cam = self.cam
         if feature == "deviceinformation":
-            return self.reply(200, {"manufacturer": "Canon Inc.", "productname": "Canon EOS R6",
-                                    "guid": "00000000-0000-0000-0000-mockcanonr6", "serialnumber": "123456789012",
-                                    "macaddress": "00:00:85:00:00:01", "firmwareversion": "1.8.1"})
+            return self.reply(200, {"manufacturer": "Canon Inc.", "productname": "Canon EOS R6"})
         if feature == "devicestatus/battery":
             return self.reply(200, {"name": "LP-E6NH", "kind": "battery", "level": cam.battery, "quality": "good"})
         if feature == "devicestatus/batterylist":
@@ -254,7 +234,7 @@ class Handler(BaseHTTPRequestHandler):
             cam.movie_mode = payload.get("action") == "on"
             return self.reply(200)
         if feature == "shooting/control/recbutton":
-            action = payload.get("action") or payload.get("status")
+            action = payload.get("action")
             if action == "start":
                 if not cam.movie_mode:
                     return self.reply(503, {"message": "Mode not supported"})
@@ -267,15 +247,11 @@ class Handler(BaseHTTPRequestHandler):
                 print("  stopped recording")
             return self.reply(200)
         if feature == "event/polling":
-            if method == "DELETE":
-                return self.reply(200)
             changes = {"battery": {"name": "LP-E6NH", "kind": "battery", "level": cam.battery, "quality": "good"}}
             if cam.added:
                 changes["addedcontents"] = cam.added
                 cam.added = []
             return self.reply(200, changes)
-        if feature == "functions/wificonnection":
-            return self.reply(200)
         if feature == "contents":
             return self.reply(200, {"path": [V + "contents/sd"]})
         if feature == "contents/sd":
@@ -293,17 +269,11 @@ class Handler(BaseHTTPRequestHandler):
             f = next((f for f in cam.files if f["name"] == name), None)
             if f is None:
                 return self.reply(404, {"message": "Not found"})
-            kind = q.get("kind")
-            if kind == "info":
-                return self.reply(200, {"filesize": len(f["jpeg"]), "protect": "disable", "archive": "disable",
-                                        "rotate": "0", "rating": "off",
-                                        "lastmodifieddate": f["date"].strftime("%a, %d %b %Y %H:%M:%S")})
-            if kind in ("thumbnail", "display", "embedded"):
+            if q.get("kind") in ("thumbnail", "display"):
                 return self.reply(200, f["jpeg"], "image/jpeg")
-            if name.endswith(".CR3") or name.endswith(".MP4"):
-                print(f"file: {name} (original)")
-                return self.reply(200, random.Random(name).randbytes(3_000_000), "application/octet-stream")
             print(f"file: {name} (original)")
+            if name.endswith((".CR3", ".MP4")):
+                return self.reply(200, random.Random(name).randbytes(3_000_000), "application/octet-stream")
             return self.reply(200, f["jpeg"], "image/jpeg")
         return self.reply(404, {"message": "Not found"})
 
@@ -311,37 +281,20 @@ class Handler(BaseHTTPRequestHandler):
         value = self.cam.settings[key]
         return {"value": value} if key == "shootingmodedial" else {"value": value, "ability": ABILITY[key]}
 
-    def do_GET(self):
-        self.handle_any("GET")
-
-    def do_PUT(self):
-        self.handle_any("PUT")
-
-    def do_POST(self):
-        self.handle_any("POST")
-
-    def do_DELETE(self):
-        self.handle_any("DELETE")
+    do_GET = do_PUT = do_POST = handle_any
 
 
 ABILITY = {"tv": TV, "av": AV, "iso": ISO, "exposure": EXPOSURE, "wb": WB}
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bind", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
-    ap.add_argument("--port", type=int, default=8084, help="CCAPI port (default 8084; the real camera uses 8080)")
-    args = ap.parse_args()
-    sys.stdout.reconfigure(line_buffering=True)
+    args = arguments(__doc__, 8084, 8080).parse_args()
     cam = MockCanon(load_frames())
     Handler.cam = cam
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     print(f"Mock Canon EOS R6 (CCAPI) on http://{args.bind}:{args.port}/ccapi "
           f"({len(cam.frames)} frames, {len(cam.files)} files on card)")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nbye")
+    serve(server)
 
 
 if __name__ == "__main__":

@@ -27,9 +27,7 @@ object WifiQrCode {
     /** The brand a code's format gives away (Olympus' OIS codes, Sony's W01 codes). */
     fun brand(text: String): CameraBrand? {
         val upper = text.trim().uppercase()
-        if (upper.startsWith("OIS")) return CameraBrand.OLYMPUS
-        if (upper.startsWith("W01:")) return CameraBrand.SONY
-        return null
+        return if (upper.startsWith("OIS")) CameraBrand.OLYMPUS else if (upper.startsWith("W01:")) CameraBrand.SONY else null
     }
 
     fun parse(text: String): WifiCredentials? {
@@ -43,12 +41,9 @@ object WifiQrCode {
         }
         // Olympus / OM System: OIS1,<name>,<password>, each scrambled (see `olympusDecode`).
         if (upper.startsWith("OIS")) {
-            val parts = trimmed.split(",")
-            if (parts.size < 3) return null
-            val ssid = olympusDecode(parts[1]).trim()
-            val password = olympusDecode(parts[2]).trim()
-            if (ssid.isEmpty()) return null
-            return WifiCredentials(ssid, password)
+            val parts = trimmed.split(",").takeIf { it.size >= 3 } ?: return null
+            val ssid = olympusDecode(parts[1]).trim().ifEmpty { return null }
+            return WifiCredentials(ssid, olympusDecode(parts[2]).trim())
         }
         // Sony bodies: W01:S:<name>;P:<password>;C:<model>;M:<MAC>; with the name given without its
         // DIRECT- prefix. Not yet checked on a real Sony camera; the fields stay editable.
@@ -70,13 +65,10 @@ object WifiQrCode {
      */
     private const val OLYMPUS_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\$%*+-/"
 
-    fun olympusDecode(text: String): String {
-        val last = OLYMPUS_ALPHABET.length - 1
-        return text.map { c ->
-            val index = OLYMPUS_ALPHABET.indexOf(c)
-            if (index < 0) c else OLYMPUS_ALPHABET[last - index]
-        }.joinToString("")
-    }
+    fun olympusDecode(text: String): String = text.map { c ->
+        val index = OLYMPUS_ALPHABET.indexOf(c)
+        if (index < 0) c else OLYMPUS_ALPHABET[OLYMPUS_ALPHABET.length - 1 - index]
+    }.joinToString("")
 
     /** `K:value;K:value;` with `\` escaping `;`, `:`, `,`, `"` and `\`. */
     private fun fields(text: String): Map<String, String> {
@@ -190,13 +182,13 @@ suspend fun CameraModel.join(network: WifiCredentials): Boolean {
 
 /** Add a camera's Connect: joins the typed or scanned network first when there is one. */
 suspend fun CameraModel.joinAndConnect() {
-    val network = WifiCredentials(wifiSsid.trim(), wifiPassword)
-    if (network.ssid.isEmpty()) {
-        connect()
-        return
-    }
-    if (!join(network)) return
-    connect(waitUntil = System.currentTimeMillis() + 30_000)
+    joinAndConnect(WifiCredentials(wifiSsid.trim(), wifiPassword).takeIf { it.ssid.isNotEmpty() })
+}
+
+/** Joins `network` first when there is one, then connects, giving the phone 30 s to get onto it. */
+suspend fun CameraModel.joinAndConnect(network: WifiCredentials?) {
+    if (network == null) connect()
+    else if (join(network)) connect(waitUntil = System.currentTimeMillis() + 30_000)
 }
 
 /** The network saved with this camera, if Shutterlink joined it before. (The Keystore is slow: off the main thread.) */

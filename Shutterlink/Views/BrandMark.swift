@@ -130,13 +130,3 @@ struct LaunchHandoff: View {
         }
     }
 }
-
-#Preview {
-    VStack(spacing: 30) {
-        BrandLockup()
-        ApertureMark().frame(width: 200, height: 200)
-        ApertureMark(showsLink: false, monochrome: Theme.accent.opacity(0.3)).frame(width: 200, height: 200)
-    }
-    .padding()
-    .background(.black)
-}

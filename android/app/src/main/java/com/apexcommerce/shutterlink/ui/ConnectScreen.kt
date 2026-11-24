@@ -46,12 +46,10 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -105,6 +103,7 @@ fun ConnectScreen(camera: CameraModel) {
     var connectingId by remember { mutableStateOf<String?>(null) }
     var forgetting by remember { mutableStateOf<SavedCamera?>(null) }
     var scanNote by remember { mutableStateOf<String?>(null) }
+    val empty = camera.savedCameras.isEmpty()
     LaunchedEffect(camera.phase) { if (camera.phase != ConnectionPhase.CONNECTING) connectingId = null }
     val withWifiPermission = rememberWifiJoinPermission(camera)
     val scan = rememberQrScanner(onCode = { code ->
@@ -127,16 +126,18 @@ fun ConnectScreen(camera: CameraModel) {
                     Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(24.dp),
                 ) {
-                    if (camera.savedCameras.isEmpty()) {
+                    if (empty) {
                         Column(Modifier.padding(top = if (compact) 16.dp else 32.dp), verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 16.dp)) {
                             BrandLockup(if (compact) 38.dp else 48.dp)
                             Text("Shoot from\nyour phone.", fontSize = if (compact) 30.sp else 38.sp, fontWeight = FontWeight.Black, lineHeight = if (compact) 34.sp else 42.sp)
                             Text("Remote control for Olympus, OM System and Panasonic LUMIX cameras over their own Wi-Fi, with Nikon, Canon and Sony in beta.",
                                 color = Theme.secondary, fontSize = 15.sp)
                         }
-                        scan?.let { ScanToConnectCard(camera, busy = connectingId == null, note = scanNote) { scanNote = null; it() } }
-                        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                            CapsLabel("Your cameras")
+                    } else Box(Modifier.padding(top = 20.dp)) { BrandLockup(40.dp) }
+                    scan?.let { ScanToConnectCard(camera, busy = connectingId == null, note = scanNote) { scanNote = null; it() } }
+                    Column(verticalArrangement = Arrangement.spacedBy(if (empty) 14.dp else 12.dp)) {
+                        CapsLabel("Your cameras")
+                        if (empty) {
                             Column(Modifier.fillMaxWidth().dashedBorder(22.dp).padding(vertical = 28.dp, horizontal = 20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 Icon(Icons.Filled.PhotoCamera, null, Modifier.size(34.dp), tint = Theme.accent)
@@ -144,12 +145,7 @@ fun ConnectScreen(camera: CameraModel) {
                                 Text("Add your camera once. After that it waits here: turn on its Wi-Fi and tap it.",
                                     color = Theme.secondary, fontSize = 15.sp, textAlign = TextAlign.Center)
                             }
-                        }
-                    } else {
-                        Box(Modifier.padding(top = 20.dp)) { BrandLockup(40.dp) }
-                        scan?.let { ScanToConnectCard(camera, busy = connectingId == null, note = scanNote) { scanNote = null; it() } }
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            CapsLabel("Your cameras")
+                        } else {
                             Text("Turn on the camera's Wi-Fi and tap it. A camera saved with its Wi-Fi joins it by itself; for others, join it in Settings ▸ Wi-Fi first.",
                                 color = Theme.secondary, fontSize = 15.sp, modifier = Modifier.padding(bottom = 4.dp))
                             camera.savedCameras.forEach { saved ->
@@ -171,15 +167,15 @@ fun ConnectScreen(camera: CameraModel) {
                                 Text("Add a camera", color = Theme.accent, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
-                        Text("Long-press a camera to forget it.", color = Theme.tertiary, fontSize = 13.sp)
                     }
+                    if (!empty) Text("Long-press a camera to forget it.", color = Theme.tertiary, fontSize = 13.sp)
                 }
             }
             Column(Modifier.fillMaxWidth().background(Theme.background).padding(horizontal = 20.dp).padding(top = 12.dp, bottom = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 camera.lastError?.let { ConnectErrorBanner(it) }
                 WifiStatusRow(camera)
-                if (camera.savedCameras.isEmpty()) {
+                if (empty) {
                     AccentButton(onClick = { showAdd = true }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Filled.Add, null)
                         Text("Add your camera")
@@ -190,14 +186,8 @@ fun ConnectScreen(camera: CameraModel) {
     }
 
     forgetting?.let { saved ->
-        AlertDialog(
-            onDismissRequest = { forgetting = null },
-            title = { Text("Forget ${saved.name}?") },
-            text = { Text("It disappears from this list. You can add it again any time.") },
-            confirmButton = { TextButton({ camera.forget(saved); forgetting = null }) { Text("Forget", color = Theme.red) } },
-            dismissButton = { TextButton({ forgetting = null }) { Text("Cancel") } },
-            containerColor = Theme.surfaceRaised,
-        )
+        ConfirmDialog("Forget ${saved.name}?", "Forget", { forgetting = null },
+            text = { Text("It disappears from this list. You can add it again any time.") }) { camera.forget(saved) }
     }
 }
 
@@ -242,7 +232,7 @@ private fun ConnectBackground() {
         val side = maxOf(size.width, size.height) * 0.8f
         // Centred at (width − 8 % of the mark, 18 % of the mark), like the iOS cover.
         translate(size.width - side * 0.58f, -side * 0.32f) {
-            drawAperture(0.41, showsLink = false, monochrome = Theme.accent.copy(alpha = 0.16f), box = Size(side, side))
+            drawAperture(Theme.accent.copy(alpha = 0.16f), Size(side, side))
         }
     }
 }
@@ -455,12 +445,6 @@ private fun StepRow(number: Int, title: String, detail: String) {
     }
 }
 
-@Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = Theme.accent, unfocusedBorderColor = Theme.stroke, cursorColor = Theme.accent,
-    focusedLabelColor = Theme.accent, unfocusedLabelColor = Theme.secondary,
-)
-
 private const val UNREADABLE_CODE =
     "Shutterlink can't read this camera's code yet. Type the network name and password shown next to the code instead."
 
@@ -527,14 +511,12 @@ private fun WifiCard(camera: CameraModel, typeLabel: String) {
         CapsLabel(typeLabel, color = Theme.accent)
         Text("The network name and password shown on the camera. Shutterlink joins it for you (Android asks you to confirm), and next time tapping the camera joins and connects in one go. Leave it empty if the phone is already on the camera's Wi-Fi.",
             color = Theme.secondary, fontSize = 13.sp)
-        OutlinedTextField(camera.wifiSsid, { camera.wifiSsid = it }, label = { Text("Network name") }, singleLine = true, colors = fieldColors(),
-            enabled = enabled, textStyle = monoStyle(16.sp, FontWeight.Normal),
-            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
+        OutlinedTextField(camera.wifiSsid, { camera.wifiSsid = it }, label = { Text("Network name") }, singleLine = true, enabled = enabled,
+            textStyle = monoStyle(16.sp, FontWeight.Normal), keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Camera network name" })
         // Shown in clear: it's printed on the camera's screen anyway, and easy to mistype.
-        OutlinedTextField(camera.wifiPassword, { camera.wifiPassword = it }, label = { Text("Password") }, singleLine = true, colors = fieldColors(),
-            enabled = enabled, textStyle = monoStyle(16.sp, FontWeight.Normal),
-            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
+        OutlinedTextField(camera.wifiPassword, { camera.wifiPassword = it }, label = { Text("Password") }, singleLine = true, enabled = enabled,
+            textStyle = monoStyle(16.sp, FontWeight.Normal), keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Camera network password" })
     }
 }
@@ -547,18 +529,13 @@ private fun AdvancedCard(camera: CameraModel) {
             camera.host, { camera.host = it.trim(); camera.saveSettings() },
             label = { Text("Camera address") },
             placeholder = { Text(if (camera.autoDetectBrand) "Automatic" else camera.brand.defaultHost, fontFamily = FontFamily.Monospace) },
-            singleLine = true, colors = fieldColors(), textStyle = monoStyle(16.sp, FontWeight.Normal),
+            singleLine = true, textStyle = monoStyle(16.sp, FontWeight.Normal),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth(),
         )
         if (camera.brand == CameraBrand.OLYMPUS && !camera.autoDetectBrand) {
             CapsLabel("User-Agent")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CameraModel.userAgents.forEach { ua ->
-                    val on = camera.userAgent == ua
-                    Text(ua, color = if (on) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.background(if (on) Theme.accent else Theme.surfaceRaised, Pill)
-                            .clickable { camera.userAgent = ua; camera.saveSettings() }.padding(horizontal = 14.dp, vertical = 9.dp))
-                }
+                CameraModel.userAgents.forEach { ua -> Chip(ua, camera.userAgent == ua) { camera.userAgent = ua; camera.saveSettings() } }
             }
         }
         if (!camera.autoDetectBrand && camera.brand.defaultLiveViewSizes.isNotEmpty()) {

@@ -1,4 +1,3 @@
-import Foundation
 import UIKit
 
 // Canon Camera Control API (CCAPI): REST + JSON over HTTP on port 8080, built into recent EOS R,
@@ -39,11 +38,8 @@ final class CanonDriver: CameraDriver {
     var liveViewFormat: LiveViewFormat { .pushed }
 
     var capabilities: CameraCapabilities {
-        CameraCapabilities(liveViewSizes: [], tapToFocus: has("shooting/liveview/afframeposition"),
-                           openEndedExposure: has("shooting/control/shutterbutton/manual"),
-                           movie: has("shooting/control/recbutton"), videoSwitch: true,
-                           lastShotReview: has("event/polling"), clockSync: false, highResShot: false,
-                           cardBrowser: has("contents"), powerOff: false,
+        CameraCapabilities(tapToFocus: has("shooting/liveview/afframeposition"), movie: has("shooting/control/recbutton"),
+                           videoSwitch: true, lastShotReview: has("event/polling"), cardBrowser: has("contents"),
                            focusDrive: has("shooting/control/drivefocus"))
     }
 
@@ -56,11 +52,7 @@ final class CanonDriver: CameraDriver {
         return .moved
     }
 
-    private func has(_ feature: String, _ method: String? = nil) -> Bool {
-        guard api[feature] != nil else { return false }
-        guard let method else { return true }
-        return methods[feature]?.contains(method) ?? false
-    }
+    private func has(_ feature: String) -> Bool { api[feature] != nil }
 
     private func path(_ feature: String) -> String {
         api[feature] ?? "/ccapi/ver100/" + feature
@@ -69,22 +61,7 @@ final class CanonDriver: CameraDriver {
     // MARK: - Connect
 
     func connect() async throws {
-        var root: [String: Any] = [:]
-        var failure: Error?
-        for attempt in 1...3 {
-            do {
-                root = try await client.requestJSON("GET", "/ccapi", timeout: 5)
-                failure = nil
-                break
-            } catch {
-                failure = error
-                guard attempt < 3, error is URLError else { break }
-                camera.status = "No answer yet, retrying (\(attempt + 1)/3)…"
-                try? await Task.sleep(for: .milliseconds(1500))
-            }
-        }
-        if let failure { throw failure }
-        parseAPIList(root)
+        parseAPIList(try await camera.retryingConnect { try await client.requestJSON("GET", "/ccapi", timeout: 5) })
         guard !api.isEmpty else {
             throw CameraError("The camera answered but lists no CCAPI functions. Check that CCAPI is activated on it.")
         }
@@ -187,14 +164,6 @@ final class CanonDriver: CameraDriver {
     }
 
     // MARK: - Live view
-
-    func enterRecMode() async {
-        camera.isSwitchingMode = true
-        defer { camera.isSwitchingMode = false }
-        camera.mode = .rec
-        await camera.refreshProperties()
-        await camera.startLiveView()
-    }
 
     func startLiveView() async {
         do {
@@ -319,18 +288,11 @@ final class CanonDriver: CameraDriver {
             if reportErrors { camera.lastError = "This setting can't be changed on this Canon from the app." }
             return false
         }
-        let previous = camera.properties[name]?.value
-        camera.properties[name]?.value = value
-        do {
+        let ok = await camera.optimisticallySet(name, to: value, reportErrors: reportErrors) {
             _ = try await client.request("PUT", path("shooting/settings/\(canonName)"), json: ["value": canonValue])
-        } catch {
-            if let previous { camera.properties[name]?.value = previous }
-            if reportErrors { camera.report(error) }
-            await refreshProperties()
-            return false
         }
         await refreshProperties()
-        return true
+        return ok
     }
 
     // MARK: - Focus & shooting
@@ -353,17 +315,8 @@ final class CanonDriver: CameraDriver {
     }
 
     func shutterPressed() async {
-        camera.isShooting = true
-        let seconds = PropertyFormat.seconds(fromShutter: camera.properties["shutspeedvalue"]?.value ?? "") ?? 0
-        if seconds >= 1 {
-            camera.exposureStartedAt = Date()
-            camera.exposureDuration = seconds
-        }
-        defer {
-            camera.isShooting = false
-            camera.exposureStartedAt = nil
-            camera.exposureDuration = nil
-        }
+        let seconds = camera.beginShot()
+        defer { camera.endShot() }
         do {
             _ = try await client.request("POST", path("shooting/control/shutterbutton"), json: ["af": true],
                                          timeout: max(30, seconds * 2 + 20))
@@ -404,9 +357,7 @@ final class CanonDriver: CameraDriver {
     func toggleMovie() async {
         if camera.isRecordingMovie {
             _ = try? await client.request("POST", path("shooting/control/recbutton"), json: ["action": "stop"])
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = nil
-            camera.shotCounter += 1
+            camera.setRecordingMovie(false)
             if has("shooting/control/moviemode") {
                 _ = try? await client.request("POST", path("shooting/control/moviemode"), json: ["action": "off"])
             }
@@ -417,8 +368,7 @@ final class CanonDriver: CameraDriver {
                 _ = try await client.request("POST", path("shooting/control/moviemode"), json: ["action": "on"])
             }
             _ = try await client.request("POST", path("shooting/control/recbutton"), json: ["action": "start"])
-            camera.isRecordingMovie = true
-            camera.movieStartedAt = Date()
+            camera.setRecordingMovie(true)
         } catch {
             camera.report(error)
         }

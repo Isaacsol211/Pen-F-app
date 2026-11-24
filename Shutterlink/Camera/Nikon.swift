@@ -1,4 +1,3 @@
-import Foundation
 import UIKit
 
 // Nikon over the camera's own Wi-Fi: PTP/IP on TCP 15740 (see PTPIP.swift), with Nikon's vendor
@@ -26,10 +25,8 @@ enum PTPOp {
     static let initiateCapture: UInt16 = 0x100E
     static let getPartialObject: UInt16 = 0x101B
     static let getDevicePropDesc: UInt16 = 0x1014
-    static let getDevicePropValue: UInt16 = 0x1015
     static let setDevicePropValue: UInt16 = 0x1016
 
-    static let nikonCaptureToSDRAM: UInt16 = 0x90C0
     static let nikonAfDrive: UInt16 = 0x90C1
     static let nikonChangeCameraMode: UInt16 = 0x90C2
     static let nikonGetLargeThumb: UInt16 = 0x90C4
@@ -63,7 +60,6 @@ enum PTPProp {
 
 enum NikonResponse {
     static let outOfFocus: UInt16 = 0xA002
-    static let changeCameraModeFailed: UInt16 = 0xA003
     static let invalidStatus: UInt16 = 0xA004
     static let notLiveView: UInt16 = 0xA00B
     static let mfDriveStepEnd: UInt16 = 0xA00C
@@ -101,12 +97,9 @@ final class NikonDriver: CameraDriver {
     private func hasProperty(_ code: UInt16) -> Bool { info?.properties.contains(code) ?? false }
 
     var capabilities: CameraCapabilities {
-        CameraCapabilities(liveViewSizes: [], tapToFocus: supports(PTPOp.nikonAfDrive),
-                           openEndedExposure: false,
-                           movie: supports(PTPOp.nikonStartMovie), videoSwitch: true,
+        CameraCapabilities(tapToFocus: supports(PTPOp.nikonAfDrive), movie: supports(PTPOp.nikonStartMovie), videoSwitch: true,
                            lastShotReview: supports(PTPOp.nikonGetEvent) || supports(PTPOp.nikonGetEventEx),
-                           clockSync: false, highResShot: false, cardBrowser: supports(PTPOp.getObjectHandles),
-                           powerOff: false, focusDrive: supports(PTPOp.nikonMfDrive))
+                           cardBrowser: supports(PTPOp.getObjectHandles), focusDrive: supports(PTPOp.nikonMfDrive))
     }
 
     /// Stable per-install id: cameras that remember paired devices know us by it.
@@ -129,21 +122,14 @@ final class NikonDriver: CameraDriver {
             }
         }
         camera.status = "Connecting (PTP/IP)…"
-        var failure: Error?
-        for attempt in 1...3 {
+        try await camera.retryingConnect(when: { !($0 is CameraError) }) {
             do {
                 try await ptp.connect(guid: Self.guid, name: UIDevice.current.name.isEmpty ? Platform.device : UIDevice.current.name)
-                failure = nil
-                break
             } catch {
-                failure = error
                 await ptp.close()
-                guard attempt < 3, !(error is CameraError) else { break }
-                camera.status = "No answer yet, retrying (\(attempt + 1)/3)…"
-                try? await Task.sleep(for: .milliseconds(1500))
+                throw error
             }
         }
-        if let failure { throw failure }
 
         try await ptp.run(PTPOp.openSession, [1])
         camera.status = "Reading camera info…"
@@ -180,7 +166,7 @@ final class NikonDriver: CameraDriver {
             var failures = 0
             while !Task.isCancelled {
                 guard let self else { return }
-                if let level = try? await self.readRaw(PTPProp.batteryLevel) {
+                if let level = await self.desc(PTPProp.batteryLevel)?.current {
                     failures = 0
                     if self.camera.liveInfo.battery != Int(level) { self.camera.liveInfo.battery = Int(level) }
                 } else if self.hasProperty(PTPProp.batteryLevel) {
@@ -196,11 +182,12 @@ final class NikonDriver: CameraDriver {
 
     // MARK: - Helpers
 
-    private func readRaw(_ code: UInt16) async throws -> Int64 {
-        guard hasProperty(code) else { throw CameraError("No such property.") }
-        let desc = PTPPropDesc(try await ptp.run(PTPOp.getDevicePropDesc, [UInt32(code)], timeout: 5).data)
+    private func desc(_ code: UInt16) async -> PTPPropDesc? {
+        guard hasProperty(code),
+              let data = try? await ptp.run(PTPOp.getDevicePropDesc, [UInt32(code)], timeout: 5).data else { return nil }
+        let desc = PTPPropDesc(data)
         descs[code] = desc
-        return desc.current
+        return desc
     }
 
     private func setRaw(_ code: UInt16, _ value: Int64) async throws {
@@ -261,14 +248,6 @@ final class NikonDriver: CameraDriver {
 
     // MARK: - Live view
 
-    func enterRecMode() async {
-        camera.isSwitchingMode = true
-        defer { camera.isSwitchingMode = false }
-        camera.mode = .rec
-        await camera.refreshProperties()
-        await camera.startLiveView()
-    }
-
     private var liveViewOp: UInt16 {
         supports(PTPOp.nikonGetLiveViewImage) || !supports(PTPOp.nikonGetLiveViewImageEx)
             ? PTPOp.nikonGetLiveViewImage : PTPOp.nikonGetLiveViewImageEx
@@ -325,14 +304,6 @@ final class NikonDriver: CameraDriver {
     func refreshProperties() async {
         var result: [String: CameraProperty] = [:]
         valueMap = [:]
-
-        func desc(_ code: UInt16) async -> PTPPropDesc? {
-            guard hasProperty(code),
-                  let data = try? await ptp.run(PTPOp.getDevicePropDesc, [UInt32(code)], timeout: 5).data else { return nil }
-            let d = PTPPropDesc(data)
-            descs[code] = d
-            return d
-        }
         func add(_ name: String, _ d: PTPPropDesc, label: (Int64) -> String?) {
             var map: [String: Int64] = [:]
             var options: [String] = []
@@ -394,23 +365,16 @@ final class NikonDriver: CameraDriver {
             if reportErrors { camera.lastError = "This setting can't be changed on a Nikon from the app." }
             return false
         }
-        let previous = camera.properties[name]?.value
-        camera.properties[name]?.value = value
-        do {
+        let ok = await camera.optimisticallySet(name, to: value, reportErrors: reportErrors) {
             if name == "isospeedvalue", hasProperty(PTPProp.nikonAutoISO) {
                 try await setRaw(PTPProp.nikonAutoISO, value == "auto" ? 1 : 0)
-                if value == "auto" { await refreshProperties(); return true }
+                if value == "auto" { return }
             }
             guard let raw = valueMap[name]?[value] else { throw CameraError("The camera doesn't offer \(value).") }
             try await setRaw(code, raw)
-        } catch {
-            if let previous { camera.properties[name]?.value = previous }
-            if reportErrors { camera.report(error) }
-            await refreshProperties()
-            return false
         }
         await refreshProperties()
-        return true
+        return ok
     }
 
     /// Nikon reports Mark II/III bodies as "Z 6_2", "Z 7_3": show them as people write them.
@@ -487,17 +451,8 @@ final class NikonDriver: CameraDriver {
     }
 
     func shutterPressed() async {
-        camera.isShooting = true
-        let seconds = PropertyFormat.seconds(fromShutter: camera.properties["shutspeedvalue"]?.value ?? "") ?? 0
-        if seconds >= 1 {
-            camera.exposureStartedAt = Date()
-            camera.exposureDuration = seconds
-        }
-        defer {
-            camera.isShooting = false
-            camera.exposureStartedAt = nil
-            camera.exposureDuration = nil
-        }
+        let seconds = camera.beginShot()
+        defer { camera.endShot() }
         do {
             // 0x9207 (0xFFFFFFFF = no AF in live view, 0 = to the card) keeps live view running;
             // older bodies fall back to PTP's InitiateCapture, which also saves to the card.
@@ -529,17 +484,14 @@ final class NikonDriver: CameraDriver {
     func toggleMovie() async {
         if camera.isRecordingMovie {
             _ = try? await ptp.transaction(PTPOp.nikonEndMovie)
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = nil
-            camera.shotCounter += 1
+            camera.setRecordingMovie(false)
             return
         }
         do {
             try await ptp.run(PTPOp.nikonStartMovie)
-            camera.isRecordingMovie = true
-            camera.movieStartedAt = Date()
+            camera.setRecordingMovie(true)
         } catch let error as PTPError {
-            camera.lastError = error.code == 0xA00B || error.code == 0xA002
+            camera.lastError = error.code == NikonResponse.notLiveView || error.code == NikonResponse.outOfFocus
                 ? "The camera won't record now. Set its photo/video switch to video, then try again."
                 : error.localizedDescription
         } catch {
@@ -580,8 +532,7 @@ final class NikonDriver: CameraDriver {
     private func showNewestCapture() async {
         for _ in 0..<10 {
             guard let objects = await addedObjects() else { return }
-            let added = objects.last
-            if let handle = added {
+            if let handle = objects.last {
                 let op = supports(PTPOp.nikonGetLargeThumb) ? PTPOp.nikonGetLargeThumb : PTPOp.getThumb
                 if let thumb = try? await ptp.run(op, [handle], timeout: 10).data, let image = UIImage(data: thumb) {
                     camera.lastShot = image.preparingForDisplay() ?? image
@@ -617,11 +568,11 @@ final class NikonDriver: CameraDriver {
             handles = [:]
             var found: [CameraImage] = []
             var folderCounts: [String: Int] = [:]
-            let storages = PTPReader(try await ptp.run(PTPOp.getStorageIDs).data).u32ArrayCopy()
-            for storage in storages where storage & 0xFFFF != 0 {   // skip empty slots
-                var list = PTPReader(try await ptp.run(PTPOp.getObjectHandles, [storage, 0, 0], timeout: 30).data).u32ArrayCopy()
+            var storages = PTPReader(try await ptp.run(PTPOp.getStorageIDs).data)
+            for storage in storages.u32Array() where storage & 0xFFFF != 0 {   // skip empty slots
+                var reader = PTPReader(try await ptp.run(PTPOp.getObjectHandles, [storage, 0, 0], timeout: 30).data)
                 // Over Wi-Fi each file's info is a round trip; show the newest 300.
-                list = Array(list.sorted().suffix(300))
+                let list = reader.u32Array().sorted().suffix(300)
                 var folders: [UInt32: String] = [:]
                 for handle in list.reversed() {
                     guard let data = try? await ptp.run(PTPOp.getObjectInfo, [handle], timeout: 5).data else { continue }
@@ -689,13 +640,5 @@ final class NikonDriver: CameraDriver {
             data.append(piece)
         }
         return data
-    }
-}
-
-extension PTPReader {
-    /// A UInt32 array dataset (GetStorageIDs, GetObjectHandles).
-    func u32ArrayCopy() -> [UInt32] {
-        var copy = self
-        return copy.u32Array()
     }
 }

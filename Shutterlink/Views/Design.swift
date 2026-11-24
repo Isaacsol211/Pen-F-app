@@ -18,10 +18,6 @@ enum Theme {
     static let secondary = Color.white.opacity(0.74)
     static let tertiary = Color.white.opacity(0.55)
 
-    // Older names, kept so every view reads the same tokens.
-    static let panel = surface
-    static let hairline = stroke
-
     /// Minimum touch target.
     static let target: CGFloat = 44
 }
@@ -43,9 +39,6 @@ struct SurfaceStyle {
         style.tint = color
         return style
     }
-
-    /// Accepted for symmetry with Glass; surfaces don't change while pressed.
-    func interactive(_ isEnabled: Bool = true) -> SurfaceStyle { self }
 }
 
 extension View {
@@ -61,6 +54,14 @@ extension View {
     }
 }
 
+/// A card of controls on a surface, full width: the panels' and sheets' building block.
+func card<Content: View>(spacing: CGFloat = 12, @ViewBuilder _ content: () -> Content) -> some View {
+    VStack(alignment: .leading, spacing: spacing, content: content)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+}
+
 // MARK: - Buttons
 
 /// A dark surface button: capsule, or circle for icon-only buttons. At least 44 × 44 pt.
@@ -68,21 +69,15 @@ struct SurfaceButtonStyle: ButtonStyle {
     var circle = false
 
     func makeBody(configuration: Configuration) -> some View {
+        let shape = circle ? AnyShape(Circle()) : AnyShape(Capsule())
         configuration.label
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.white)
             .padding(.horizontal, circle ? 0 : 16)
             .frame(minWidth: Theme.target, minHeight: Theme.target)
-            .background {
-                if circle {
-                    Circle().fill(configuration.isPressed ? Theme.surfaceRaised : Theme.surface)
-                        .overlay(Circle().stroke(Theme.stroke, lineWidth: 1))
-                } else {
-                    Capsule().fill(configuration.isPressed ? Theme.surfaceRaised : Theme.surface)
-                        .overlay(Capsule().stroke(Theme.stroke, lineWidth: 1))
-                }
-            }
-            .contentShape(circle ? AnyShape(Circle()) : AnyShape(Capsule()))
+            .background(shape.fill(configuration.isPressed ? Theme.surfaceRaised : Theme.surface)
+                .overlay(shape.stroke(Theme.stroke, lineWidth: 1)))
+            .contentShape(shape)
     }
 }
 

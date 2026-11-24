@@ -1,4 +1,3 @@
-import Foundation
 import UIKit
 
 /// What a connected camera can do from the app. The UI hides anything that is false.
@@ -7,8 +6,6 @@ struct CameraCapabilities: Equatable {
     var liveViewSizes: [String] = []
     /// Tap on live view moves the AF point / focuses there.
     var tapToFocus = true
-    /// Bulb (or Live Time / Live Composite) started and stopped from the app.
-    var openEndedExposure = false
     /// Movie recording from the shutter button.
     var movie = false
     /// The camera's photo/video mode can't be read, so the app shows its own Video switch.
@@ -23,14 +20,12 @@ struct CameraCapabilities: Equatable {
     var cardBrowser = true
     /// The camera can be switched off from the app.
     var powerOff = false
-    /// Olympus: the User-Agent can be switched under Advanced.
-    var userAgentChoice = false
     /// The lens can be stepped nearer or farther from the app, for focus stacking.
     var focusDrive = false
 }
 
 /// How far one focus-stacking step moves the lens.
-enum FocusStepSize: Int, CaseIterable, Identifiable, Codable {
+enum FocusStepSize: Int, CaseIterable, Identifiable {
     case fine = 1, medium = 2, coarse = 3
 
     var id: Int { rawValue }
@@ -43,7 +38,7 @@ enum FocusStepSize: Int, CaseIterable, Identifiable, Codable {
     }
 }
 
-enum FocusDriveResult: Equatable {
+enum FocusDriveResult {
     case moved
     /// The lens is already at the end of its travel in that direction (infinity or the closest point).
     case endOfTravel
@@ -58,6 +53,7 @@ enum FocusDriveResult: Equatable {
 ///   takemode "P", "A", "S", "M", "iAuto", "movie".
 @MainActor
 protocol CameraDriver: AnyObject {
+    var camera: CameraModel { get }
     var capabilities: CameraCapabilities { get }
     /// How live-view frames reach the phone.
     var liveViewFormat: LiveViewFormat { get }
@@ -101,7 +97,16 @@ protocol CameraDriver: AnyObject {
 
 extension CameraDriver {
     func disconnect() async {}
+    func teardown() {}
     func powerOff() async {}
+    /// Nothing to switch on the camera: read the settings and start live view.
+    func enterRecMode() async {
+        camera.isSwitchingMode = true
+        defer { camera.isSwitchingMode = false }
+        camera.mode = .rec
+        await camera.refreshProperties()
+        await camera.startLiveView()
+    }
     func releaseFocus() async {}
     func shutterReleased() async {}
     func toggleOpenExposure() async {}
@@ -157,15 +162,86 @@ enum ExposureText {
         ev(thirds: Int((value * 3).rounded()))
     }
 
-    /// "+0.3" → 1 (thirds), "-1.7" → -5.
-    static func thirds(fromEV text: String) -> Int {
-        Int(((Double(text) ?? 0) * 3).rounded())
-    }
-
     /// Panasonic-style white-balance names → the app's codes (which have labels and icons).
     static let whiteBalanceCodes: [String: String] = [
         "auto": "0", "daylight": "18", "sunny": "18", "shade": "16", "cloudy": "17",
         "incandescent": "20", "tungsten": "20", "halogen": "20", "fluorescent": "35",
         "underwater": "64", "flash": "23", "custom": "256", "preset": "256", "color_temp": "512", "kelvin": "512",
     ]
+}
+
+/// Steps the drivers share.
+extension CameraModel {
+    /// Runs a driver's first request up to 3 times: it can fail while iOS shows the Local Network
+    /// prompt, and a camera can be slow right after its Wi-Fi comes up.
+    @discardableResult
+    func retryingConnect<T>(when retryable: (Error) -> Bool = { $0 is URLError },
+                            _ request: () async throws -> T) async throws -> T {
+        var attempt = 1
+        while true {
+            do { return try await request() } catch {
+                guard attempt < 3, retryable(error) else { throw error }
+                attempt += 1
+                status = "No answer yet, retrying (\(attempt)/3)…"
+                try? await Task.sleep(for: .milliseconds(1500))
+            }
+        }
+    }
+
+    /// Marks a shot as running, with a countdown when it lasts 1 s or more; returns the exposure
+    /// time in seconds (0 if unknown). `endShot()` clears it again.
+    func beginShot() -> Double {
+        isShooting = true
+        let seconds = PropertyFormat.seconds(fromShutter: properties["shutspeedvalue"]?.value ?? "") ?? 0
+        if seconds >= 1 {
+            exposureStartedAt = Date()
+            exposureDuration = seconds
+        }
+        return seconds
+    }
+
+    func endShot() {
+        isShooting = false
+        exposureStartedAt = nil
+        exposureDuration = nil
+    }
+
+    /// The camera started or stopped recording a movie (a finished movie counts as a shot).
+    func setRecordingMovie(_ recording: Bool) {
+        isRecordingMovie = recording
+        movieStartedAt = recording ? Date() : nil
+        if !recording { shotCounter += 1 }
+    }
+
+    /// Shows `value` at once and sends it; puts the old value back (and reports why, when asked) if
+    /// the camera refuses. The caller re-reads the settings afterwards.
+    func optimisticallySet(_ name: String, to value: String, reportErrors: Bool,
+                           send: () async throws -> Void) async -> Bool {
+        let previous = properties[name]?.value
+        properties[name]?.value = value
+        do {
+            try await send()
+            return true
+        } catch {
+            if let previous { properties[name]?.value = previous }
+            if reportErrors { report(error) }
+            return false
+        }
+    }
+}
+
+/// Card files that come with their own addresses (LUMIX UPnP, Sony avContent).
+extension CameraHTTPClient {
+    func thumbnail(for image: CameraImage) async -> UIImage? {
+        let urls = image.urls
+        return (try? await fetch(urls?.thumbnail ?? urls?.preview ?? urls?.original, log: false)).flatMap { UIImage(data: $0) }
+    }
+
+    func preview(for image: CameraImage) async throws -> UIImage {
+        let urls = image.urls
+        guard let picture = UIImage(data: try await fetch(urls?.preview ?? urls?.thumbnail ?? urls?.original)) else {
+            throw CameraError("Couldn't decode the preview.")
+        }
+        return picture
+    }
 }

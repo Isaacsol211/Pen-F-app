@@ -97,28 +97,8 @@ struct CompositionGrid: View {
     }
 }
 
-/// Interval timer (time-lapse / star stacking) setup and progress.
-struct IntervalView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                IntervalPanel()
-                    .padding(16)
-            }
-            .navigationTitle("Interval timer")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-/// The interval timer's cards: in a sheet on a phone, in the inspector on a large canvas.
+/// Interval timer (time-lapse / star stacking) setup and progress: in a sheet on a phone, in the
+/// inspector on a large canvas.
 struct IntervalPanel: View {
     @Environment(CameraModel.self) private var camera
     @AppStorage("interval.count") private var count = 60
@@ -142,7 +122,7 @@ struct IntervalPanel: View {
     }
 
     @ViewBuilder private var setupCards: some View {
-        glassCard {
+        card {
             Text("Presets").font(.headline)
             HStack(spacing: 8) {
                 preset("Star stack", count: 30, seconds: 22)
@@ -150,7 +130,7 @@ struct IntervalPanel: View {
                 preset("Trails", count: 120, seconds: 32)
             }
         }
-        glassCard {
+        card {
             Stepper(value: $seconds, in: 1...600, step: seconds < 10 ? 1 : 5) {
                 LabeledContent("Every", value: "\(Int(seconds)) s")
             }
@@ -165,7 +145,7 @@ struct IntervalPanel: View {
                     .font(.footnote).foregroundStyle(.orange)
             }
         }
-        glassCard {
+        card {
             Toggle(isOn: $ramp) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Follow the light")
@@ -195,7 +175,6 @@ struct IntervalPanel: View {
                 .padding(.vertical, 8)
         }
         .buttonStyle(.accent)
-        .tint(Theme.accent)
         .disabled(camera.mode != .rec || camera.isOpenEndedShutter)
         if camera.isOpenEndedShutter {
             Text("Interval shooting needs a timed shutter speed, not Live Composite/Time/Bulb.")
@@ -204,7 +183,7 @@ struct IntervalPanel: View {
     }
 
     private var progressCard: some View {
-        glassCard {
+        card {
             HStack(spacing: 18) {
                 ZStack {
                     Circle().stroke(.white.opacity(0.15), lineWidth: 8)
@@ -261,12 +240,5 @@ struct IntervalPanel: View {
         }
         .buttonStyle(.surface)
         .controlSize(.small)
-    }
-
-    private func glassCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12, content: content)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .surface(.regular, in: .rect(cornerRadius: 22, style: .continuous))
     }
 }

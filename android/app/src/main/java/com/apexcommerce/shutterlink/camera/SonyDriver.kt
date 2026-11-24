@@ -1,19 +1,14 @@
 package com.apexcommerce.shutterlink.camera
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import okio.Buffer
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.IOException
 import java.time.Instant
 import java.time.OffsetDateTime
 
@@ -59,30 +54,12 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
 
     override val capabilities: CameraCapabilities
         get() = CameraCapabilities(
-            liveViewSizes = emptyList(),
             tapToFocus = "setTouchAFPosition" in apis || apis.isEmpty(),
-            openEndedExposure = "startBulbShooting" in apis,
             movie = "startMovieRec" in apis || "setShootMode" in apis,
             videoSwitch = true,
             lastShotReview = true,
-            clockSync = false,
-            highResShot = false,
             cardBrowser = "setCameraFunction" in apis,
-            powerOff = false,
         )
-
-    /** Runs `block`, giving null instead of an error (cancellation still cancels). */
-    private inline fun <T> attempt(block: () -> T): T? = try {
-        block()
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Throwable) {
-        null
-    }
-
-    private suspend fun decode(bytes: ByteArray): Bitmap? = withContext(Dispatchers.Default) {
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-    }
 
     // MARK: - JSON-RPC
 
@@ -107,23 +84,7 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
     // MARK: - Connect
 
     override suspend fun connect() {
-        var failure: Throwable? = null
-        for (tryNumber in 1..3) {
-            try {
-                call("getVersions", timeout = 5.0)
-                failure = null
-                break
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                failure = e
-                // Only network failures are worth another try, not an answer from the camera.
-                if (tryNumber >= 3 || e !is IOException || e is CameraHttpException) break
-                camera.status = "No answer yet, retrying (${tryNumber + 1}/3)…"
-                delay(1500)
-            }
-        }
-        failure?.let { throw it }
+        camera.retryConnect { call("getVersions", timeout = 5.0) }
 
         camera.status = "Reading camera info…"
         camera.cameraName = deviceName() ?: "Sony"
@@ -174,25 +135,7 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
     /** Polls getEvent every 2 s for battery, card space and settings changed on the camera. */
     private fun startEvents() {
         eventJob?.cancel()
-        eventJob = camera.scope.launch {
-            var failures = 0
-            while (isActive) {
-                delay(2000)
-                if (camera.phase != ConnectionPhase.CONNECTED) continue
-                try {
-                    val result = call("getEvent", listOf(false), timeout = 5.0, log = false)
-                    failures = 0
-                    applyEvent(result)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    failures++
-                    if (failures == 3) {
-                        camera.lastError = "Lost contact with the camera. Check that this phone is still on the camera's Wi-Fi."
-                    }
-                }
-            }
-        }
+        eventJob = camera.pollEvents(fetch = { call("getEvent", listOf(false), timeout = 5.0, log = false) }, handle = { applyEvent(it) })
     }
 
     /** getEvent's result is a fixed-position array of objects (or arrays of objects) with a "type". */
@@ -231,20 +174,15 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
 
     // MARK: - Live view
 
-    override suspend fun enterRecMode() {
-        camera.isSwitchingMode = true
-        try {
-            if (camera.mode == CameraMode.PLAY && "setCameraFunction" in apis) {
-                attempt { call("setCameraFunction", listOf("Remote Shooting")) }
-                delay(1000)
-                attempt { refreshApis() }
-            }
-            camera.mode = CameraMode.REC
-            camera.refreshProperties()
-            camera.startLiveView()
-        } finally {
-            camera.isSwitchingMode = false
+    override suspend fun enterRecMode() = camera.switchingMode {
+        if (camera.mode == CameraMode.PLAY && "setCameraFunction" in apis) {
+            attempt { call("setCameraFunction", listOf("Remote Shooting")) }
+            delay(1000)
+            attempt { refreshApis() }
         }
+        camera.mode = CameraMode.REC
+        camera.refreshProperties()
+        camera.startLiveView()
     }
 
     override suspend fun startLiveView() {
@@ -395,20 +333,7 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
             if (reportErrors) camera.lastError = "This setting can't be changed on a Sony camera from the app."
             return false
         }
-        val previous = camera.properties[name]?.value
-        camera.updateValue(name, value)
-        try {
-            call(request.first, request.second)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            if (previous != null) camera.updateValue(name, previous)
-            if (reportErrors) camera.report(e)
-            refreshProperties()
-            return false
-        }
-        refreshProperties()
-        return true
+        return applySetting(camera, name, value, reportErrors) { call(request.first, request.second) }
     }
 
     // MARK: - Focus & shooting
@@ -433,11 +358,7 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
 
     override suspend fun shutterPressed() {
         camera.isShooting = true
-        val seconds = PropertyFormat.seconds(camera.properties["shutspeedvalue"]?.value ?: "") ?: 0.0
-        if (seconds >= 1) {
-            camera.exposureStartedAt = System.currentTimeMillis()
-            camera.exposureDuration = seconds
-        }
+        val seconds = camera.startTimedExposure()
         val timeout = maxOf(30.0, seconds * 2 + 20)
         try {
             val result = try {
@@ -452,7 +373,7 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
             if (address != null) {
                 camera.scope.launch {
                     val data = attempt { client.fetch(address, timeout = 10.0, log = false) } ?: return@launch
-                    decode(data)?.let { camera.lastShot = it.asImageBitmap() }
+                    decodeImage(data)?.let { camera.lastShot = it.asImageBitmap() }
                 }
                 // Auto-save: the postview, which is the full JPEG when the camera's postview size is Original.
                 camera.autoSave(address.substringAfterLast('/').substringBefore('?')) {
@@ -470,49 +391,18 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
         }
     }
 
-    override suspend fun toggleOpenExposure() {
-        if (camera.isShooting) {
-            attempt { call("stopBulbShooting") }
-            camera.isShooting = false
-            camera.exposureStartedAt = null
-            camera.shotCounter++
-            return
-        }
-        try {
-            camera.isShooting = true
-            camera.exposureStartedAt = System.currentTimeMillis()
-            camera.exposureDuration = null
-            call("startBulbShooting")
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            camera.isShooting = false
-            camera.exposureStartedAt = null
-            camera.report(e)
-        }
-    }
+    override suspend fun toggleOpenExposure() =
+        camera.toggleBulb(start = { call("startBulbShooting") }, stop = { call("stopBulbShooting") })
 
-    override suspend fun toggleMovie() {
-        if (camera.isRecordingMovie) {
-            attempt { call("stopMovieRec") }
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = null
-            camera.shotCounter++
-            if ("setShootMode" in apis || "getShootMode" in apis) attempt { call("setShootMode", listOf("still")) }
-            return
-        }
-        try {
+    override suspend fun toggleMovie() = camera.recordMovie(
+        start = {
             attempt { call("setShootMode", listOf("movie")) }
             call("startMovieRec", timeout = 15.0)
-            camera.isRecordingMovie = true
-            camera.movieStartedAt = System.currentTimeMillis()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            attempt { call("setShootMode", listOf("still")) }
-            camera.report(e)
-        }
-    }
+        },
+        stop = { call("stopMovieRec") },
+        afterStop = { if ("setShootMode" in apis || "getShootMode" in apis) attempt { call("setShootMode", listOf("still")) } },
+        failed = { attempt { call("setShootMode", listOf("still")) } },
+    )
 
     // MARK: - Card (avContent, in Contents Transfer mode)
 
@@ -526,15 +416,10 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
             camera.mode = CameraMode.PLAY
             // The switch takes a moment; avContent answers "not ready" until it's done.
             var sources: List<Any?> = emptyList()
-            var tries = 0
-            while (tries < 10) {
-                tries++
+            for (tries in 1..10) {
                 delay(700)
-                val reply = attempt { call("getSourceList", listOf(mapOf("scheme" to "storage")), service = "avContent") }
-                if (reply != null) {
-                    sources = reply
-                    break
-                }
+                sources = attempt { call("getSourceList", listOf(mapOf("scheme" to "storage")), service = "avContent") } ?: continue
+                break
             }
             val source = ((sources.firstOrNull() as? JSONArray)?.optJSONObject(0)?.opt("source") as? String)
                 ?: "storage:memoryCard1"
@@ -560,22 +445,9 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
         }
     }
 
-    override suspend fun thumbnail(image: CameraImage): Bitmap? {
-        val urls = image.urls ?: return null
-        val data = attempt { client.fetch(urls.thumbnail ?: urls.preview ?: urls.original, log = false) } ?: return null
-        return decode(data)
-    }
-
-    override suspend fun preview(image: CameraImage): Bitmap {
-        val urls = image.urls ?: throw CameraException("The camera gave no address for this file.")
-        val data = client.fetch(urls.preview ?: urls.thumbnail ?: urls.original)
-        return decode(data) ?: throw CameraException("Couldn't decode the preview.")
-    }
-
-    override suspend fun downloadOriginal(image: CameraImage): ByteArray {
-        val urls = image.urls ?: throw CameraException("The camera gave no address for this file.")
-        return client.fetch(urls.original, timeout = 300.0)
-    }
+    override suspend fun thumbnail(image: CameraImage): Bitmap? = client.fetchThumbnail(image)
+    override suspend fun preview(image: CameraImage): Bitmap = client.fetchPreview(image)
+    override suspend fun downloadOriginal(image: CameraImage): ByteArray = client.fetch(image.urls?.original, timeout = 300.0)
 
     companion object {
         fun modeLabel(sony: String): String = when (sony) {

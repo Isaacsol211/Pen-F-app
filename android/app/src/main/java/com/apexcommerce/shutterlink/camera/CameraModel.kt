@@ -22,7 +22,6 @@ import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.ConnectException
 import java.net.NoRouteToHostException
-import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.abs
@@ -80,8 +79,8 @@ class CameraModel private constructor(val context: Context) {
     /** Bodies whose photo/video mode can't be read get the app's own Video switch. */
     var videoMode by mutableStateOf(false)
     var host by mutableStateOf("")
-    var userAgent by mutableStateOf("OI.Share v2")
-    var liveViewQuality by mutableStateOf("0640x0480")
+    var userAgent by mutableStateOf(prefs.getString("userAgent", null) ?: "OI.Share v2")
+    var liveViewQuality by mutableStateOf(prefs.getString("lvqty", null) ?: "0640x0480")
     var touchShutter by mutableStateOf(false)
 
     // MARK: Connection
@@ -95,10 +94,8 @@ class CameraModel private constructor(val context: Context) {
     var status by mutableStateOf<String?>(null)
     var lastError by mutableStateOf<String?>(null)
     var cameraName by mutableStateOf<String?>(null)
-    var connectMode: String? = null
     var commands = CommandList()
     var rawCommandList by mutableStateOf("")
-    var rawDescList by mutableStateOf("")
     var mode by mutableStateOf(CameraMode.UNKNOWN)
     var isSwitchingMode by mutableStateOf(false)
 
@@ -169,12 +166,12 @@ class CameraModel private constructor(val context: Context) {
     // MARK: Scene assistant
 
     /** "Scene suggestions" in the ··· menu; on by default. */
-    var sceneAssistantOn by mutableStateOf(true)
+    var sceneAssistantOn by mutableStateOf(prefs.getBoolean("assistant.on", true))
 
     // MARK: Auto-save (see AutoSave.kt)
 
     /** "Save new photos to the gallery" in the ··· menu. */
-    var autoSaveNewPhotos by mutableStateOf(false)
+    var autoSaveNewPhotos by mutableStateOf(prefs.getBoolean("autoSave", false))
     /** Photos taken that auto-save takes from the card when it's next opened (LUMIX). */
     var autoSavePending by mutableStateOf(0)
     var autoSavedCount by mutableStateOf(0)
@@ -208,15 +205,15 @@ class CameraModel private constructor(val context: Context) {
 
     // MARK: Extras
 
-    var focusPeaking by mutableStateOf(false)
+    var focusPeaking by mutableStateOf(prefs.getBoolean("ui.peaking", false))
     var peakingOverlay by mutableStateOf<ImageBitmap?>(null)
     /** Stop Bulb / Live Time / Live Composite automatically after this many seconds (0 = off). */
-    var bulbTimer by mutableStateOf(0.0)
+    var bulbTimer by mutableStateOf(prefs.getFloat("bulbTimer", 0f).toDouble())
     var openExposureStopJob: Job? = null
     var bracket by mutableStateOf(BracketState())
     var bracketJob: Job? = null
     /** Starred card files, keyed by name and size so a reused file name on a new card doesn't match. */
-    var starred by mutableStateOf<Set<String>>(emptySet())
+    var starred by mutableStateOf<Set<String>>(prefs.getStringSet("stars", emptySet())?.toSet() ?: emptySet())
     var rawImport by mutableStateOf<RawImportProgress?>(null)
     var rawImportJob: Job? = null
 
@@ -250,19 +247,9 @@ class CameraModel private constructor(val context: Context) {
 
     init {
         val savedBrand = CameraBrand.fromId(prefs.getString("brand", null))
-        val startBrand = savedBrand ?: CameraBrand.OLYMPUS
-        val auto = if (prefs.contains("autoBrand")) prefs.getBoolean("autoBrand", true) else savedBrand == null
-        brand = startBrand
-        autoDetectBrand = auto
-        host = prefs.getString("host", null) ?: if (auto) "" else startBrand.defaultHost
-        userAgent = prefs.getString("userAgent", null) ?: "OI.Share v2"
-        liveViewQuality = prefs.getString("lvqty", null) ?: "0640x0480"
-        focusPeaking = prefs.getBoolean("ui.peaking", false)
-        sceneAssistantOn = prefs.getBoolean("assistant.on", true)
-        autoSaveNewPhotos = prefs.getBoolean("autoSave", false)
-        bulbTimer = prefs.getFloat("bulbTimer", 0f).toDouble()
-        starred = prefs.getStringSet("stars", emptySet())?.toSet() ?: emptySet()
-        fitLiveViewQualityToBrand()
+        brand = savedBrand ?: CameraBrand.OLYMPUS
+        autoDetectBrand = prefs.getBoolean("autoBrand", savedBrand == null)
+        host = prefs.getString("host", null) ?: if (autoDetectBrand) "" else brand.defaultHost
         capabilities = brand.defaultCapabilities
     }
 
@@ -297,15 +284,9 @@ class CameraModel private constructor(val context: Context) {
     /** Switches camera family (null = auto-detect), moving the address to its default unless customised. */
     fun selectBrand(newBrand: CameraBrand?) {
         if (phase != ConnectionPhase.DISCONNECTED) return
-        val hostIsDefault = host.isEmpty() || CameraBrand.entries.any { it.defaultHost == host }
-        if (newBrand != null) {
-            if (hostIsDefault) host = newBrand.defaultHost
-            brand = newBrand
-            autoDetectBrand = false
-        } else {
-            if (hostIsDefault) host = ""
-            autoDetectBrand = true
-        }
+        if (host.isEmpty() || CameraBrand.entries.any { it.defaultHost == host }) host = newBrand?.defaultHost ?: ""
+        if (newBrand != null) brand = newBrand
+        autoDetectBrand = newBrand == null
         capabilities = brand.defaultCapabilities
         fitLiveViewQualityToBrand()
         saveSettings()
@@ -317,10 +298,8 @@ class CameraModel private constructor(val context: Context) {
 
     /** Pixel size of the live-view frames actually arriving (the camera's AF coordinate space). */
     val frameSpace: Pair<Double, Double>
-        get() = if (frameWidth == 0) liveViewSize else frameWidth.toDouble() to frameHeight.toDouble()
-
-    val liveViewSize: Pair<Double, Double>
         get() {
+            if (frameWidth != 0) return frameWidth.toDouble() to frameHeight.toDouble()
             val parts = liveViewQuality.split("x").mapNotNull { it.toDoubleOrNull() }
             return if (parts.size == 2) parts[0] to parts[1] else 640.0 to 480.0
         }
@@ -331,12 +310,10 @@ class CameraModel private constructor(val context: Context) {
         if (property.name != "focalvalue" || range == null) return property
         val options = property.options.filter { o -> o.toDoubleOrNull()?.let { it in range } ?: true }
         if (options.isEmpty()) return property
-        var value = property.value
         // The camera can report a value the lens can't do (e.g. "1.0"); show the nearest real stop.
-        val current = value.toDoubleOrNull()
-        if (value !in options && current != null) {
-            value = options.minByOrNull { abs((it.toDoubleOrNull() ?: 0.0) - current) } ?: value
-        }
+        val current = property.value.toDoubleOrNull()
+        val value = if (property.value in options || current == null) property.value
+            else options.minBy { abs((it.toDoubleOrNull() ?: 0.0) - current) }
         return property.copy(options = options, value = value)
     }
 
@@ -392,33 +369,29 @@ class CameraModel private constructor(val context: Context) {
 
         try {
             // Use the camera's Wi-Fi even though it has no internet (see CameraNetwork).
-            val target0 = if (host.isEmpty()) brand.defaultHost else host
-            if (forceWifiBinding || !CameraNetwork.isLocalTestHost(if (autoDetectBrand && host.isEmpty()) "192.168.0.1" else target0)) {
+            var target = host.ifEmpty { brand.defaultHost }
+            if (forceWifiBinding || !CameraNetwork.isLocalTestHost(if (autoDetectBrand && host.isEmpty()) "192.168.0.1" else target)) {
                 status = "Holding on to the camera's Wi-Fi…"
                 CameraNetwork.acquireWifi()
             }
             debugLog("connect: brand=${if (autoDetectBrand) "auto" else brand.id} host=$host wifi=${CameraNetwork.wifiAddress() ?: "none"} ua=$userAgent")
-            var target = brand to target0
             if (autoDetectBrand) {
                 status = "Finding out which camera this is…"
                 val found = BrandDetector.detect(host) ?: throw CameraException(BrandDetector.notFoundMessage(CameraNetwork.wifiAddress()))
                 debugLog("auto-detect: ${found.first.id} at ${found.second}")
-                target = found
                 brand = found.first
+                target = found.second
             }
             ssidHint = brand.ssidHint
             // The driver talks to the detected address; the saved setting stays as the user left it.
-            activeHost = target.second
+            activeHost = target
             val driver = brand.makeDriver(this)
             this.driver = driver
             capabilities = driver.capabilities
             driver.connect()
             capabilities = driver.capabilities
             fitLiveViewQualityToBrand()
-            val p = profile
-            if (p != null && p.notes.isNotEmpty() && p.name !in (prefs.getStringSet("dismissedNotes", emptySet()) ?: emptySet())) {
-                cameraNote = p.notes.joinToString("\n\n")
-            }
+            profile?.takeIf { it.notes.isNotEmpty() && it.name !in dismissedNotes }?.let { cameraNote = it.notes.joinToString("\n\n") }
             startReceiver(driver.liveViewFormat)
             phase = ConnectionPhase.CONNECTED
             prefs.edit().putBoolean("hasConnected", true).apply()
@@ -437,14 +410,14 @@ class CameraModel private constructor(val context: Context) {
 
     /** The address drivers talk to: the connected one, else the setting, else the brand's default. */
     val connectionHost: String
-        get() = activeHost ?: if (host.isEmpty()) brand.defaultHost else host
+        get() = activeHost ?: host.ifEmpty { brand.defaultHost }
+
+    /** Models whose camera note the user has dismissed. */
+    private val dismissedNotes: Set<String> get() = prefs.getStringSet("dismissedNotes", emptySet()) ?: emptySet()
 
     /** Hides the camera note, and keeps it hidden for this model from now on. */
     fun dismissCameraNote() {
-        profile?.name?.let { name ->
-            val dismissed = (prefs.getStringSet("dismissedNotes", emptySet()) ?: emptySet()) + name
-            prefs.edit().putStringSet("dismissedNotes", dismissed).apply()
-        }
+        profile?.name?.let { prefs.edit().putStringSet("dismissedNotes", dismissedNotes + it).apply() }
         cameraNote = null
     }
 
@@ -601,10 +574,9 @@ class CameraModel private constructor(val context: Context) {
         if (image != null) {
             liveFrame = image.asImageBitmap()
             latestBitmap = image
-            if (image.width != frameWidth || image.height != frameHeight) {
-                frameWidth = image.width
-                frameHeight = image.height
-            }
+            // Compose state ignores writes of an equal value, so these only recompose on a size change.
+            frameWidth = image.width
+            frameHeight = image.height
             val now = System.currentTimeMillis()
             // Only touch these a couple of times a second: each change recomposes what reads them.
             if (lastFrameAt.let { it == null || now - it > 500 }) lastFrameAt = now
@@ -612,7 +584,7 @@ class CameraModel private constructor(val context: Context) {
             while (frameTimes.isNotEmpty() && now - frameTimes.first() > 1000) frameTimes.removeFirst()
             if (now - fpsUpdatedAt > 500) {
                 fpsUpdatedAt = now
-                if (fps != frameTimes.size) fps = frameTimes.size
+                fps = frameTimes.size
             }
             if (motion.armed || motion.editing) analyzeMotion(image)
         }
@@ -634,10 +606,8 @@ class CameraModel private constructor(val context: Context) {
     }
 
     /** Returns false (and reports why) if the camera refused the value. */
-    suspend fun setProperty(name: String, value: String, reportErrors: Boolean = true): Boolean {
-        val driver = driver ?: return false
-        return driver.setProperty(name, value, reportErrors)
-    }
+    suspend fun setProperty(name: String, value: String, reportErrors: Boolean = true): Boolean =
+        driver?.setProperty(name, value, reportErrors) ?: false
 
     // MARK: - Focus & shooting
 
@@ -650,10 +620,9 @@ class CameraModel private constructor(val context: Context) {
         if (touchShutter) {
             shutterPressed()
             shutterReleased()
-            return
+        } else if (capabilities.tapToFocus) {
+            driver.focus(nx, ny)
         }
-        if (!capabilities.tapToFocus) return
-        driver.focus(nx, ny)
     }
 
     suspend fun clearFocus() {
@@ -668,9 +637,7 @@ class CameraModel private constructor(val context: Context) {
 
     /** Press = start taking. In continuous drive the camera keeps shooting until release. */
     suspend fun shutterPressed() {
-        val driver = driver ?: return
-        if (mode != CameraMode.REC || isShooting) return
-        driver.shutterPressed()
+        if (mode == CameraMode.REC && !isShooting) driver?.shutterPressed()
     }
 
     suspend fun shutterReleased() {
@@ -692,24 +659,16 @@ class CameraModel private constructor(val context: Context) {
     }
 
     suspend fun toggleMovie() {
-        val driver = driver ?: return
-        if (mode != CameraMode.REC) return
-        driver.toggleMovie()
+        if (mode == CameraMode.REC) driver?.toggleMovie()
     }
 
     /** Grabs a preview of the capture that just finished, for the review thumbnail. */
     suspend fun fetchLastShot() {
-        val driver = driver ?: return
-        if (mode != CameraMode.REC || !capabilities.lastShotReview) return
-        driver.fetchLastShot()
+        if (mode == CameraMode.REC && capabilities.lastShotReview) driver?.fetchLastShot()
     }
 
     /** Sets the camera's clock and time zone from the phone. */
-    suspend fun syncClock(): Boolean {
-        val driver = driver ?: return false
-        if (!capabilities.clockSync) return false
-        return driver.syncClock()
-    }
+    suspend fun syncClock(): Boolean = capabilities.clockSync && driver?.syncClock() == true
 
     /** A normalised point in the camera's AF space: the pixels of the frames actually arriving. */
     fun pixelPoint(x: Double, y: Double): Pair<Double, Double> {
@@ -777,29 +736,17 @@ class CameraModel private constructor(val context: Context) {
         enterRecMode()
     }
 
-    suspend fun thumbnail(image: CameraImage): Bitmap? {
-        thumbnailCache.get(image.path)?.let { return it }
-        val driver = driver ?: return null
-        val thumb = runCatching { driver.thumbnail(image) }.getOrNull() ?: return null
-        thumbnailCache.put(image.path, thumb)
-        return thumb
-    }
+    suspend fun thumbnail(image: CameraImage): Bitmap? = thumbnailCache.get(image.path)
+        ?: runCatching { driver?.thumbnail(image) }.getOrNull()?.also { thumbnailCache.put(image.path, it) }
 
-    suspend fun preview(image: CameraImage): Bitmap {
-        val driver = driver ?: throw CameraException("Not connected.")
-        return driver.preview(image)
-    }
+    private val connectedDriver: CameraDriver get() = driver ?: throw CameraException("Not connected.")
 
-    suspend fun downloadOriginal(image: CameraImage): ByteArray {
-        val driver = driver ?: throw CameraException("Not connected.")
-        return driver.downloadOriginal(image)
-    }
+    suspend fun preview(image: CameraImage): Bitmap = connectedDriver.preview(image)
+
+    suspend fun downloadOriginal(image: CameraImage): ByteArray = connectedDriver.downloadOriginal(image)
 
     /** Saves the original to the phone's gallery (Pictures/Shutterlink; RAWs to Downloads). */
-    suspend fun saveOriginal(image: CameraImage): String {
-        val data = downloadOriginal(image)
-        return MediaSaver.save(context, data, image)
-    }
+    suspend fun saveOriginal(image: CameraImage): String = MediaSaver.save(context, downloadOriginal(image), image)
 
     // MARK: - Log & errors
 
@@ -824,10 +771,9 @@ class CameraModel private constructor(val context: Context) {
     }
 
     fun describe(error: Throwable, host: String): String {
-        val network = error is IOException && error !is CameraHttpException
-        if (!network) return error.message ?: error.javaClass.simpleName
+        if (error !is IOException || error is CameraHttpException) return error.message ?: error.javaClass.simpleName
         val reason = when (error) {
-            is SocketTimeoutException -> "No reply from $host (timed out)."
+            // Includes SocketTimeoutException.
             is InterruptedIOException -> "No reply from $host (timed out)."
             is ConnectException -> "$host refused the connection."
             is NoRouteToHostException -> "There's no network route to $host."

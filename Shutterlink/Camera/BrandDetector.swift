@@ -20,13 +20,6 @@ enum BrandDetector {
         return CameraBrand.allCases
     }
 
-    /// A short hint for the Connect screen ("Looks like a Nikon network").
-    static func hint(forWiFi address: String?) -> String? {
-        let brands = candidates(forWiFi: address)
-        guard brands.count < CameraBrand.allCases.count else { return nil }
-        return brands.map(\.shortTitle).joined(separator: " or ")
-    }
-
     /// With `host` empty: probe each candidate brand at its usual address. With a host (a mock, or a
     /// camera on another network): ask that address in every protocol.
     static func detect(host: String) async -> Found? {
@@ -130,8 +123,7 @@ enum BrandDetector {
             connection.stateUpdateHandler = { state in
                 switch state {
                 case .ready: finish(true)
-                case .failed, .cancelled: finish(false)
-                case .waiting: finish(false)
+                case .failed, .cancelled, .waiting: finish(false)
                 default: break
                 }
             }

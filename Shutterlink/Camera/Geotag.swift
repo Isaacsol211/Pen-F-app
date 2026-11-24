@@ -45,10 +45,6 @@ final class LocationLog: NSObject, CLLocationManagerDelegate {
         [.authorizedWhenInUse, .authorizedAlways].contains(manager.authorizationStatus)
     }
 
-    var isDenied: Bool {
-        [.denied, .restricted].contains(manager.authorizationStatus)
-    }
-
     /// Asks for When In Use access if iOS hasn't asked yet.
     func requestPermission() {
         if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
@@ -83,11 +79,11 @@ final class LocationLog: NSObject, CLLocationManagerDelegate {
         return points.last.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }
     }
 
-    /// The logged position closest in time to `date`, if one is within `window` seconds.
-    func location(near date: Date, within window: TimeInterval = 600) -> CLLocation? {
+    /// The logged position closest in time to `date`, if one is within ten minutes.
+    func location(near date: Date) -> CLLocation? {
         guard date > .distantPast,
               let best = points.min(by: { abs($0.time.timeIntervalSince(date)) < abs($1.time.timeIntervalSince(date)) }),
-              abs(best.time.timeIntervalSince(date)) <= window else { return nil }
+              abs(best.time.timeIntervalSince(date)) <= 600 else { return nil }
         return CLLocation(coordinate: CLLocationCoordinate2D(latitude: best.latitude, longitude: best.longitude),
                           altitude: best.altitude ?? 0,
                           horizontalAccuracy: best.accuracy,
@@ -117,7 +113,7 @@ final class LocationLog: NSObject, CLLocationManagerDelegate {
             guard self.logging else { return }
             if self.isAuthorized {
                 self.beginUpdates()
-            } else if self.isDenied {
+            } else if [.denied, .restricted].contains(self.manager.authorizationStatus) {
                 self.onDenied?()
             }
         }

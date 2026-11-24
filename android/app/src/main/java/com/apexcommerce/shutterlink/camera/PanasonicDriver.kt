@@ -1,7 +1,6 @@
 package com.apexcommerce.shutterlink.camera
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -74,10 +73,8 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
 
     override val capabilities: CameraCapabilities
         get() = CameraCapabilities(
-            liveViewSizes = CameraBrand.PANASONIC.defaultLiveViewSizes, tapToFocus = true,
-            openEndedExposure = !(camera.profile?.fixedExposure ?: false),
-            movie = !(camera.profile?.noVideo ?: false), videoSwitch = true, lastShotReview = false,
-            clockSync = false, highResShot = false, cardBrowser = true, powerOff = true, focusDrive = true,
+            liveViewSizes = CameraBrand.PANASONIC.defaultLiveViewSizes, movie = !(camera.profile?.noVideo ?: false),
+            videoSwitch = true, powerOff = true, focusDrive = true,
         )
 
     /**
@@ -146,9 +143,6 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             return null
         }
 
-        fun fLabel(f: Double): String = if (f >= 10) fmt("%.0f", f) else fmt("%.1f", f)
-        fun evLabel(thirds: Int): String = if (thirds == 0) "0.0" else fmt("%+.1f", thirds / 3.0)
-
         /** "-1/3" → -0.333, "2" → 2. */
         fun lumixFraction(text: String): Double {
             val parts = text.split("/").mapNotNull { it.trim().toDoubleOrNull() }
@@ -164,7 +158,6 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
         }
 
         private fun log2(x: Double) = ln(x) / ln(2.0)
-        private fun decode(data: ByteArray): Bitmap? = runCatching { BitmapFactory.decodeByteArray(data, 0, data.size) }.getOrNull()
     }
 
     /** Stable per-install id; the camera remembers approved phones by it. */
@@ -251,28 +244,19 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
 
         camera.status = "Reading camera info…"
         runCatching { lumixCommand(listOf("mode" to "setsetting", "type" to "device_name", "value" to DEVICE_NAME)) }
-        val info = StringBuilder()
         runCatching { lumixCommand(listOf("mode" to "getinfo", "type" to "capability")) }.getOrNull()?.let { capability ->
-            info.append("CAPABILITY\n$capability\n\n")
             if (camera.profile == null) {
                 MiniXml.parse(capability)?.firstDescendant("model_name")?.trimmedText?.let {
                     camera.profile = ModelProfiles.find(CameraBrand.PANASONIC, it)
                 }
             }
         }
-        runCatching { lumixCommand(listOf("mode" to "getinfo", "type" to "lens")) }.getOrNull()?.let {
-            info.append("LENS\n$it\n\n")
-            applyLumixLens(it)
-        }
+        runCatching { lumixCommand(listOf("mode" to "getinfo", "type" to "lens")) }.getOrNull()?.let { applyLumixLens(it) }
         runCatching { lumixCommand(listOf("mode" to "getinfo", "type" to "allmenu"), timeout = 15.0) }.getOrNull()?.let {
             camera.rawCommandList = it
             parseLumixMenu(it)
         }
-        runCatching { lumixCommand(listOf("mode" to "getstate")) }.getOrNull()?.let {
-            info.append("STATE\n$it\n")
-            applyLumixState(it)
-        }
-        camera.rawDescList = info.toString()
+        runCatching { lumixCommand(listOf("mode" to "getstate")) }.getOrNull()?.let { applyLumixState(it) }
         camera.profile?.name?.let { camera.cameraName = it }
         if (camera.cameraName == null) camera.cameraName = "LUMIX"
         startKeepAlive()
@@ -410,7 +394,7 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
                     throw e
                 } catch (ignored: Exception) {
                     failures++
-                    if (failures == 3) camera.lastError = "Lost contact with the camera. Check that this phone is still on the camera's Wi-Fi."
+                    if (failures == 3) camera.lastError = LOST_CONTACT
                 }
             }
         }
@@ -423,8 +407,7 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
 
     // MARK: - Live view
 
-    override suspend fun enterRecMode() {
-        camera.isSwitchingMode = true
+    override suspend fun enterRecMode() = camera.switchingMode {
         try {
             runCatching { lumixCommand(listOf("mode" to "stopstream"), timeout = 3.0) }
             lumixCommand(listOf("mode" to "camcmd", "value" to "recmode"), timeout = 5.0)
@@ -440,8 +423,6 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             throw e
         } catch (e: Exception) {
             camera.report(e)
-        } finally {
-            camera.isSwitchingMode = false
         }
     }
 
@@ -483,8 +464,8 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             result["isospeedvalue"] = CameraProperty("isospeedvalue", true, raw, if (raw in options) options else options + raw)
         }
         current("exposure")?.let { raw ->
-            val options = (-15..15).map(::evLabel)
-            result["expcomp"] = CameraProperty("expcomp", true, evLabel((lumixFraction(raw) * 3).roundToInt()), options)
+            val options = (-15..15).map { ExposureText.ev(it) }
+            result["expcomp"] = CameraProperty("expcomp", true, ExposureText.ev((lumixFraction(raw) * 3).roundToInt()), options)
         }
         current("whitebalance")?.let { raw ->
             val names = menu["whitebalance"] ?: whiteBalanceFallback
@@ -526,18 +507,9 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             if (reportErrors) camera.lastError = "This setting can't be changed on a LUMIX camera from the app."
             return false
         }
-        val previous = camera.properties[name]?.value
-        camera.updateValue(name, value)
-        try {
+        return applySetting(camera, name, value, reportErrors) {
             lumixCommand(listOf("mode" to "setsetting", "type" to setting.first, "value" to setting.second))
-        } catch (e: Exception) {
-            if (previous != null) camera.updateValue(name, previous)
-            if (reportErrors) camera.report(e)
-            refreshProperties()
-            return false
         }
-        refreshProperties()
-        return true
     }
 
     private fun apertureOptions(): List<String> {
@@ -546,15 +518,14 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
         val widest = lens.minFNumber
         val widestCode = lens.minFNumberCode
         if (widest != null && widestCode != null) {
-            val label = fLabel(widest)
+            val label = ExposureText.aperture(widest)
             options.add(label)
             codes[label] = widestCode
         }
         for (label in fNumbers) {
             val f = label.toDoubleOrNull() ?: continue
             if (label in codes) continue
-            val lo = lens.minFNumber
-            if (lo != null && f < lo + 0.05) continue
+            if (widest != null && f < widest + 0.05) continue
             val hi = lens.maxFNumber
             if (hi != null && f > hi + 0.05) continue
             // Third-stop grid: Av = 2·log2(N) rounded to thirds, × 256.
@@ -611,11 +582,7 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
 
     override suspend fun shutterPressed() {
         camera.isShooting = true
-        val seconds = PropertyFormat.seconds(camera.properties["shutspeedvalue"]?.value ?: "") ?: 0.0
-        if (seconds >= 1) {
-            camera.exposureStartedAt = System.currentTimeMillis()
-            camera.exposureDuration = seconds
-        }
+        val seconds = camera.startTimedExposure()
         try {
             lumixCommand(listOf("mode" to "camcmd", "value" to "capture"), timeout = 10.0)
             // capture returns straight away; keep the countdown honest for long exposures.
@@ -636,43 +603,16 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
     }
 
     /** Bulb: first tap opens the shutter, second tap closes it. */
-    override suspend fun toggleOpenExposure() {
-        if (camera.isShooting) {
-            runCatching { lumixCommand(listOf("mode" to "camcmd", "value" to "capture_cancel")) }
-            camera.isShooting = false
-            camera.exposureStartedAt = null
-            camera.shotCounter++
-            camera.autoSaveLater()
-            return
-        }
-        camera.isShooting = true
-        camera.exposureStartedAt = System.currentTimeMillis()
-        camera.exposureDuration = null
-        try {
-            lumixCommand(listOf("mode" to "camcmd", "value" to "capture"), timeout = 10.0)
-        } catch (e: Exception) {
-            camera.isShooting = false
-            camera.exposureStartedAt = null
-            camera.report(e)
-        }
-    }
+    override suspend fun toggleOpenExposure() = camera.toggleBulb(
+        start = { lumixCommand(listOf("mode" to "camcmd", "value" to "capture"), timeout = 10.0) },
+        stop = { lumixCommand(listOf("mode" to "camcmd", "value" to "capture_cancel")) },
+        afterStop = { camera.autoSaveLater() },
+    )
 
-    override suspend fun toggleMovie() {
-        if (camera.isRecordingMovie) {
-            runCatching { lumixCommand(listOf("mode" to "camcmd", "value" to "video_recstop")) }
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = null
-            camera.shotCounter++
-        } else {
-            try {
-                lumixCommand(listOf("mode" to "camcmd", "value" to "video_recstart"))
-                camera.isRecordingMovie = true
-                camera.movieStartedAt = System.currentTimeMillis()
-            } catch (e: Exception) {
-                camera.report(e)
-            }
-        }
-    }
+    override suspend fun toggleMovie() = camera.recordMovie(
+        start = { lumixCommand(listOf("mode" to "camcmd", "value" to "video_recstart")) },
+        stop = { lumixCommand(listOf("mode" to "camcmd", "value" to "video_recstop")) },
+    )
 
     // LUMIX review images need playback mode, which would stop live view, so there's no quick review,
     // and the clock can't be set over Wi-Fi: both are off in `capabilities`.
@@ -699,22 +639,9 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
         }
     }
 
-    override suspend fun thumbnail(image: CameraImage): Bitmap? {
-        val urls = image.urls ?: return null
-        val data = runCatching { client.fetch(urls.thumbnail ?: urls.preview ?: urls.original, log = false) }.getOrNull() ?: return null
-        return decode(data)
-    }
-
-    override suspend fun preview(image: CameraImage): Bitmap {
-        val urls = image.urls ?: throw CameraException("The camera gave no address for this file.")
-        val data = client.fetch(urls.preview ?: urls.thumbnail ?: urls.original)
-        return decode(data) ?: throw CameraException("Couldn't decode the preview.")
-    }
-
-    override suspend fun downloadOriginal(image: CameraImage): ByteArray {
-        val urls = image.urls ?: throw CameraException("The camera gave no address for this file.")
-        return client.fetch(urls.original, timeout = 300.0)
-    }
+    override suspend fun thumbnail(image: CameraImage): Bitmap? = client.fetchThumbnail(image)
+    override suspend fun preview(image: CameraImage): Bitmap = client.fetchPreview(image)
+    override suspend fun downloadOriginal(image: CameraImage): ByteArray = client.fetch(image.urls?.original, timeout = 300.0)
 
     /** Finds the ContentDirectory control URL from the camera's UPnP device description. */
     private suspend fun contentDirectoryUrl(): String {

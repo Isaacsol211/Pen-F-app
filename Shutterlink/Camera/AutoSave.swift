@@ -18,8 +18,7 @@ extension CameraModel {
         let previous = autoSaveChain
         autoSaveChain = Task { [weak self] in
             await previous?.value
-            guard let self, !Task.isCancelled else { return }
-            guard await self.photosAccessForAutoSave() else { return }
+            guard let self, !Task.isCancelled, await self.photosAccessForAutoSave() else { return }
             do {
                 let data = try await fetch()
                 guard Self.isPhotoFile(data) else {
@@ -28,7 +27,6 @@ extension CameraModel {
                 }
                 let image = CameraImage(directory: "", name: name, size: data.count, attributes: 0, date: Date())
                 try await self.addToPhotos(data, for: image)
-                self.autoSavedCount += 1
                 debugLog("auto-save \(name): saved (\(data.count / 1024) KB)")
                 self.showToast("Saved to Photos")
             } catch {
@@ -63,7 +61,6 @@ extension CameraModel {
                 debugLog("auto-save \(image.name): \(error.localizedDescription)")
             }
         }
-        autoSavedCount += saved
         if saved > 0 { showToast(saved == 1 ? "Saved the new photo to Photos" : "Saved \(saved) new photos to Photos") }
     }
 
@@ -71,11 +68,7 @@ extension CameraModel {
 
     /// JPEG starts FF D8; HEIF has "ftyp" at byte 4.
     static func isPhotoFile(_ data: Data) -> Bool {
-        if data.count > 3, data[data.startIndex] == 0xFF, data[data.startIndex + 1] == 0xD8 { return true }
-        if data.count > 12, String(decoding: data[(data.startIndex + 4)..<(data.startIndex + 8)], as: UTF8.self) == "ftyp" {
-            return true
-        }
-        return false
+        (data.count > 3 && data.starts(with: [0xFF, 0xD8])) || (data.count > 12 && data.dropFirst(4).starts(with: "ftyp".utf8))
     }
 
     /// Asks for add-only Photos access the first time; turns auto-save off if it's refused.
@@ -90,12 +83,12 @@ extension CameraModel {
     }
 
     /// A name for a photo the camera sends without its card file name (Olympus' last JPEG).
-    func autoSaveName(extension ext: String = "JPG") -> String {
+    func autoSaveName() -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let stamp = formatter.string(from: Date())
         let model = (cameraName ?? brand.title).replacingOccurrences(of: " ", with: "-")
-        return "\(model)-\(stamp).\(ext)"
+        return "\(model)-\(stamp).JPG"
     }
 }

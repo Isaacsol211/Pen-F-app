@@ -1,4 +1,3 @@
-import Foundation
 import UIKit
 
 // Olympus / OM System over the camera's own Wi-Fi (the OI.Share / OM Image Share protocol).
@@ -20,10 +19,9 @@ final class OlympusDriver: CameraDriver {
     var liveViewFormat: LiveViewFormat { .olympusRTP }
 
     var capabilities: CameraCapabilities {
-        CameraCapabilities(liveViewSizes: liveViewSizes, tapToFocus: true, openEndedExposure: true, movie: true,
-                           videoSwitch: false, lastShotReview: true, clockSync: true,
+        CameraCapabilities(liveViewSizes: liveViewSizes, movie: true, lastShotReview: true, clockSync: true,
                            highResShot: camera.profile?.highResShot ?? camera.cameraName.map(Self.hasHighResShot) ?? true,
-                           cardBrowser: true, powerOff: true, userAgentChoice: true)
+                           powerOff: true)
     }
 
     private var commands: CommandList { camera.commands }
@@ -45,22 +43,7 @@ final class OlympusDriver: CameraDriver {
     // MARK: - Connect
 
     func connect() async throws {
-        // The first request can fail while iOS shows the Local Network prompt,
-        // and the camera can be slow right after its Wi-Fi comes up, so retry a little.
-        var reply: Data?
-        var failure: Error?
-        for attempt in 1...3 {
-            do {
-                reply = try await client.get("get_connectmode", timeout: 5)
-                break
-            } catch {
-                failure = error
-                guard attempt < 3, error is URLError else { break }
-                camera.status = "No answer yet, retrying (\(attempt + 1)/3)…"
-                try? await Task.sleep(for: .milliseconds(1500))
-            }
-        }
-        guard let reply else { throw failure ?? CameraError("No reply from the camera.") }
+        let reply = try await camera.retryingConnect { try await client.get("get_connectmode", timeout: 5) }
         camera.connectMode = MiniXML.parse(reply)?.trimmedText
 
         camera.status = "Reading camera info…"
@@ -83,8 +66,6 @@ final class OlympusDriver: CameraDriver {
                 : commands.liveViewSizes.first ?? camera.liveViewQuality
         }
     }
-
-    func teardown() {}
 
     func powerOff() async {
         _ = try? await client.get("switch_cammode", [("mode", "play")])
@@ -161,16 +142,9 @@ final class OlympusDriver: CameraDriver {
     func setProperty(_ name: String, to value: String, reportErrors: Bool) async -> Bool {
         // Sent verbatim (the camera's parser is simple; shutter values contain a literal ").
         let body = "<?xml version=\"1.0\"?>\r\n<set>\r\n<value>\(value)</value>\r\n</set>\r\n"
-        let previous = camera.properties[name]?.value
-        camera.properties[name]?.value = value
-        var ok = true
-        do {
+        let ok = await camera.optimisticallySet(name, to: value, reportErrors: reportErrors) {
             _ = try await client.post("set_camprop", [("com", "set"), ("propname", name)], xml: body)
             if name == "takemode" { try? await Task.sleep(for: .milliseconds(300)) }
-        } catch {
-            ok = false
-            if let previous { camera.properties[name]?.value = previous }
-            if reportErrors { camera.report(error) }
         }
         // Changing one setting can lock/unlock others (e.g. aperture in P vs A).
         await refreshProperties()
@@ -223,16 +197,11 @@ final class OlympusDriver: CameraDriver {
             }
             return
         }
-        camera.isShooting = true
+        // Long exposures: the reply can take the exposure time plus the same again for noise reduction.
+        let seconds = camera.beginShot()
         var params: [(String, String)] = [("com", "starttake")]
         if let focusPoint = camera.focusPoint {
             params.append(("point", CameraModel.pointString(camera.pixelPoint(focusPoint))))
-        }
-        // Long exposures: the reply can take the exposure time plus the same again for noise reduction.
-        let seconds = PropertyFormat.seconds(fromShutter: camera.properties["shutspeedvalue"]?.value ?? "") ?? 0
-        if seconds >= 1 {
-            camera.exposureStartedAt = Date()
-            camera.exposureDuration = seconds
         }
         defer {
             camera.exposureStartedAt = nil
@@ -290,14 +259,11 @@ final class OlympusDriver: CameraDriver {
     func toggleMovie() async {
         if camera.isRecordingMovie {
             _ = try? await client.getUrgent("exec_takemotion", [("com", "stopmovietake")])
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = nil
-            camera.shotCounter += 1
+            camera.setRecordingMovie(false)
         } else {
             do {
                 _ = try await client.get("exec_takemotion", [("com", "startmovietake")], timeout: 15)
-                camera.isRecordingMovie = true
-                camera.movieStartedAt = Date()
+                camera.setRecordingMovie(true)
             } catch {
                 camera.report(error)
             }

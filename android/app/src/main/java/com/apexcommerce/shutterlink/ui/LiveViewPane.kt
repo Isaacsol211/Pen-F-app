@@ -83,7 +83,6 @@ fun LiveViewPane(
     hudTopInset: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
     val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
     var loupeZoom by remember { mutableFloatStateOf(camera.prefs.getFloat("loupe.zoom", 4f)) }
     var loupeCenter by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
     val flash = remember { Animatable(0f) }
@@ -113,7 +112,7 @@ fun LiveViewPane(
     }
 
     BoxWithConstraints(modifier.background(Color(0.05f, 0.05f, 0.05f)).clipToBounds()) {
-        val bounds = with(density) { Size(maxWidth.toPx(), maxHeight.toPx()) }
+        val bounds = Size(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
         val (fw, fh) = camera.frameSpace
         val imageRect = fitRect(fw, fh, bounds)
         val frame = camera.liveFrame

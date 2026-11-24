@@ -129,7 +129,6 @@ final class CameraModel {
     var liveViewStartedAt: Date?
     var lastFrameAt: Date?
     var fps = 0
-    /// Where the user last tapped, in live-view coordinates.
     /// Where the user last tapped, normalised 0…1 so it survives live-view size changes.
     var focusPoint: CGPoint?
     var isShooting = false
@@ -232,8 +231,6 @@ final class CameraModel {
     /// Photos taken while auto-save was on that the camera couldn't send during live view (LUMIX);
     /// they're saved from the card the next time it's opened.
     var autoSavePending = 0
-    /// Saved by auto-save during this connection.
-    var autoSavedCount = 0
     @ObservationIgnored var autoSaveChain: Task<Void, Never>?
 
     // MARK: Request log
@@ -280,7 +277,7 @@ final class CameraModel {
 
     /// LUMIX streams only 320×240 or 640×480; fall back to 640×480 if a bigger Olympus size was saved.
     private func fitLiveViewQualityToBrand() {
-        let sizes = availableLiveViewSizes
+        let sizes = capabilities.liveViewSizes
         if !sizes.isEmpty, !sizes.contains(liveViewQuality) { liveViewQuality = "0640x0480" }
     }
 
@@ -321,9 +318,8 @@ final class CameraModel {
     }
 
     /// Pixel size of the live-view frames actually arriving (the camera's AF coordinate space).
-    var frameSpace: CGSize { frameSize == .zero ? liveViewSize : frameSize }
-
-    var liveViewSize: CGSize {
+    var frameSpace: CGSize {
+        if frameSize != .zero { return frameSize }
         let parts = liveViewQuality.split(separator: "x").compactMap { Double($0) }
         return parts.count == 2 ? CGSize(width: parts[0], height: parts[1]) : CGSize(width: 640, height: 480)
     }
@@ -352,9 +348,6 @@ final class CameraModel {
         }
         return filtered
     }
-
-    /// Live-view sizes this camera offers; empty when it has only one.
-    var availableLiveViewSizes: [String] { capabilities.liveViewSizes }
 
     /// The shutter records video (a movie mode on the dial, or the app's Video switch).
     var isMovieMode: Bool {
@@ -445,10 +438,7 @@ final class CameraModel {
     var activeHost: String?
 
     /// The address drivers talk to: the connected one, else the setting, else the brand's default.
-    var connectionHost: String {
-        if let activeHost { return activeHost }
-        return host.isEmpty ? brand.defaultHost : host
-    }
+    var connectionHost: String { activeHost ?? (host.isEmpty ? brand.defaultHost : host) }
 
     /// Hides the camera note, and keeps it hidden for this model from now on.
     func dismissCameraNote() {
@@ -495,7 +485,6 @@ final class CameraModel {
         autoSaveChain?.cancel()
         autoSaveChain = nil
         autoSavePending = 0
-        autoSavedCount = 0
         joinedNetwork = nil
         peakingOverlay = nil
         receiver?.stop()
@@ -608,14 +597,14 @@ final class CameraModel {
     private func handleFrame(_ image: UIImage?, _ info: LiveInfo?) {
         guard liveViewRunning else { return }
         if let image {
+            let now = CACurrentMediaTime()
             liveFrame = image
             // The loupe's mini-map only needs a few updates a second.
-            if CACurrentMediaTime() - ambientUpdatedAt > 0.5 {
+            if now - ambientUpdatedAt > 0.5 {
                 ambientFrame = image
-                ambientUpdatedAt = CACurrentMediaTime()
+                ambientUpdatedAt = now
             }
             if image.size != frameSize { frameSize = image.size }
-            let now = CACurrentMediaTime()
             // Only touch these a couple of times a second: each change redraws views that read them.
             if lastFrameAt.map({ Date().timeIntervalSince($0) > 0.5 }) ?? true { lastFrameAt = Date() }
             frameTimes.append(now)
@@ -650,8 +639,7 @@ final class CameraModel {
         focusPoint = normalized
 
         if touchShutter {
-            await shutterPressed()
-            await shutterReleased()
+            await shoot()
             return
         }
         guard capabilities.tapToFocus else { return }
@@ -677,6 +665,12 @@ final class CameraModel {
 
     func shutterReleased() async {
         await driver?.shutterReleased()
+    }
+
+    /// One full press and release: a single shot.
+    func shoot() async {
+        await shutterPressed()
+        await shutterReleased()
     }
 
     /// Open-ended exposures: first tap starts, second tap stops.

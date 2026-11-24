@@ -1,23 +1,15 @@
 import Foundation
 import Photos
-import UIKit
 
 // MARK: - Bracketing types
 
 enum BracketTarget: String, CaseIterable, Identifiable {
     /// Shutter speed in M, exposure compensation otherwise.
     case auto
-    case ev
-    case shutter
+    case ev, shutter
 
     var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .auto: "Auto"
-        case .ev: "EV"
-        case .shutter: "Shutter"
-        }
-    }
+    var title: String { self == .ev ? "EV" : rawValue.capitalized }
 }
 
 struct BracketPlan: Equatable {
@@ -100,67 +92,40 @@ extension CameraModel {
 
     // MARK: - Exposure bracketing
 
-    /// The setting a bracket varies: shutter speed in M, exposure compensation in P, A and S.
-    func bracketProperty(for target: BracketTarget) -> String {
-        switch target {
+    /// What a plan would shoot, or why it can't run with the current settings.
+    func bracketSet(_ plan: BracketPlan) -> Result<BracketSet, CameraError> {
+        // The setting a bracket varies: shutter speed in M, exposure compensation in P, A and S.
+        let name = switch plan.target {
         case .ev: "expcomp"
         case .shutter: "shutspeedvalue"
         case .auto: properties["takemode"]?.value.uppercased() == "M" ? "shutspeedvalue" : "expcomp"
         }
-    }
-
-    /// Offsets in thirds of a stop, in the usual camera order: 0, −1, +1, −2, +2…
-    static func bracketOffsets(frames: Int, thirds: Int) -> [Int] {
-        var result = [0]
-        var k = 1
-        while result.count < frames {
-            result.append(-k * thirds)
-            if result.count < frames { result.append(k * thirds) }
-            k += 1
-        }
-        return result
-    }
-
-    /// What a plan would shoot, or why it can't run with the current settings.
-    func bracketSet(_ plan: BracketPlan) -> Result<BracketSet, CameraError> {
-        let name = bracketProperty(for: plan.target)
+        let isEV = name == "expcomp"
         guard let property = properties[name] else {
-            return .failure(CameraError("This camera doesn't offer \(name == "expcomp" ? "exposure compensation" : "shutter speed") over Wi-Fi."))
+            return .failure(CameraError("This camera doesn't offer \(isEV ? "exposure compensation" : "shutter speed") over Wi-Fi."))
         }
         guard property.settable else {
             let mode = PropertyFormat.display("takemode", properties["takemode"]?.value ?? "")
-            return .failure(CameraError(name == "expcomp"
+            return .failure(CameraError(isEV
                 ? "Exposure compensation is locked in \(mode). Use P, A or S, or bracket the shutter in M."
                 : "The shutter speed is locked in \(mode). Use S or M, or bracket EV instead."))
         }
-        let offsets = Self.bracketOffsets(frames: plan.frames, thirds: plan.thirds)
+        // In thirds of a stop, in the usual camera order: 0, −1, +1, −2, +2…
+        let offsets = (0..<max(plan.frames, 1)).map { i in (i + 1) / 2 * plan.thirds * (i.isMultiple(of: 2) ? 1 : -1) }
+        // Both in stops: EV as it is, the shutter as log2 of its length (a positive offset, more light, is longer).
+        let stops: (String) -> Double? = isEV ? { Double($0) } : { PropertyFormat.seconds(fromShutter: $0).map(log2) }
+        let options = property.options.compactMap { option in stops(option).map { (option, $0) } }
+        guard let base = stops(property.value), !options.isEmpty else {
+            return .failure(CameraError(isEV ? "Couldn't read the current exposure compensation."
+                                             : "Bracketing needs a timed shutter speed, not Bulb or Live modes."))
+        }
         var values: [String] = []
         var clamped = false
-        if name == "expcomp" {
-            let options = property.options.compactMap { option in Double(option).map { (option, $0) } }
-            guard let base = Double(property.value), !options.isEmpty else {
-                return .failure(CameraError("Couldn't read the current exposure compensation."))
-            }
-            for offset in offsets {
-                let target = base + Double(offset) / 3
-                guard let best = options.min(by: { abs($0.1 - target) < abs($1.1 - target) }) else { continue }
-                if abs(best.1 - target) > 0.17 { clamped = true }
-                values.append(best.0)
-            }
-        } else {
-            let options = property.options.compactMap { option in
-                PropertyFormat.seconds(fromShutter: option).map { (option, $0) }
-            }
-            guard let base = PropertyFormat.seconds(fromShutter: property.value), !options.isEmpty else {
-                return .failure(CameraError("Bracketing needs a timed shutter speed, not Bulb or Live modes."))
-            }
-            for offset in offsets {
-                // A positive offset means more light: a longer exposure.
-                let target = base * pow(2, Double(offset) / 3)
-                guard let best = options.min(by: { abs(log2($0.1 / target)) < abs(log2($1.1 / target)) }) else { continue }
-                if abs(log2(best.1 / target)) > 0.17 { clamped = true }
-                values.append(best.0)
-            }
+        for offset in offsets {
+            let target = base + Double(offset) / 3
+            guard let best = options.min(by: { abs($0.1 - target) < abs($1.1 - target) }) else { continue }
+            if abs(best.1 - target) > 0.17 { clamped = true }
+            values.append(best.0)
         }
         return .success(BracketSet(property: name, values: values, offsets: offsets, clamped: clamped))
     }
@@ -181,9 +146,7 @@ extension CameraModel {
     func startBracket(_ plan: BracketPlan) {
         guard canBracket else { return }
         let set: BracketSet
-        switch bracketSet(plan) {
-        case .success(let value): set = value
-        case .failure(let error):
+        do { set = try bracketSet(plan).get() } catch {
             lastError = error.localizedDescription
             return
         }
@@ -197,12 +160,11 @@ extension CameraModel {
                 let offset = "\(Self.offsetLabel(set.offsets[index])) EV"
                 self.bracket.label = name == "expcomp" ? offset : "\(offset) · \(PropertyFormat.display(name, value))"
                 if self.properties[name]?.value != value {
-                    guard await self.setProperty(name, to: value, reportErrors: true) else { break }
+                    guard await self.setProperty(name, to: value) else { break }
                     try? await Task.sleep(for: .milliseconds(250))
                 }
                 if Task.isCancelled { break }
-                await self.shutterPressed()
-                await self.shutterReleased()
+                await self.shoot()
                 while self.isShooting, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
                 self.bracket.done = index + 1
             }
@@ -259,8 +221,7 @@ extension CameraModel {
                 if Task.isCancelled { break }
                 self.bracket.label = "Focus \(index + 1) of \(frames)"
                 let before = self.shotCounter
-                await self.shutterPressed()
-                await self.shutterReleased()
+                await self.shoot()
                 while self.isShooting, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
                 guard self.shotCounter > before else {
                     failure = self.lastError ?? "The camera didn't take frame \(index + 1)."

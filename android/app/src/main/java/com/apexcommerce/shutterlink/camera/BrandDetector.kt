@@ -22,15 +22,13 @@ import java.net.Socket
  */
 object BrandDetector {
     /** The brands whose camera networks use this phone address's subnet, most likely first. */
-    fun candidates(wifi: String?): List<CameraBrand> {
-        if (wifi == null) return CameraBrand.entries
-        return when {
-            wifi.startsWith("192.168.0.") -> listOf(CameraBrand.OLYMPUS)
-            wifi.startsWith("192.168.54.") -> listOf(CameraBrand.PANASONIC)
-            wifi.startsWith("192.168.122.") -> listOf(CameraBrand.SONY)
-            wifi.startsWith("192.168.1.") -> listOf(CameraBrand.NIKON, CameraBrand.CANON)
-            else -> CameraBrand.entries
-        }
+    fun candidates(wifi: String?): List<CameraBrand> = when {
+        wifi == null -> CameraBrand.entries
+        wifi.startsWith("192.168.0.") -> listOf(CameraBrand.OLYMPUS)
+        wifi.startsWith("192.168.54.") -> listOf(CameraBrand.PANASONIC)
+        wifi.startsWith("192.168.122.") -> listOf(CameraBrand.SONY)
+        wifi.startsWith("192.168.1.") -> listOf(CameraBrand.NIKON, CameraBrand.CANON)
+        else -> CameraBrand.entries
     }
 
     /** A short hint for the Connect screen ("Looks like a Nikon network"). */
@@ -65,12 +63,9 @@ object BrandDetector {
         results.sortedWith(compareBy({ it.second.first == CameraBrand.NIKON }, { it.first })).firstOrNull()?.second
     }
 
-    fun notFoundMessage(wifi: String?): String {
-        if (wifi == null) {
-            return "This phone isn't on Wi-Fi. Turn on the camera's smartphone Wi-Fi, join its network in Settings ▸ Wi-Fi (or with Join camera Wi-Fi below), then tap Connect."
-        }
-        return "No camera answered (this phone is at $wifi). Check that Settings ▸ Wi-Fi shows the camera's network, or pick your brand above."
-    }
+    fun notFoundMessage(wifi: String?): String =
+        if (wifi == null) "This phone isn't on Wi-Fi. Turn on the camera's smartphone Wi-Fi, join its network in Settings ▸ Wi-Fi (or with Join camera Wi-Fi below), then tap Connect."
+        else "No camera answered (this phone is at $wifi). Check that Settings ▸ Wi-Fi shows the camera's network, or pick your brand above."
 
     // MARK: - Probes
 

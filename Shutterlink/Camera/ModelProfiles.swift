@@ -11,7 +11,6 @@ import Foundation
 
 enum SupportLevel: String {
     case hardware = "Tested on this camera"
-    case mock = "Not yet confirmed on this camera"
     case researched = "Researched, not yet tried on this camera"
     case unsupported = "Not supported"
 }
@@ -69,8 +68,6 @@ enum ModelProfiles {
         let key = ModelProfile.key(reported)
         return all.first { $0.brand == brand && $0.aliases.contains { ModelProfile.key($0) == key } }
     }
-
-    static func profiles(for brand: CameraBrand) -> [ModelProfile] { all.filter { $0.brand == brand } }
 
     private static let om = "OM System bodies: start Device Connection on the camera (Bluetooth can stay off). OM System says remote shooting is partly limited, and its app may speak a newer protocol: this body hasn't been tried with Shutterlink yet."
     private static let proRemote = "Olympus may restrict remote shooting from other apps on this body (other apps only offer downloads). If controls are refused, use OI.Share."

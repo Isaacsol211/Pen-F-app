@@ -20,7 +20,6 @@ for testing the app's Nikon driver without a camera.
 
 In the app: Connect screen > Nikon (or Auto) > Advanced > Camera address = 127.0.0.1:15740.
 """
-import argparse
 import datetime
 import os
 import random
@@ -31,9 +30,8 @@ import sys
 import threading
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-from mock_penf import load_frames  # noqa: E402  (same live-view frames as the PEN-F mock)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from mock_penf import arguments, load_frames, serve  # noqa: E402  (same live-view frames as the PEN-F mock)
 
 OK, BUSY, NOT_SUPPORTED, INVALID_VALUE, SESSION_OPEN = 0x2001, 0x2019, 0x2005, 0x201C, 0x201E
 NOT_LIVE_VIEW = 0xA00B
@@ -429,21 +427,15 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--bind", default="127.0.0.1", help="address to listen on (default 127.0.0.1)")
-    ap.add_argument("--port", type=int, default=15740, help="PTP/IP port (default 15740, as on the camera)")
+    ap = arguments(__doc__, 15740, 15740)
     ap.add_argument("--dslr", action="store_true", help="behave like a D750 instead of a Z 6II")
     args = ap.parse_args()
-    sys.stdout.reconfigure(line_buffering=True)
     cam = MockNikon(load_frames(), dslr=args.dslr)
     Handler.cam = cam
     server = Server((args.bind, args.port), Handler)
     print(f"Mock Nikon {cam.model} (PTP/IP) on {args.bind}:{args.port} ({len(cam.frames)} frames, "
           f"{sum(1 for o in cam.objects.values() if not o['folder'])} files on card)")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nbye")
+    serve(server)
 
 
 if __name__ == "__main__":

@@ -377,8 +377,7 @@ suspend fun CameraModel.runSceneAssistant() {
             continue
         }
         try {
-            val brightness = withContext(Dispatchers.Default) { FrameMeter.brightness(frame) } ?: 0.2
-            val clipped = withContext(Dispatchers.Default) { FrameMeter.clipped(frame) } ?: 0.0
+            val (brightness, clipped) = withContext(Dispatchers.Default) { (FrameMeter.brightness(frame) ?: 0.2) to (FrameMeter.clipped(frame) ?: 0.0) }
             val override = sceneLabelOverride
             val raw = if (override != null) emptyMap() else classifyScene(frame)
             val labels = override ?: SceneLabels.fromMlKit(raw, brightness)
@@ -410,8 +409,7 @@ private suspend fun CameraModel.frameChange(frame: Bitmap): Double {
     val later = recentFrame ?: return 0.0
     if (later === frame) return 0.0
     val after = withContext(Dispatchers.Default) { FrameMeter.grey(later, width = 32, height = 24) } ?: return 0.0
-    if (after.size != before.size) return 0.0
-    return before.indices.count { abs(before[it] - after[it]) > 16 }.toDouble() / before.size
+    return if (after.size != before.size) 0.0 else FrameMeter.change(before, after)
 }
 
 /** Shows a suggestion once it has topped two looks in a row (no flicker), and hides it after two without. */
@@ -419,12 +417,7 @@ private fun CameraModel.showBest(suggestions: List<SceneSuggestion>) {
     val now = System.currentTimeMillis()
     sceneSnoozed = sceneSnoozed.filterValues { it > now }
     val best = suggestions.firstOrNull { it.id !in sceneSnoozed }
-    if (best != null && best.id == sceneSuggestion?.id) {
-        sceneSuggestion = best
-        sceneMisses = 0
-        return
-    }
-    if (best != null && best.id == sceneCandidate) {
+    if (best != null && (best.id == sceneSuggestion?.id || best.id == sceneCandidate)) {
         sceneSuggestion = best
         sceneMisses = 0
     } else {
@@ -434,50 +427,42 @@ private fun CameraModel.showBest(suggestions: List<SceneSuggestion>) {
     }
 }
 
-/** "Not now": that kind of suggestion stays away for ten minutes. */
-fun CameraModel.dismissSceneSuggestion() {
-    val suggestion = sceneSuggestion ?: return
-    sceneSnoozed = sceneSnoozed + (suggestion.id to System.currentTimeMillis() + 600_000)
+/** Hides the suggestion, and keeps that kind away for `ms`. */
+private fun CameraModel.snooze(suggestion: SceneSuggestion, ms: Long) {
+    sceneSnoozed = sceneSnoozed + (suggestion.id to System.currentTimeMillis() + ms)
     sceneSuggestion = null
     sceneCandidate = null
 }
 
+/** "Not now": that kind of suggestion stays away for ten minutes. */
+fun CameraModel.dismissSceneSuggestion() {
+    snooze(sceneSuggestion ?: return, 600_000)
+}
+
 /** Runs a suggestion's action. Panels (ND, Motion) are opened by the screen. */
 suspend fun CameraModel.applySceneSuggestion(suggestion: SceneSuggestion) {
-    sceneSuggestion = null
-    sceneCandidate = null
-    fun snooze(ms: Long) {
-        sceneSnoozed = sceneSnoozed + (suggestion.id to System.currentTimeMillis() + ms)
-    }
+    // A setting comes back sooner: once the new exposure has had time to reach live view, it's judged again.
+    snooze(suggestion, when (suggestion.action) {
+        is SceneSuggestion.Action.Setting -> 20_000
+        SceneSuggestion.Action.ExposeToTheRight -> 120_000
+        else -> 600_000
+    })
     when (val action = suggestion.action) {
-        is SceneSuggestion.Action.Recipe -> {
-            snooze(600_000)
-            apply(action.recipe)
+        is SceneSuggestion.Action.Recipe -> apply(action.recipe)
+        is SceneSuggestion.Action.Setting -> if (setProperty(action.property, action.value)) {
+            showToast("${PropertyFormat.title(action.property)} ${PropertyFormat.display(action.property, action.value)}")
         }
-        is SceneSuggestion.Action.Setting -> {
-            // Give the new exposure time to reach live view before judging it again.
-            snooze(20_000)
-            if (setProperty(action.property, action.value)) {
-                showToast("${PropertyFormat.title(action.property)} ${PropertyFormat.display(action.property, action.value)}")
-            }
-        }
-        SceneSuggestion.Action.ExposeToTheRight -> {
-            snooze(120_000)
-            exposeToTheRight()
-        }
-        SceneSuggestion.Action.OpenND, SceneSuggestion.Action.OpenMotion -> snooze(600_000)
-        SceneSuggestion.Action.FreezeMotion -> {
-            snooze(600_000)
-            runPreset("freeze", "Freeze movement") {
-                val (mode, inS) = modeStep("S", "You pick the shutter, the camera the aperture")
-                listOf(
-                    mode,
-                    presetStep("Shutter 1/500 s", "Freezes people moving and most sport indoors", "shutspeedvalue",
-                        shutter(near = 1.0 / 500), mode = "S", inMode = inS),
-                    presetStep("Auto ISO", "Raises ISO to keep the fast shutter in this light", "isospeedvalue", autoIso,
-                        unavailable = "Set Auto ISO on the camera"),
-                )
-            }
+        SceneSuggestion.Action.ExposeToTheRight -> exposeToTheRight()
+        SceneSuggestion.Action.OpenND, SceneSuggestion.Action.OpenMotion -> {}
+        SceneSuggestion.Action.FreezeMotion -> runPreset("freeze", "Freeze movement") {
+            val (mode, inS) = modeStep("S", "You pick the shutter, the camera the aperture")
+            listOf(
+                mode,
+                presetStep("Shutter 1/500 s", "Freezes people moving and most sport indoors", "shutspeedvalue",
+                    shutter(near = 1.0 / 500), mode = "S", inMode = inS),
+                presetStep("Auto ISO", "Raises ISO to keep the fast shutter in this light", "isospeedvalue", autoIso,
+                    unavailable = "Set Auto ISO on the camera"),
+            )
         }
     }
 }

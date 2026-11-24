@@ -3,26 +3,6 @@ import UIKit
 
 // MARK: - Exposure bracketing
 
-struct BracketView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                BracketPanel()
-                    .padding(16)
-            }
-            .navigationTitle("Bracketing")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
 /// The bracketing cards: in a sheet on a phone, in the inspector on a large canvas.
 struct BracketPanel: View {
     @Environment(CameraModel.self) private var camera
@@ -58,7 +38,7 @@ struct BracketPanel: View {
     }
 
     @ViewBuilder private var setupCards: some View {
-        glassCard {
+        card {
             Text("Frames").font(.headline)
             Picker("Frames", selection: $frames) {
                 ForEach([3, 5, 7, 9], id: \.self) { Text("\($0)").tag($0) }
@@ -80,19 +60,21 @@ struct BracketPanel: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
-        glassCard {
+        card {
             Text("Will shoot").font(.headline)
             switch camera.bracketSet(plan) {
             case .success(let set):
-                FlowRow(items: Array(zip(set.offsets, set.values).enumerated()), spacing: 6) { item in
-                    let (offset, value) = item.element
-                    VStack(spacing: 2) {
-                        Text(CameraModel.offsetLabel(offset)).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                        Text(PropertyFormat.display(set.property, value)).font(.caption.monospaced().weight(.semibold))
+                WrapLayout(spacing: 6) {
+                    ForEach(Array(zip(set.offsets, set.values).enumerated()), id: \.offset) { item in
+                        let (offset, value) = item.element
+                        VStack(spacing: 2) {
+                            Text(CameraModel.offsetLabel(offset)).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                            Text(PropertyFormat.display(set.property, value)).font(.caption.monospaced().weight(.semibold))
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .surface(.regular, in: .rect(cornerRadius: 10, style: .continuous))
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .surface(.regular, in: .rect(cornerRadius: 10, style: .continuous))
                 }
                 if set.clamped {
                     Label("Some frames reach the end of the camera's range and repeat a value.",
@@ -115,7 +97,6 @@ struct BracketPanel: View {
                 .padding(.vertical, 8)
         }
         .buttonStyle(.accent)
-        .tint(Theme.accent)
         .disabled(!camera.canBracket || (try? camera.bracketSet(plan).get()) == nil)
         if camera.isOpenEndedShutter {
             Text("Bracketing needs a timed shutter speed, not Bulb or Live modes.")
@@ -127,7 +108,7 @@ struct BracketPanel: View {
 
     @ViewBuilder private var focusCards: some View {
         if camera.capabilities.focusDrive {
-            glassCard {
+            card {
                 Stepper(value: $focusFrames, in: 2...200) {
                     HStack {
                         Text("Frames").font(.headline)
@@ -144,7 +125,7 @@ struct BracketPanel: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            glassCard {
+            card {
                 Label("Before you start", systemImage: "lightbulb").font(.headline)
                 Text(camera.focusStackSetup)
                     .font(.subheadline)
@@ -162,14 +143,13 @@ struct BracketPanel: View {
                     .padding(.vertical, 8)
             }
             .buttonStyle(.accent)
-            .tint(Theme.accent)
             .disabled(!camera.canFocusStack)
             if camera.isOpenEndedShutter {
                 Text("Focus stacking needs a timed shutter speed, not Bulb or Live modes.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         } else {
-            glassCard {
+            card {
                 Label("Use the camera's own focus bracketing", systemImage: "scope").font(.headline)
                 Text(camera.focusStackUnavailable)
                     .font(.subheadline)
@@ -179,7 +159,7 @@ struct BracketPanel: View {
     }
 
     private var progressCard: some View {
-        glassCard {
+        card {
             HStack(spacing: 18) {
                 ZStack {
                     Circle().stroke(.white.opacity(0.15), lineWidth: 8)
@@ -215,28 +195,9 @@ struct BracketPanel: View {
         default: "2"
         }
     }
-
-    private func glassCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12, content: content)
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .surface(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-    }
 }
 
-/// Simple wrapping row of chips.
-private struct FlowRow<Item, Content: View>: View {
-    let items: [Item]
-    var spacing: CGFloat = 6
-    @ViewBuilder let content: (Item) -> Content
-
-    var body: some View {
-        WrapLayout(spacing: spacing) {
-            ForEach(items.indices, id: \.self) { content(items[$0]) }
-        }
-    }
-}
-
+/// Lays its views out in rows, wrapping to a new row when one is full.
 private struct WrapLayout: Layout {
     var spacing: CGFloat
 

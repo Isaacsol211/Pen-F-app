@@ -36,17 +36,11 @@ extension CameraModel {
         } else if isOpenEndedShutter {
             await toggleOpenExposure()
         } else {
-            await shutterPressed()
-            await shutterReleased()
+            await shoot()
         }
     }
 
-    /// Moves the value of `name` one step along its dial (+1 = rightwards on the ruler).
-    func stepProperty(_ name: String, by delta: Int) {
-        guard let next = stepped(name, by: delta) else { return }
-        Task { await setProperty(name, to: next) }
-    }
-
+    /// The value one step along the dial of `name` (+1 = rightwards on the ruler), if there is one.
     func stepped(_ name: String, by delta: Int) -> String? {
         guard let raw = properties[name] else { return nil }
         let property = dialOptions(for: raw)
@@ -149,7 +143,7 @@ struct CameraCommands: Commands {
     }
 
     private func step(_ delta: Int) {
-        guard let name = remote?.activeSetting else { return }
-        camera.stepProperty(name, by: delta)
+        guard let name = remote?.activeSetting, let next = camera.stepped(name, by: delta) else { return }
+        Task { await camera.setProperty(name, to: next) }
     }
 }

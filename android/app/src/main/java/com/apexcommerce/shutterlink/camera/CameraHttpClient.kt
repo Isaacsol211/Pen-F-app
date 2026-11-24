@@ -1,5 +1,6 @@
 package com.apexcommerce.shutterlink.camera
 
+import android.graphics.Bitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -35,11 +36,9 @@ import kotlin.coroutines.resumeWithException
 // It wants an OI.Share-style User-Agent. 200/202 = success, 520 = refused (wrong mode, bad value…).
 
 class CameraHttpException(val status: Int, val path: String, val body: String) : IOException() {
-    val command: String get() = path.substringBefore('?')
-
     override val message: String
         get() {
-            var text = "$command → HTTP $status"
+            var text = "${path.substringBefore('?')} → HTTP $status"
             val code = MiniXml.parse(body)?.firstDescendant("errorcode", "Errorcode")?.trimmedText
             if (code != null) {
                 text += " (camera error $code)"
@@ -126,6 +125,14 @@ class CameraHttpClient(
         return send("GET", url, null, null, timeout, log)
     }
 
+    /** Thumbnail of a card file served by URL (LUMIX UPnP, Sony avContent), or null. */
+    suspend fun fetchThumbnail(image: CameraImage): Bitmap? =
+        image.urls?.let { u -> attempt { fetch(u.thumbnail ?: u.preview ?: u.original, log = false) } }?.let { decodeImage(it) }
+
+    suspend fun fetchPreview(image: CameraImage): Bitmap =
+        decodeImage(fetch(image.urls?.let { it.preview ?: it.thumbnail ?: it.original }))
+            ?: throw CameraException("Couldn't decode the preview.")
+
     /** POST a SOAP request (UPnP ContentDirectory). */
     suspend fun soap(url: String, action: String, body: String): ByteArray =
         send("POST", url, body.toByteArray(), "text/xml; charset=\"utf-8\"", 20.0, true,
@@ -183,19 +190,13 @@ class CameraHttpClient(
         call.timeout().timeout((timeout * 1000).toLong(), TimeUnit.MILLISECONDS)
 
         val started = System.currentTimeMillis()
-        val status: Int
-        val data: ByteArray
-        val type: String
-        try {
+        val (status, type, data) = try {
             // The body is read off the main thread (Android forbids network reads there).
-            val reply = withContext(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 call.await().use { response ->
                     Triple(response.code, response.header("Content-Type") ?: "", response.body?.bytes() ?: ByteArray(0))
                 }
             }
-            status = reply.first
-            type = reply.second
-            data = reply.third
         } catch (e: IOException) {
             debugLog("$method $address FAILED after ${System.currentTimeMillis() - started} ms: $e")
             if (log) onLog(LogEntry(started, method, path, null, System.currentTimeMillis() - started, describeIo(e)))
@@ -209,11 +210,8 @@ class CameraHttpClient(
     }
 
     companion object {
-        fun path(cgi: String, params: List<Pair<String, String>>): String {
-            var p = "/$cgi.cgi"
-            if (params.isNotEmpty()) p += "?" + params.joinToString("&") { "${it.first}=${it.second}" }
-            return p
-        }
+        fun path(cgi: String, params: List<Pair<String, String>>): String =
+            "/$cgi.cgi" + if (params.isEmpty()) "" else "?" + params.joinToString("&") { "${it.first}=${it.second}" }
 
         fun summarize(data: ByteArray, type: String): String {
             if (type.startsWith("image/") || type.contains("octet-stream") || type.startsWith("video/")) {

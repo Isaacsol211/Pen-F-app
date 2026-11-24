@@ -1,11 +1,9 @@
 package com.apexcommerce.shutterlink.camera
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.IOException
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -23,10 +21,9 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
 
     override val capabilities: CameraCapabilities
         get() = CameraCapabilities(
-            liveViewSizes = liveViewSizes, tapToFocus = true, openEndedExposure = true, movie = true,
-            videoSwitch = false, lastShotReview = true, clockSync = true,
+            liveViewSizes = liveViewSizes, movie = true, lastShotReview = true, clockSync = true,
             highResShot = camera.profile?.highResShot ?: camera.cameraName?.let(::hasHighResShot) ?: true,
-            cardBrowser = true, powerOff = true, userAgentChoice = true,
+            powerOff = true,
         )
 
     private val commands get() = camera.commands
@@ -34,37 +31,17 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
     val liveViewSizes: List<String>
         get() = commands.liveViewSizes.ifEmpty { CameraBrand.OLYMPUS.defaultLiveViewSizes }
 
-    companion object {
-        /** For bodies missing from ModelProfiles: High Res Shot is on the PEN-F, E-M5 II/III, E-M1 II/III/X and OM bodies. */
-        fun hasHighResShot(model: String): Boolean {
-            val m = model.uppercase().replace(" ", "").replace("-", "")
-            if (m.contains("EM10") || m.contains("EPL") || m.contains("EP5") || m.contains("EP7") || m.startsWith("TG") ||
-                m.startsWith("SH") || m.startsWith("STYLUS") || m == "EM1") return false
-            return true
-        }
-
-        fun decode(data: ByteArray): Bitmap? = runCatching { BitmapFactory.decodeByteArray(data, 0, data.size) }.getOrNull()
+    /** For bodies missing from ModelProfiles: High Res Shot is on the PEN-F, E-M5 II/III, E-M1 II/III/X and OM bodies. */
+    private fun hasHighResShot(model: String): Boolean {
+        val m = model.uppercase().replace(" ", "").replace("-", "")
+        return !(m.contains("EM10") || m.contains("EPL") || m.contains("EP5") || m.contains("EP7") || m.startsWith("TG") ||
+            m.startsWith("SH") || m.startsWith("STYLUS") || m == "EM1")
     }
 
     // MARK: - Connect
 
     override suspend fun connect() {
-        // The camera can be slow right after its Wi-Fi comes up, so retry a little.
-        var reply: ByteArray? = null
-        var failure: Exception? = null
-        for (attempt in 1..3) {
-            try {
-                reply = client.get("get_connectmode", timeout = 5.0)
-                break
-            } catch (e: Exception) {
-                failure = e
-                if (attempt >= 3 || e !is IOException || e is CameraHttpException) break
-                camera.status = "No answer yet, retrying (${attempt + 1}/3)…"
-                delay(1500)
-            }
-        }
-        if (reply == null) throw failure ?: CameraException("No reply from the camera.")
-        camera.connectMode = MiniXml.parse(reply)?.trimmedText
+        camera.retryConnect { client.get("get_connectmode", timeout = 5.0) }
 
         camera.status = "Reading camera info…"
         runCatching { client.get("get_caminfo") }.getOrNull()?.let { info ->
@@ -86,8 +63,6 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
         }
     }
 
-    override fun teardown() {}
-
     override suspend fun powerOff() {
         runCatching { client.get("switch_cammode", listOf("mode" to "play")) }
         runCatching { client.get("exec_pwoff") }
@@ -95,8 +70,7 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
 
     // MARK: - Modes & live view
 
-    override suspend fun enterRecMode() {
-        camera.isSwitchingMode = true
+    override suspend fun enterRecMode() = camera.switchingMode {
         try {
             // The PEN-F ignores a new live-view size while it's already in recording mode,
             // so go through playback first.
@@ -116,8 +90,6 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
             camera.startLiveView()
         } catch (e: Exception) {
             camera.report(e)
-        } finally {
-            camera.isSwitchingMode = false
         }
     }
 
@@ -141,10 +113,9 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
     override suspend fun refreshProperties() {
         try {
             val data = client.get("get_camprop", listOf("com" to "desc", "propname" to "desclist"))
-            camera.rawDescList = String(data)
             if (!loggedDescList) {
                 loggedDescList = true
-                debugLog("DESCLIST\n${camera.rawDescList.take(4000)}")
+                debugLog("DESCLIST\n${String(data).take(4000)}")
             }
             val root = MiniXml.parse(data) ?: return
             val result = LinkedHashMap<String, CameraProperty>()
@@ -162,20 +133,10 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
     override suspend fun setProperty(name: String, value: String, reportErrors: Boolean): Boolean {
         // Sent verbatim (the camera's parser is simple; shutter values contain a literal ").
         val body = "<?xml version=\"1.0\"?>\r\n<set>\r\n<value>$value</value>\r\n</set>\r\n"
-        val previous = camera.properties[name]?.value
-        camera.updateValue(name, value)
-        var ok = true
-        try {
+        return applySetting(camera, name, value, reportErrors) {
             client.post("set_camprop", listOf("com" to "set", "propname" to name), body)
             if (name == "takemode") delay(300)
-        } catch (e: Exception) {
-            ok = false
-            if (previous != null) camera.updateValue(name, previous)
-            if (reportErrors) camera.report(e)
         }
-        // Changing one setting can lock/unlock others (e.g. aperture in P vs A).
-        refreshProperties()
-        return ok
     }
 
     // MARK: - Focus & shooting
@@ -230,11 +191,7 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
             params.add("point" to CameraModel.pointString(px, py))
         }
         // Long exposures: the reply can take the exposure time plus the same again for noise reduction.
-        val seconds = PropertyFormat.seconds(camera.properties["shutspeedvalue"]?.value ?: "") ?: 0.0
-        if (seconds >= 1) {
-            camera.exposureStartedAt = System.currentTimeMillis()
-            camera.exposureDuration = seconds
-        }
+        val seconds = camera.startTimedExposure()
         try {
             val reply = client.get("exec_takemotion", params, timeout = maxOf(60.0, seconds * 2 + 30))
             debugLog("starttake reply: ${String(reply)}")
@@ -257,53 +214,35 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
         camera.isShooting = false
     }
 
-    override suspend fun toggleOpenExposure() {
-        if (camera.isShooting) {
-            runCatching { client.getUrgent("exec_takemotion", listOf("com" to "stoptake")) }
-            camera.isShooting = false
-            camera.exposureStartedAt = null
-            camera.shotCounter++
-            // Give the camera a moment to write the composite, then grab the review image.
+    override suspend fun toggleOpenExposure() = camera.toggleBulb(
+        // Don't wait here: the camera may hold this reply until the exposure is stopped.
+        start = {
+            camera.scope.launch {
+                try {
+                    val reply = client.get("exec_takemotion", listOf("com" to "starttake"), timeout = 4 * 3600.0)
+                    debugLog("starttake (open-ended) reply: ${String(reply)}")
+                } catch (e: Exception) {
+                    camera.isShooting = false
+                    camera.exposureStartedAt = null
+                    camera.report(e)
+                }
+            }
+        },
+        stop = { client.getUrgent("exec_takemotion", listOf("com" to "stoptake")) },
+        // Give the camera a moment to write the composite, then grab the review image.
+        afterStop = {
             camera.scope.launch {
                 delay(1500)
                 camera.fetchLastShot()
             }
-            return
-        }
-        camera.isShooting = true
-        camera.exposureStartedAt = System.currentTimeMillis()
-        camera.exposureDuration = null
-        // Don't wait here: the camera may hold this reply until the exposure is stopped.
-        camera.scope.launch {
-            try {
-                val reply = client.get("exec_takemotion", listOf("com" to "starttake"), timeout = 4 * 3600.0)
-                debugLog("starttake (open-ended) reply: ${String(reply)}")
-            } catch (e: Exception) {
-                camera.isShooting = false
-                camera.exposureStartedAt = null
-                camera.report(e)
-            }
-        }
-    }
+        },
+    )
 
-    override suspend fun toggleMovie() {
-        if (camera.isRecordingMovie) {
-            runCatching { client.getUrgent("exec_takemotion", listOf("com" to "stopmovietake")) }
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = null
-            camera.shotCounter++
-        } else {
-            try {
-                client.get("exec_takemotion", listOf("com" to "startmovietake"), timeout = 15.0)
-                camera.isRecordingMovie = true
-                camera.movieStartedAt = System.currentTimeMillis()
-            } catch (e: Exception) {
-                camera.report(e)
-            }
-        }
-    }
+    override suspend fun toggleMovie() = camera.recordMovie(
+        start = { client.get("exec_takemotion", listOf("com" to "startmovietake"), timeout = 15.0) },
+        stop = { client.getUrgent("exec_takemotion", listOf("com" to "stopmovietake")) },
+    )
 
-    /** The PEN-F lists both `getrecview` and `getlastjpg`; try the first, fall back to the second. */
     /**
      * Grabs a preview of the capture that just finished, for the review thumbnail, then hands the full
      * JPEG (`getlastjpg`, available during live view) to auto-save when it's on.
@@ -322,7 +261,7 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
         for (command in listOf("getrecview", "getlastjpg")) {
             if (!commands.supports("exec_takemisc", command)) continue
             val data = runCatching { client.get("exec_takemisc", listOf("com" to command), timeout = 8.0) }.getOrNull()
-            val image = data?.let(::decode)
+            val image = data?.let { decodeImage(it) }
             if (image == null) {
                 debugLog("$command: no image")
                 continue
@@ -393,23 +332,20 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
         if (e.status == 404) emptyList() else throw e   // 404 = empty folder
     }
 
-    override suspend fun thumbnail(image: CameraImage): Bitmap? {
-        val data = runCatching { client.get("get_thumbnail", listOf("DIR" to image.path), log = false) }.getOrNull() ?: return null
-        return decode(data)
-    }
+    override suspend fun thumbnail(image: CameraImage): Bitmap? =
+        runCatching { client.get("get_thumbnail", listOf("DIR" to image.path), log = false) }.getOrNull()?.let { decodeImage(it) }
 
     override suspend fun preview(image: CameraImage): Bitmap {
         if (image.fileExtension == "JPG") {
             runCatching { client.get("get_resizeimg", listOf("DIR" to image.path, "size" to "1600")) }.getOrNull()
-                ?.let(::decode)?.let { return it }
+                ?.let { decodeImage(it) }?.let { return it }
         }
-        runCatching { client.get("get_thumbnail", listOf("DIR" to image.path)) }.getOrNull()?.let(::decode)?.let { return it }
+        runCatching { client.get("get_thumbnail", listOf("DIR" to image.path)) }.getOrNull()?.let { decodeImage(it) }?.let { return it }
         // Files the camera doesn't index (another camera's) have no preview: fetch the file itself.
         if (image.fileExtension !in setOf("JPG", "JPEG")) {
             throw CameraException("The camera has no preview for this ${image.fileExtension} file. Save it to view it.")
         }
-        val data = client.download(image.path)
-        return decode(data) ?: throw CameraException("Couldn't decode the photo.")
+        return decodeImage(client.download(image.path)) ?: throw CameraException("Couldn't decode the photo.")
     }
 
     override suspend fun downloadOriginal(image: CameraImage): ByteArray = client.download(image.path)

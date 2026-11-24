@@ -9,17 +9,7 @@ enum PresetRecipe: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
-        switch self {
-        case .astro: "Astro"
-        case .moon: "Moon"
-        case .fireworks: "Fireworks"
-        case .landscape: "Landscape"
-        case .action: "Action"
-        case .macro: "Macro"
-        case .trails: "Light trails & silky water"
-        }
-    }
+    var title: String { self == .trails ? "Light trails & silky water" : rawValue.capitalized }
 
     var icon: String {
         switch self {
@@ -106,13 +96,6 @@ extension CameraModel {
         }
     }
 
-    /// A setting the camera offers now, or will once it's in `mode`.
-    func presetProperty(_ name: String, mode: String?, inMode: Bool) -> CameraProperty? {
-        if let property = settableProperty(name) { return property }
-        if let mode, inMode, Self.mode(mode, allows: name) { return properties[name] }
-        return nil
-    }
-
     /// The mode step, and whether the camera will be in that mode once it has run.
     func modeStep(_ target: String, why: String) -> (step: PresetStep, inMode: Bool) {
         let option = settableProperty("takemode")?.options.first { $0.uppercased() == target }
@@ -125,11 +108,12 @@ extension CameraModel {
         return (step, option != nil || already)
     }
 
-    /// A step for one setting, with nothing to set when the camera doesn't offer it.
+    /// A step for one setting, with nothing to set when the camera doesn't offer it (now, or once in `mode`).
     func presetStep(_ title: String, _ detail: String, _ name: String, _ value: String?,
                     mode: String? = nil, inMode: Bool = false,
                     unavailable: String = "Not offered by the camera over Wi-Fi") -> PresetStep {
-        let available = presetProperty(name, mode: mode, inMode: inMode) != nil
+        let available = settableProperty(name) != nil
+            || (inMode && properties[name] != nil && mode.map { Self.mode($0, allows: name) } == true)
         var step = PresetStep(title: title, detail: detail, property: name, value: available ? value : nil,
                               unavailable: unavailable)
         if let mode, !inMode, ["focalvalue", "shutspeedvalue", "expcomp"].contains(name) {
@@ -178,9 +162,9 @@ extension CameraModel {
         return preferred.first { options.contains($0) }
     }
 
-    func antiShockStep(_ detail: String = "Avoids shutter-shock blur on a tripod") -> PresetStep {
-        presetStep("Anti-shock drive", detail, "drivemode", option("drivemode", in: ["lowvib-normal"]),
-                   unavailable: "Use the camera's electronic shutter if it has one")
+    func antiShockStep(_ detail: String = "Avoids shutter-shock blur on a tripod",
+                       unavailable: String = "Use the camera's electronic shutter if it has one") -> PresetStep {
+        presetStep("Anti-shock drive", detail, "drivemode", option("drivemode", in: ["lowvib-normal"]), unavailable: unavailable)
     }
 
     /// Runs steps in order and records what the camera accepted. They're worked out again before each
@@ -235,8 +219,8 @@ extension CameraModel {
         defer { presetRunning = false }
         var missed: [String] = []
         for name in Self.presetOrder {
-            guard let value = snapshot.values[name], let property = properties[name], property.value != value else { continue }
-            guard property.settable else { continue }
+            guard let value = snapshot.values[name], let property = properties[name], property.value != value,
+                  property.settable else { continue }
             if !(await setProperty(name, to: value, reportErrors: false)) {
                 missed.append(PropertyFormat.title(for: name))
             }
@@ -284,15 +268,16 @@ extension CameraModel {
                 presetStep("Daylight white balance", "True firework colours", "wbvalue", option("wbvalue", in: ["18"])),
                 antiShockStep(),
             ]
-        case .landscape:
+        case .landscape, .macro:
             let (mode, inA) = modeStep("A", why: "You pick the depth of field, the camera the shutter")
+            let macro = recipe == .macro
             return [
                 mode,
-                presetStep("Aperture f/8", "Front-to-back sharpness on most lenses", "focalvalue", aperture(near: 8),
-                           mode: "A", inMode: inA),
+                presetStep("Aperture f/8", macro ? "More depth without softening from diffraction" : "Front-to-back sharpness on most lenses",
+                           "focalvalue", aperture(near: 8), mode: "A", inMode: inA),
                 presetStep("Lowest ISO", "The cleanest files", "isospeedvalue", lowestISO),
                 presetStep("Exposure ±0", "Start from the camera's metering", "expcomp", zeroEV, mode: "A", inMode: inA),
-                antiShockStep(),
+                macro ? antiShockStep("Close up, the smallest shake shows") : antiShockStep(),
             ]
         case .action:
             let (mode, inS) = modeStep("S", why: "You pick the shutter, the camera the aperture")
@@ -306,16 +291,6 @@ extension CameraModel {
                 presetStep("Fast continuous drive", "Hold the shutter for a burst", "drivemode",
                            option("drivemode", in: ["continuous-H", "silent-continuous-H"]),
                            unavailable: "Set continuous shooting on the camera"),
-            ]
-        case .macro:
-            let (mode, inA) = modeStep("A", why: "You pick the depth of field, the camera the shutter")
-            return [
-                mode,
-                presetStep("Aperture f/8", "More depth without softening from diffraction", "focalvalue", aperture(near: 8),
-                           mode: "A", inMode: inA),
-                presetStep("Lowest ISO", "The cleanest files", "isospeedvalue", lowestISO),
-                presetStep("Exposure ±0", "Start from the camera's metering", "expcomp", zeroEV, mode: "A", inMode: inA),
-                antiShockStep("Close up, the smallest shake shows"),
             ]
         case .trails:
             let (mode, inM) = modeStep("M", why: "The exposure stays fixed while the lights move")
@@ -332,9 +307,8 @@ extension CameraModel {
     }
 
     func apply(_ recipe: PresetRecipe) async -> Bool {
-        if recipe == .astro { return await runPreset(id: recipe.id, title: recipe.title) { steps(for: .astro) } }
         let ok = await runPreset(id: recipe.id, title: recipe.title) { steps(for: recipe) }
-        if ok { showToast("\(recipe.title) settings applied") }
+        if ok, recipe != .astro { showToast("\(recipe.title) settings applied") }
         return ok
     }
 
@@ -342,10 +316,9 @@ extension CameraModel {
 
     /// Saves what the app can set right now under `name`, for this camera brand.
     func saveCurrentSettings(as name: String) {
-        var values: [String: String] = [:]
-        for key in Self.presetOrder {
-            if let property = settableProperty(key) { values[key] = property.value }
-        }
+        let values = Dictionary(uniqueKeysWithValues: Self.presetOrder.compactMap { key in
+            settableProperty(key).map { (key, $0.value) }
+        })
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         savedPresets.insert(SavedPreset(name: trimmed.isEmpty ? "My preset" : trimmed, brand: brand.rawValue,
                                         values: values), at: 0)

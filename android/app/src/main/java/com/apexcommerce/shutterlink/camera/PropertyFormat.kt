@@ -25,10 +25,7 @@ object PropertyFormat {
     }
 
     /** Live Composite, Live Time, Live Bulb and Bulb run until stopped. */
-    fun isOpenEnded(shutter: String): Boolean {
-        val v = shutter.lowercase()
-        return v.startsWith("live") || v == "bulb" || v == "time"
-    }
+    fun isOpenEnded(shutter: String): Boolean = shutter.lowercase().let { it.startsWith("live") || it == "bulb" || it == "time" }
 
     fun display(name: String, value: String): String = when (name) {
         "takemode" -> when (value.lowercase()) {

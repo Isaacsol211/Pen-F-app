@@ -1,6 +1,4 @@
-import Foundation
 import SwiftUI
-import UIKit
 
 /// Interval timer (time-lapse / star stacking) settings.
 struct IntervalPlan: Equatable, Codable {
@@ -19,7 +17,6 @@ struct IntervalState: Equatable {
     var done = 0
     var total = 0
     var nextShotAt: Date?
-    var startedAt: Date?
     /// The last exposure change ramping made.
     var rampNote: String?
 }
@@ -29,7 +26,7 @@ extension CameraModel {
 
     func startInterval(_ plan: IntervalPlan) {
         guard !interval.running, mode == .rec, !isOpenEndedShutter else { return }
-        interval = IntervalState(running: true, done: 0, total: plan.count, nextShotAt: Date(), startedAt: Date())
+        interval = IntervalState(running: true, done: 0, total: plan.count, nextShotAt: Date())
         let rampTarget = plan.ramp ? recentFrame.flatMap(FrameMeter.brightness) : nil
         let baseISO = properties["isospeedvalue"].flatMap { Int($0.value) }
         if plan.ramp, rampTarget == nil { interval.rampNote = "No live view to follow the light: ramping is off" }
@@ -43,8 +40,7 @@ extension CameraModel {
                 }
                 let shotStart = Date()
                 self.interval.nextShotAt = nil
-                await self.shutterPressed()
-                await self.shutterReleased()
+                await self.shoot()
                 self.interval.done += 1
                 if plan.count != 0 && self.interval.done >= plan.count { break }
                 // Interval is measured start-to-start; never fire faster than the camera can finish.
@@ -69,7 +65,7 @@ extension CameraModel {
     /// The loupe needs detail: switch to 1280×960 while it's open, then go back.
     func setLoupe(_ on: Bool) async {
         let sharp = "1280x0960"
-        if on, liveViewQuality != sharp, availableLiveViewSizes.contains(sharp) {
+        if on, liveViewQuality != sharp, capabilities.liveViewSizes.contains(sharp) {
             liveViewBeforeLoupe = liveViewQuality
             await changeLiveViewQuality(sharp)
         } else if !on, let previous = liveViewBeforeLoupe {
@@ -102,6 +98,4 @@ extension CameraModel {
             if toast == text { withAnimation(.smooth) { toast = nil } }
         }
     }
-
-
 }

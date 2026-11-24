@@ -17,10 +17,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -84,8 +86,6 @@ object Theme {
     /** Minimum touch target. */
     val target: Dp = 44.dp
 
-    val mono = FontFamily.Monospace
-
     val colors: ColorScheme = darkColorScheme(
         primary = accent, onPrimary = onAccent, secondary = accent, onSecondary = onAccent,
         background = background, onBackground = Color.White, surface = surface, onSurface = Color.White,
@@ -110,7 +110,6 @@ fun Modifier.surface(shape: Shape, overImage: Boolean = false, tint: Color? = nu
         .border(1.dp, Theme.stroke, shape)
 
 val Pill = RoundedCornerShape(percent = 50)
-fun rounded(radius: Dp) = RoundedCornerShape(radius)
 
 /** Small-caps label above a readout ("SHUTTER", "ISO"): 11 sp, tracked. */
 @Composable
@@ -121,18 +120,13 @@ fun CapsLabel(text: String, color: Color = Theme.secondary, size: TextUnit = 11.
     )
 }
 
-/** The app's wordmark: tracked capitals, as on a camera's top plate. */
+/** The aperture mark and the wordmark: tracked capitals, as on a camera's top plate. */
 @Composable
-fun Wordmark(size: TextUnit = 22.sp) {
-    Text("SHUTTERLINK", color = Color.White,
-        style = TextStyle(fontSize = size, fontWeight = FontWeight.Black, letterSpacing = 0.16.em))
-}
-
-@Composable
-fun BrandLockup(markSize: Dp = 48.dp) {
+fun BrandLockup(markSize: Dp) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        ApertureMark(Modifier.size(markSize))
-        Wordmark(size = if (markSize < 44.dp) 18.sp else 22.sp)
+        Canvas(Modifier.size(markSize)) { drawAperture() }
+        Text("SHUTTERLINK", color = Color.White,
+            style = TextStyle(fontSize = if (markSize < 44.dp) 18.sp else 22.sp, fontWeight = FontWeight.Black, letterSpacing = 0.16.em))
     }
 }
 
@@ -207,19 +201,22 @@ fun Card(modifier: Modifier = Modifier, content: @Composable androidx.compose.fo
     )
 }
 
-/**
- * The Shutterlink aperture mark: the same flat drawing as the app icon (tools/make_icon.swift),
- * drawn live so it stays sharp at any size. `monochrome` draws outlines only in one colour.
- */
+/** A yes/no question before something that can't be taken back: a red confirm button and Cancel. */
 @Composable
-fun ApertureMark(modifier: Modifier = Modifier, opening: Double = 0.41, showsLink: Boolean = true, monochrome: Color? = null) {
-    Canvas(modifier) { drawAperture(opening, showsLink, monochrome) }
+fun ConfirmDialog(title: String, confirm: String, onDismiss: () -> Unit, text: (@Composable () -> Unit)? = null, onConfirm: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = text,
+        confirmButton = { TextButton({ onDismiss(); onConfirm() }) { Text(confirm, color = Theme.red) } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel") } })
 }
 
 private val lightBlade = Color(0.95f, 0.953f, 0.96f)
 private val darkBlade = Color(0.80f, 0.82f, 0.85f)
 
-fun DrawScope.drawAperture(opening: Double, showsLink: Boolean, monochrome: Color?, box: Size = size) {
+/**
+ * The Shutterlink aperture mark: the same flat drawing as the app icon (tools/make_icon.swift),
+ * drawn live so it stays sharp at any size. `monochrome` draws outlines only in one colour, without the link.
+ */
+fun DrawScope.drawAperture(monochrome: Color? = null, box: Size = size) {
     val side = min(box.width, box.height)
     // Drawn in a 1024 box, mark centred at 45.5 %, y up (flipped below).
     val k = side / 1024f * 1.12f
@@ -230,7 +227,7 @@ fun DrawScope.drawAperture(opening: Double, showsLink: Boolean, monochrome: Colo
             if (monochrome == null) drawCircle(Color.Black, 340 * k, c)
             drawCircle(accent, 312 * k, c, style = Stroke((if (monochrome == null) 30 else 10) * k))
             val outer = 276 * k
-            val inner = outer * max(0.05, min(opening, 0.6)).toFloat()
+            val inner = outer * 0.41f
             val rotation = PI / 12
             val vertices = (0 until 6).map { i ->
                 val a = rotation + i * PI / 3
@@ -274,8 +271,6 @@ fun DrawScope.drawAperture(opening: Double, showsLink: Boolean, monochrome: Colo
                 }
                 drawPath(hole, accent)
                 drawPath(hole, Color.Black, style = Stroke(12 * k))
-            }
-            if (showsLink) {
                 val origin = Offset(c.x + 250 * k, c.y + 250 * k)
                 for (r in listOf(104f, 176f)) {
                     drawArc(accent, (0.06f * 180f), (0.38f * 180f), false,

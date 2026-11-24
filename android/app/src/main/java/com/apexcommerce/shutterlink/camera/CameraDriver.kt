@@ -1,6 +1,15 @@
 package com.apexcommerce.shutterlink.camera
 
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -10,8 +19,6 @@ data class CameraCapabilities(
     val liveViewSizes: List<String> = emptyList(),
     /** Tap on live view moves the AF point / focuses there. */
     val tapToFocus: Boolean = true,
-    /** Bulb (or Live Time / Live Composite) started and stopped from the app. */
-    val openEndedExposure: Boolean = false,
     /** Movie recording from the shutter button. */
     val movie: Boolean = false,
     /** The camera's photo/video mode can't be read, so the app shows its own Video switch. */
@@ -26,8 +33,6 @@ data class CameraCapabilities(
     val cardBrowser: Boolean = true,
     /** The camera can be switched off from the app. */
     val powerOff: Boolean = false,
-    /** Olympus: the User-Agent can be switched under Advanced. */
-    val userAgentChoice: Boolean = false,
     /** The lens can be stepped nearer or farther from the app, for focus stacking. */
     val focusDrive: Boolean = false,
 )
@@ -61,7 +66,7 @@ interface CameraDriver {
     /** Polite goodbye before the connection is dropped (best effort). */
     suspend fun disconnect() {}
     /** Stops background work and closes sockets; called once the model forgets the camera. */
-    fun teardown()
+    fun teardown() {}
     suspend fun powerOff() {}
 
     /** Shooting mode with live view; also called after browsing the card. */
@@ -106,22 +111,17 @@ object ExposureText {
     /** 125.0 → "125", 2.5 → "2.5", 1.333 → "1.3". */
     fun clean(value: Double): String {
         if (value >= 10 || abs(value - Math.rint(value)) < 0.05) return value.roundToInt().toString()
-        return String.format(java.util.Locale.US, "%.1f", value)
+        return fmt("%.1f", value)
     }
 
     /** f/5.6 → "5.6", f/11 → "11". */
-    fun aperture(f: Double): String =
-        if (f >= 10) String.format(java.util.Locale.US, "%.0f", f) else String.format(java.util.Locale.US, "%.1f", f)
+    fun aperture(f: Double): String = if (f >= 10) fmt("%.0f", f) else fmt("%.1f", f)
 
     /** Thirds of a stop → "+0.3", "-1.0", "0.0". */
-    fun ev(thirds: Int): String =
-        if (thirds == 0) "0.0" else String.format(java.util.Locale.US, "%+.1f", thirds / 3.0)
+    fun ev(thirds: Int): String = if (thirds == 0) "0.0" else fmt("%+.1f", thirds / 3.0)
 
     /** EV as a number → nearest third ("+0.7" from 0.6667). */
     fun ev(value: Double): String = ev(Math.rint(value * 3).toInt())
-
-    /** "+0.3" → 1 (thirds), "-1.7" → -5. */
-    fun thirds(fromEv: String): Int = Math.rint((fromEv.toDoubleOrNull() ?: 0.0) * 3).toInt()
 
     /** Panasonic-style white-balance names → the app's codes (which have labels and icons). */
     val whiteBalanceCodes: Map<String, String> = mapOf(
@@ -134,3 +134,151 @@ object ExposureText {
 
 /** `String.format` with a fixed locale: camera values always use a dot. */
 fun fmt(format: String, vararg args: Any?): String = String.format(java.util.Locale.US, format, *args)
+
+// MARK: - Shared by the drivers
+
+const val LOST_CONTACT = "Lost contact with the camera. Check that this phone is still on the camera's Wi-Fi."
+
+/** Runs `block`, giving null instead of an error (cancellation still cancels): for best-effort calls. */
+internal inline fun <T> attempt(block: () -> T): T? = try {
+    block()
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Throwable) {
+    null
+}
+
+/** Decodes a photo off the main thread, or null; `maxSide` > 0 subsamples it to about that size. */
+suspend fun decodeImage(bytes: ByteArray, maxSide: Int = 0): Bitmap? = withContext(Dispatchers.Default) {
+    runCatching {
+        if (maxSide <= 0) return@runCatching BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= maxSide) sample *= 2
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+    }.getOrNull()
+}
+
+/**
+ * The first request to a camera, which can be slow right after its Wi-Fi comes up: up to 3 tries while
+ * `retry` says the failure is worth another (by default network failures, not answers from the camera).
+ */
+suspend fun <T> CameraModel.retryConnect(
+    retry: (Exception) -> Boolean = { it is IOException && it !is CameraHttpException },
+    block: suspend () -> T,
+): T {
+    for (next in 2..3) {
+        try {
+            return block()
+        } catch (e: Exception) {
+            if (e is CancellationException || !retry(e)) throw e
+            status = "No answer yet, retrying ($next/3)…"
+            delay(1500)
+        }
+    }
+    return block()
+}
+
+/** Shows a mode switch in progress while `block` runs. */
+inline fun CameraModel.switchingMode(block: () -> Unit) {
+    isSwitchingMode = true
+    try {
+        block()
+    } finally {
+        isSwitchingMode = false
+    }
+}
+
+/** Shows `value` at once and sends it, putting the old one back if that fails; then re-reads the settings. */
+suspend fun CameraDriver.applySetting(
+    camera: CameraModel, name: String, value: String, reportErrors: Boolean, send: suspend () -> Unit,
+): Boolean {
+    val previous = camera.properties[name]?.value
+    camera.updateValue(name, value)
+    val ok = try {
+        send()
+        true
+    } catch (e: Exception) {
+        if (previous != null) camera.updateValue(name, previous)
+        if (reportErrors) camera.report(e)
+        false
+    }
+    // Changing one setting can lock/unlock others (e.g. aperture in P vs A).
+    refreshProperties()
+    return ok
+}
+
+/** Before a shot: the shutter time in seconds (0 when unknown); 1 s and longer get a countdown. */
+fun CameraModel.startTimedExposure(): Double {
+    val seconds = PropertyFormat.seconds(properties["shutspeedvalue"]?.value ?: "") ?: 0.0
+    if (seconds >= 1) {
+        exposureStartedAt = System.currentTimeMillis()
+        exposureDuration = seconds
+    }
+    return seconds
+}
+
+/** Bulb-style exposures: `stop` (failures ignored) while one runs, else `start`. */
+suspend fun CameraModel.toggleBulb(start: suspend () -> Unit, stop: suspend () -> Unit, afterStop: () -> Unit = {}) {
+    if (isShooting) {
+        runCatching { stop() }
+        isShooting = false
+        exposureStartedAt = null
+        shotCounter++
+        afterStop()
+        return
+    }
+    isShooting = true
+    exposureStartedAt = System.currentTimeMillis()
+    exposureDuration = null
+    try {
+        start()
+    } catch (e: Exception) {
+        isShooting = false
+        exposureStartedAt = null
+        report(e)
+    }
+}
+
+/** The movie button: `stop` (failures ignored) while recording, else `start`; `failed` runs before reporting. */
+suspend fun CameraModel.recordMovie(
+    start: suspend () -> Unit, stop: suspend () -> Unit,
+    afterStop: suspend () -> Unit = {}, failed: suspend () -> Unit = {},
+) {
+    if (isRecordingMovie) {
+        runCatching { stop() }
+        isRecordingMovie = false
+        movieStartedAt = null
+        shotCounter++
+        afterStop()
+        return
+    }
+    try {
+        start()
+        isRecordingMovie = true
+        movieStartedAt = System.currentTimeMillis()
+    } catch (e: Exception) {
+        failed()
+        report(e)
+    }
+}
+
+/** Asks the camera what changed every 2 s while connected; three failures in a row mean contact is lost. */
+fun <T> CameraModel.pollEvents(skip: () -> Boolean = { false }, fetch: suspend () -> T, handle: suspend (T) -> Unit): Job =
+    scope.launch {
+        var failures = 0
+        while (isActive) {
+            delay(2000)
+            if (phase != ConnectionPhase.CONNECTED || skip()) continue
+            try {
+                val changes = fetch()
+                failures = 0
+                handle(changes)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (++failures == 3) lastError = LOST_CONTACT
+            }
+        }
+    }

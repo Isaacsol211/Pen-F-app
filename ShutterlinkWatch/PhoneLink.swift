@@ -18,17 +18,14 @@ final class PhoneLink: NSObject, WCSessionDelegate {
     /// The iPhone app is running and connected to the camera: show the remote.
     var phoneActive: Bool { status.connected && !stale }
 
-    @ObservationIgnored private var watchdog: Task<Void, Never>?
-
     @ObservationIgnored private var wantPreview = false
-    @ObservationIgnored private var previewAt = Date.distantPast
 
     func start() {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
         session.delegate = self
         session.activate()
-        watchdog = Task { [weak self] in
+        Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self else { return }

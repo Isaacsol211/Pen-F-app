@@ -1,4 +1,3 @@
-import Foundation
 import UIKit
 
 // Panasonic LUMIX (GH5, G9, GH4, S-series…) over the camera's own Wi-Fi, as used by Image App /
@@ -116,11 +115,8 @@ final class PanasonicDriver: CameraDriver {
     var liveViewFormat: LiveViewFormat { .jpegPerDatagram }
 
     var capabilities: CameraCapabilities {
-        CameraCapabilities(liveViewSizes: CameraBrand.panasonic.defaultLiveViewSizes, tapToFocus: true,
-                           openEndedExposure: !(camera.profile?.fixedExposure ?? false),
-                           movie: !(camera.profile?.noVideo ?? false), videoSwitch: true, lastShotReview: false,
-                           clockSync: false, highResShot: false, cardBrowser: true, powerOff: true,
-                           focusDrive: true)
+        CameraCapabilities(liveViewSizes: CameraBrand.panasonic.defaultLiveViewSizes,
+                           movie: !(camera.profile?.noVideo ?? false), videoSwitch: true, powerOff: true, focusDrive: true)
     }
 
     func teardown() {
@@ -264,8 +260,7 @@ final class PanasonicDriver: CameraDriver {
         }
         camera.rawDescList = info
         debugLog("LUMIX connected: \(camera.cameraName ?? "?")\n\(info)")
-        if let name = camera.profile?.name { camera.cameraName = name }
-        if camera.cameraName == nil { camera.cameraName = "LUMIX" }
+        camera.cameraName = camera.profile?.name ?? camera.cameraName ?? "LUMIX"
         startKeepAlive()
     }
 
@@ -373,9 +368,7 @@ final class PanasonicDriver: CameraDriver {
             info.temperatureWarning = !["", "normal", "off"].contains(temperature.lowercased())
         }
         if info != camera.liveInfo { camera.liveInfo = info }
-        if let cammode = state.value("cammode") {
-            if cammode == "play", camera.mode == .rec, !camera.galleryLoading { debugLog("LUMIX reports play mode") }
-        }
+        if state.value("cammode") == "play", camera.mode == .rec, !camera.galleryLoading { debugLog("LUMIX reports play mode") }
     }
 
     /// Polls getstate every second: keeps live view and the connection alive, refreshes battery.
@@ -385,8 +378,7 @@ final class PanasonicDriver: CameraDriver {
             var failures = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                guard let self, !Task.isCancelled else { return }
-                if self.camera.phase == .disconnected { return }
+                guard let self, !Task.isCancelled, self.camera.phase != .disconnected else { return }
                 do {
                     let reply = try await self.lumixCommand([("mode", "getstate")], timeout: 3, log: false)
                     if failures >= 3 { self.camera.lastError = nil }
@@ -429,7 +421,7 @@ final class PanasonicDriver: CameraDriver {
             await camera.refreshProperties()
             await camera.startLiveView()
         } catch {
-            camera.lastError = CameraModel.describe(error, host: camera.connectionHost)
+            camera.report(error)
         }
     }
 
@@ -439,7 +431,7 @@ final class PanasonicDriver: CameraDriver {
             try await lumixCommand([("mode", "startstream"), ("value", String(camera.udpPort))])
         } catch {
             camera.liveViewRunning = false
-            camera.lastError = CameraModel.describe(error, host: camera.connectionHost)
+            camera.report(error)
         }
     }
 
@@ -475,8 +467,8 @@ final class PanasonicDriver: CameraDriver {
                                                      options: options.contains(raw) ? options : options + [raw])
         }
         if let raw = await current("exposure") {
-            let options = (-15...15).map(Self.evLabel)
-            let value = Self.evLabel(Int((Self.lumixFraction(raw) * 3).rounded()))
+            let options = (-15...15).map(ExposureText.ev(thirds:))
+            let value = ExposureText.ev(Self.lumixFraction(raw))
             result["expcomp"] = CameraProperty(name: "expcomp", settable: true, value: value, options: options)
         }
         if let raw = await current("whitebalance") {
@@ -525,18 +517,11 @@ final class PanasonicDriver: CameraDriver {
             if reportErrors { camera.lastError = "This setting can't be changed on a LUMIX camera from the app." }
             return false
         }
-        let previous = camera.properties[name]?.value
-        camera.properties[name]?.value = value
-        do {
+        let ok = await camera.optimisticallySet(name, to: value, reportErrors: reportErrors) {
             try await lumixCommand([("mode", "setsetting"), ("type", setting.type), ("value", setting.value)])
-        } catch {
-            if let previous { camera.properties[name]?.value = previous }
-            if reportErrors { camera.lastError = CameraModel.describe(error, host: camera.connectionHost) }
-            await refreshProperties()
-            return false
         }
         await refreshProperties()
-        return true
+        return ok
     }
 
     private func lumixApertureOptions() -> [String] {
@@ -544,7 +529,7 @@ final class PanasonicDriver: CameraDriver {
         var options: [String] = []
         let lens = lumix.lens
         if let widest = lens.minFNumber, let widestCode = lens.minFNumberCode {
-            let label = Self.fLabel(widest)
+            let label = ExposureText.aperture(widest)
             options.append(label)
             codes[label] = widestCode
         }
@@ -582,14 +567,6 @@ final class PanasonicDriver: CameraDriver {
         table.min { abs($0.value - code) < abs($1.value - code) }?.key
     }
 
-    static func fLabel(_ f: Double) -> String {
-        f >= 10 ? String(format: "%.0f", f) : String(format: "%.1f", f)
-    }
-
-    static func evLabel(_ thirds: Int) -> String {
-        thirds == 0 ? "0.0" : String(format: "%+.1f", Double(thirds) / 3)
-    }
-
     /// "-1/3" → -0.333, "2" → 2.
     static func lumixFraction(_ text: String) -> Double {
         let parts = text.split(separator: "/").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
@@ -608,7 +585,7 @@ final class PanasonicDriver: CameraDriver {
             // Older bodies use touchaf.
             _ = try? await lumixCommand([("mode", "camctrl"), ("type", "touchaf"), ("value", "\(x)/\(y)")])
         } catch {
-            camera.lastError = CameraModel.describe(error, host: camera.connectionHost)
+            camera.report(error)
         }
     }
 
@@ -617,17 +594,8 @@ final class PanasonicDriver: CameraDriver {
     }
 
     func shutterPressed() async {
-        camera.isShooting = true
-        let seconds = PropertyFormat.seconds(fromShutter: camera.properties["shutspeedvalue"]?.value ?? "") ?? 0
-        if seconds >= 1 {
-            camera.exposureStartedAt = Date()
-            camera.exposureDuration = seconds
-        }
-        defer {
-            camera.exposureStartedAt = nil
-            camera.exposureDuration = nil
-            camera.isShooting = false
-        }
+        let seconds = camera.beginShot()
+        defer { camera.endShot() }
         do {
             try await lumixCommand([("mode", "camcmd"), ("value", "capture")], timeout: 10)
             // capture returns straight away; keep the countdown honest for long exposures.
@@ -637,7 +605,7 @@ final class PanasonicDriver: CameraDriver {
             camera.autoSaveLater()
             _ = try? await lumixCommand([("mode", "camcmd"), ("value", "autoreviewunlock")], timeout: 3, log: false)
         } catch {
-            camera.lastError = CameraModel.describe(error, host: camera.connectionHost)
+            camera.report(error)
         }
     }
 
@@ -659,23 +627,20 @@ final class PanasonicDriver: CameraDriver {
         } catch {
             camera.isShooting = false
             camera.exposureStartedAt = nil
-            camera.lastError = CameraModel.describe(error, host: camera.connectionHost)
+            camera.report(error)
         }
     }
 
     func toggleMovie() async {
         if camera.isRecordingMovie {
             _ = try? await lumixCommand([("mode", "camcmd"), ("value", "video_recstop")])
-            camera.isRecordingMovie = false
-            camera.movieStartedAt = nil
-            camera.shotCounter += 1
+            camera.setRecordingMovie(false)
         } else {
             do {
                 try await lumixCommand([("mode", "camcmd"), ("value", "video_recstart")])
-                camera.isRecordingMovie = true
-                camera.movieStartedAt = Date()
+                camera.setRecordingMovie(true)
             } catch {
-                camera.lastError = CameraModel.describe(error, host: camera.connectionHost)
+                camera.report(error)
             }
         }
     }
@@ -706,23 +671,9 @@ final class PanasonicDriver: CameraDriver {
         }
     }
 
-    func thumbnail(for image: CameraImage) async -> UIImage? {
-        guard let urls = image.urls,
-              let data = try? await client.fetch(urls.thumbnail ?? urls.preview ?? urls.original, log: false) else { return nil }
-        return UIImage(data: data)
-    }
-
-    func preview(for image: CameraImage) async throws -> UIImage {
-        guard let urls = image.urls else { throw CameraError("The camera gave no address for this file.") }
-        let data = try await client.fetch(urls.preview ?? urls.thumbnail ?? urls.original)
-        guard let picture = UIImage(data: data) else { throw CameraError("Couldn't decode the preview.") }
-        return picture
-    }
-
-    func downloadOriginal(_ image: CameraImage) async throws -> Data {
-        guard let urls = image.urls else { throw CameraError("The camera gave no address for this file.") }
-        return try await client.fetch(urls.original, timeout: 300)
-    }
+    func thumbnail(for image: CameraImage) async -> UIImage? { await client.thumbnail(for: image) }
+    func preview(for image: CameraImage) async throws -> UIImage { try await client.preview(for: image) }
+    func downloadOriginal(_ image: CameraImage) async throws -> Data { try await client.fetch(image.urls?.original, timeout: 300) }
 
     private var lumixHostIP: String { camera.connectionHost.split(separator: ":").first.map(String.init) ?? camera.connectionHost }
 

@@ -1,4 +1,3 @@
-import Foundation
 import UIKit
 
 /// Reads an HTTP response that never ends (Sony's live-view stream) and hands out complete frames
@@ -50,18 +49,17 @@ final class HTTPStreamReader: NSObject, URLSessionDataDelegate, @unchecked Senda
 
 extension CameraModel {
     /// Shows the AF result box around a tapped point (for cameras that only say focused / not).
-    func showAFResult(_ focused: Bool, at normalized: CGPoint, size: CGFloat = 0.14) {
+    func showAFResult(_ focused: Bool, at normalized: CGPoint) {
         let space = frameSpace
-        let side = min(space.width, space.height) * size
+        let side = min(space.width, space.height) * 0.14
         liveInfo.afRect = CGRect(x: normalized.x * space.width - side / 2, y: normalized.y * space.height - side / 2,
                                  width: side, height: side)
         liveInfo.afState = focused ? 1 : 2
     }
 
     /// Repeatedly fetches one live-view frame and hands it over, for cameras that only offer
-    /// frame-by-frame live view (Nikon, Canon). Stops when live view stops or after repeated failures.
-    func pullLiveView(every interval: Duration = .milliseconds(30), maxFailures: Int = 15,
-                      fetch: @escaping @MainActor () async throws -> Data?) -> Task<Void, Never> {
+    /// frame-by-frame live view (Nikon, Canon). Stops when live view stops or after 15 failures in a row.
+    func pullLiveView(every interval: Duration, fetch: @escaping @MainActor () async throws -> Data?) -> Task<Void, Never> {
         Task { [weak self] in
             var failures = 0
             while !Task.isCancelled {
@@ -74,7 +72,7 @@ extension CameraModel {
                 } catch {
                     failures += 1
                     debugLog("live view fetch failed (\(failures)): \(error.localizedDescription)")
-                    if failures >= maxFailures {
+                    if failures >= 15 {
                         self.liveViewRunning = false
                         self.report(error)
                         return

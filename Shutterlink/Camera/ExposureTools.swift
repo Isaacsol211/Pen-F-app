@@ -1,5 +1,3 @@
-import CoreGraphics
-import Foundation
 import UIKit
 
 // MARK: - Frame measurements
@@ -18,13 +16,21 @@ enum FrameMeter {
             guard rect.width >= 2, rect.height >= 2, let cropped = image.cropping(to: rect) else { return nil }
             source = cropped
         }
-        var pixels = [UInt8](repeating: 0, count: width * height)
+        return draw(source, width: width, height: height, rgb: false)
+    }
+
+    /// `image` scaled into a small buffer: one byte per pixel, or four (R, G, B, unused) with `rgb`.
+    private static func draw(_ image: CGImage, width: Int, height: Int, rgb: Bool) -> [UInt8]? {
+        let channels = rgb ? 4 : 1
+        var pixels = [UInt8](repeating: 0, count: width * height * channels)
         let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
             guard let ctx = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                                      bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(),
-                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+                                      bytesPerRow: width * channels,
+                                      space: rgb ? CGColorSpaceCreateDeviceRGB() : CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: (rgb ? CGImageAlphaInfo.noneSkipLast : CGImageAlphaInfo.none).rawValue)
+            else { return false }
             ctx.interpolationQuality = .low
-            ctx.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
         return drawn ? pixels : nil
@@ -40,16 +46,7 @@ enum FrameMeter {
     /// balance makes of white. nil when under 3% of the frame qualifies.
     static func neutralCast(_ image: CGImage) -> ColourCast? {
         let width = 80, height = 60
-        var pixels = [UInt8](repeating: 0, count: width * height * 4)
-        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
-            guard let ctx = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
-                                      bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
-            ctx.interpolationQuality = .low
-            ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
-        }
-        guard drawn else { return nil }
+        guard let pixels = draw(image, width: width, height: height, rgb: true) else { return nil }
         var red = 0.0, green = 0.0, blue = 0.0, count = 0
         for i in stride(from: 0, to: pixels.count, by: 4) {
             let r = Int(pixels[i]), g = Int(pixels[i + 1]), b = Int(pixels[i + 2])
@@ -88,23 +85,18 @@ extension CameraModel {
 
     /// One step brighter or darker for `name`: the next EV option, or the next shutter speed.
     func adjacentValue(_ name: String, brighter: Bool) -> String? {
-        guard let property = properties[name] else { return nil }
+        // Each value as a number that grows with the light (the shutter in stops), and the gap that makes a step.
+        let number: (String) -> Double?
+        var margin = 0.0
         switch name {
-        case "expcomp":
-            let values = property.options.compactMap { option in Double(option).map { (option, $0) } }.sorted { $0.1 < $1.1 }
-            guard let current = Double(property.value) else { return nil }
-            return brighter ? values.first { $0.1 > current + 0.01 }?.0 : values.last { $0.1 < current - 0.01 }?.0
-        case "shutspeedvalue":
-            let values = timedShutters.sorted { $0.1 < $1.1 }
-            guard let current = PropertyFormat.seconds(fromShutter: property.value) else { return nil }
-            return brighter ? values.first { $0.1 > current * 1.1 }?.0 : values.last { $0.1 < current / 1.1 }?.0
-        case "isospeedvalue":
-            let values = property.options.compactMap { option in Int(option).map { (option, $0) } }.sorted { $0.1 < $1.1 }
-            guard let current = Int(property.value) else { return nil }
-            return brighter ? values.first { $0.1 > current }?.0 : values.last { $0.1 < current }?.0
-        default:
-            return nil
+        case "expcomp": number = { Double($0) }; margin = 0.01
+        case "shutspeedvalue": number = { PropertyFormat.seconds(fromShutter: $0).map(log2) }; margin = log2(1.1)
+        case "isospeedvalue": number = { Int($0).map(Double.init) }
+        default: return nil
         }
+        guard let property = properties[name], let current = number(property.value) else { return nil }
+        let values = property.options.compactMap { option in number(option).map { (option, $0) } }.sorted { $0.1 < $1.1 }
+        return brighter ? values.first { $0.1 > current + margin }?.0 : values.last { $0.1 < current - margin }?.0
     }
 }
 
@@ -138,20 +130,16 @@ extension CameraModel {
         metered * pow(2, Double(stops))
     }
 
-    /// Bulb, or the Live mode that works like it, for exposures longer than the camera's timed ones.
-    var bulbShutter: String? {
-        let options = properties["shutspeedvalue"]?.options ?? []
-        return ["bulb", "livetime", "livebulb"].lazy.compactMap { wanted in
-            options.first { $0.lowercased() == wanted }
-        }.first
-    }
-
-    /// The shutter the ND exposure needs: a timed speed when the camera has one long enough, else Bulb.
+    /// The shutter the ND exposure needs: a timed speed when the camera has one long enough, else Bulb
+    /// (or the Live mode that works like it).
     func ndShutter(seconds: Double) -> (value: String?, timedByApp: Bool) {
-        let longest = timedShutters.map(\.1).max() ?? 0
-        if seconds <= longest * 1.12 { return (shutter(near: seconds), false) }
-        if let bulb = bulbShutter { return (bulb, true) }
-        return (timedShutters.max { $0.1 < $1.1 }?.0, false)
+        let longest = timedShutters.max { $0.1 < $1.1 }
+        if seconds <= (longest?.1 ?? 0) * 1.12 { return (shutter(near: seconds), false) }
+        let options = properties["shutspeedvalue"]?.options ?? []
+        for wanted in ["bulb", "livetime", "livebulb"] {
+            if let bulb = options.first(where: { $0.lowercased() == wanted }) { return (bulb, true) }
+        }
+        return (longest?.0, false)
     }
 
     func ndSteps(meter: NDMeter, stops: Int) -> [PresetStep] {
@@ -178,8 +166,7 @@ extension CameraModel {
             await toggleOpenExposure()
             if isShooting { scheduleOpenExposureStop(after: seconds) }
         } else {
-            await shutterPressed()
-            await shutterReleased()
+            await shoot()
         }
     }
 }
@@ -235,7 +222,6 @@ struct MotionTrigger: Equatable {
     /// Seconds to wait after a shot before firing again.
     var cooldown: Double = 3
     var shots = 0
-    var lastTrigger: Date?
     /// The panel is open: show the box on live view even while disarmed, so it can be placed.
     var editing = false
 
@@ -244,11 +230,8 @@ struct MotionTrigger: Equatable {
     var threshold: Double { 0.01 + (1 - sensitivity) * 0.14 }
 
     mutating func resize(to scale: Double) {
-        let center = CGPoint(x: region.midX, y: region.midY)
-        let size = CGSize(width: scale, height: scale)
-        region = CGRect(x: min(max(center.x - size.width / 2, 0), 1 - size.width),
-                        y: min(max(center.y - size.height / 2, 0), 1 - size.height),
-                        width: size.width, height: size.height)
+        let s = CGFloat(scale)
+        region = CGRect(x: min(max(region.midX - s / 2, 0), 1 - s), y: min(max(region.midY - s / 2, 0), 1 - s), width: s, height: s)
     }
 }
 
@@ -278,13 +261,11 @@ extension CameraModel {
         guard motion.armed, mode == .rec, !isShooting, !bracket.running, !interval.running, now >= motionQuietUntil,
               change > motion.threshold else { return }
         motion.shots += 1
-        motion.lastTrigger = Date()
         // Live view hiccups around a capture; don't let that count as movement.
         motionQuietUntil = now + max(1.5, motion.cooldown)
         motionPrevious = nil
         Task {
-            await shutterPressed()
-            await shutterReleased()
+            await shoot()
         }
     }
 }

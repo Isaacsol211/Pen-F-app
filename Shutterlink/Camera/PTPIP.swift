@@ -116,13 +116,7 @@ func withTimeout<T: Sendable>(_ seconds: TimeInterval, _ body: @escaping @Sendab
 actor PTPIPClient {
     struct Response: Sendable {
         let code: UInt16
-        let params: [UInt32]
         let data: Data
-    }
-
-    struct Event: Sendable {
-        let code: UInt16
-        let params: [UInt32]
     }
 
     let host: String
@@ -136,7 +130,6 @@ actor PTPIPClient {
     /// Actors are re-entrant at every await: this keeps a second operation from starting mid-way.
     private let gate = SerialGate()
     private var logger: (@Sendable (String) -> Void)?
-    private var onEvent: (@Sendable (Event) -> Void)?
 
     init(host: String, port: UInt16) {
         self.host = host
@@ -144,7 +137,6 @@ actor PTPIPClient {
     }
 
     func setLogger(_ logger: (@Sendable (String) -> Void)?) { self.logger = logger }
-    func setEventHandler(_ handler: (@Sendable (Event) -> Void)?) { onEvent = handler }
 
     /// "192.168.1.1" → (host, default), "127.0.0.1:15741" → (127.0.0.1, 15741).
     nonisolated static func split(_ address: String, defaultPort: UInt16) -> (String, UInt16) {
@@ -196,10 +188,8 @@ actor PTPIPClient {
             while !Task.isCancelled {
                 guard let (type, payload) = try? await Self.readPacket(channel) else { return }
                 if type == PTPIPPacket.event.rawValue, payload.count >= 6 {
-                    var params: [UInt32] = []
-                    var offset = 6
-                    while offset + 4 <= payload.count { params.append(payload.le32(offset)); offset += 4 }
-                    await self?.deliver(Event(code: payload.le16(0), params: params))
+                    let params = stride(from: 6, through: payload.count - 4, by: 4).map { String(format: "0x%X", payload.le32($0)) }
+                    await self?.log(String(format: "PTP event 0x%04X %@", payload.le16(0), params.joined(separator: " ")))
                 } else if type == PTPIPPacket.probeRequest.rawValue {
                     try? await channel.send(Self.packet(.probeResponse, Data()))
                 }
@@ -207,10 +197,7 @@ actor PTPIPClient {
         }
     }
 
-    private func deliver(_ event: Event) {
-        logger?(String(format: "PTP event 0x%04X %@", event.code, event.params.map { String(format: "0x%X", $0) }.joined(separator: " ")))
-        onEvent?(event)
-    }
+    private func log(_ line: String) { logger?(line) }
 
     func close() {
         eventTask?.cancel()
@@ -259,10 +246,7 @@ actor PTPIPClient {
                     if payload.count > 4 { incoming.append(payload[(payload.startIndex + 4)...]) }
                 case .operationResponse:
                     guard payload.count >= 6 else { throw CameraError("Short PTP response.") }
-                    var params: [UInt32] = []
-                    var offset = 6
-                    while offset + 4 <= payload.count { params.append(payload.le32(offset)); offset += 4 }
-                    return Response(code: payload.le16(0), params: params, data: incoming)
+                    return Response(code: payload.le16(0), data: incoming)
                 case .probeRequest:
                     try await command.send(Self.packet(.probeResponse, Data()))
                 default:
@@ -324,29 +308,17 @@ struct PTPReader {
 
     var remaining: Int { data.count - offset }
 
-    mutating func u8() -> UInt8 {
-        guard remaining >= 1 else { offset = data.count; return 0 }
-        defer { offset += 1 }
-        return data[data.startIndex + offset]
+    /// The offset of the next `size` bytes, moving past them; nil (and at the end) if they aren't all there.
+    private mutating func take(_ size: Int) -> Int? {
+        guard remaining >= size else { offset = data.count; return nil }
+        defer { offset += size }
+        return offset
     }
 
-    mutating func u16() -> UInt16 {
-        guard remaining >= 2 else { offset = data.count; return 0 }
-        defer { offset += 2 }
-        return data.le16(offset)
-    }
-
-    mutating func u32() -> UInt32 {
-        guard remaining >= 4 else { offset = data.count; return 0 }
-        defer { offset += 4 }
-        return data.le32(offset)
-    }
-
-    mutating func u64() -> UInt64 {
-        guard remaining >= 8 else { offset = data.count; return 0 }
-        defer { offset += 8 }
-        return data.le64(offset)
-    }
+    mutating func u8() -> UInt8 { take(1).map { data[data.startIndex + $0] } ?? 0 }
+    mutating func u16() -> UInt16 { take(2).map(data.le16) ?? 0 }
+    mutating func u32() -> UInt32 { take(4).map(data.le32) ?? 0 }
+    mutating func u64() -> UInt64 { take(8).map(data.le64) ?? 0 }
 
     mutating func string() -> String {
         let count = Int(u8())
@@ -389,8 +361,7 @@ struct PTPReader {
         case 0x0004: return Int64(u16())
         case 0x0005: return Int64(Int32(bitPattern: u32()))
         case 0x0006: return Int64(u32())
-        case 0x0007: return Int64(bitPattern: u64())
-        case 0x0008: return Int64(bitPattern: u64())
+        case 0x0007, 0x0008: return Int64(bitPattern: u64())
         case 0xFFFF: _ = string(); return 0
         default:
             if type & 0x4000 != 0 {   // arrays: UInt32 count then elements
@@ -404,36 +375,30 @@ struct PTPReader {
 }
 
 struct PTPDeviceInfo {
-    var vendorExtensionID: UInt32 = 0
     var operations: Set<UInt16> = []
-    var events: Set<UInt16> = []
     var properties: Set<UInt16> = []
-    var manufacturer = ""
     var model = ""
     var version = ""
-    var serial = ""
 
     init(_ data: Data) {
         var r = PTPReader(data)
         _ = r.u16()                       // standard version
-        vendorExtensionID = r.u32()
+        _ = r.u32()                       // vendor extension ID
         _ = r.u16()                       // vendor extension version
         _ = r.string()                    // vendor extension description
         _ = r.u16()                       // functional mode
         operations = Set(r.u16Array())
-        events = Set(r.u16Array())
+        _ = r.u16Array()                  // events
         properties = Set(r.u16Array())
         _ = r.u16Array()                  // capture formats
         _ = r.u16Array()                  // image formats
-        manufacturer = r.string()
+        _ = r.string()                    // manufacturer
         model = r.string()
         version = r.string()
-        serial = r.string()
     }
 }
 
 struct PTPPropDesc {
-    var code: UInt16 = 0
     var dataType: UInt16 = 0
     var settable = false
     var current: Int64 = 0
@@ -442,7 +407,7 @@ struct PTPPropDesc {
 
     init(_ data: Data) {
         var r = PTPReader(data)
-        code = r.u16()
+        _ = r.u16()                       // property code
         dataType = r.u16()
         settable = r.u8() == 1
         _ = r.value(ofType: dataType)     // factory default
@@ -473,7 +438,6 @@ struct PTPPropDesc {
 }
 
 struct PTPObjectInfo {
-    var storageID: UInt32 = 0
     var format: UInt16 = 0
     var size: UInt32 = 0
     var parent: UInt32 = 0
@@ -485,7 +449,7 @@ struct PTPObjectInfo {
 
     init(_ data: Data) {
         var r = PTPReader(data)
-        storageID = r.u32()
+        _ = r.u32()                       // storage ID
         format = r.u16()
         _ = r.u16()                       // protection
         size = r.u32()
@@ -509,9 +473,7 @@ struct PTPObjectInfo {
 // MARK: - Little-endian helpers
 
 extension Data {
-    mutating func appendLE(_ value: UInt16) { Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) } }
-    mutating func appendLE(_ value: UInt32) { Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) } }
-    mutating func appendLE(_ value: UInt64) { Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) } }
+    mutating func appendLE<T: FixedWidthInteger>(_ value: T) { Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) } }
 
     func le16(_ offset: Int) -> UInt16 {
         let i = startIndex + offset

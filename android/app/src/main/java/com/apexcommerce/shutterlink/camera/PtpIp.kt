@@ -1,9 +1,7 @@
 package com.apexcommerce.shutterlink.camera
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
@@ -44,7 +42,6 @@ object PtpIpPacket {
     const val EVENT = 8
     const val START_DATA = 9
     const val DATA = 10
-    const val CANCEL = 11
     const val END_DATA = 12
     const val PROBE_REQUEST = 13
     const val PROBE_RESPONSE = 14
@@ -135,16 +132,13 @@ class TcpChannel(private val host: String, private val port: Int) {
 
 /** A PTP/IP session: the handshake, then one operation at a time. */
 class PtpIpClient(val host: String, val port: Int) {
-    class Response(val code: Int, val params: List<Long>, val data: ByteArray)
-
-    class Event(val code: Int, val params: List<Long>)
+    class Response(val code: Int, val data: ByteArray)
 
     @Volatile private var command: TcpChannel? = null
     @Volatile private var event: TcpChannel? = null
     /** OpenSession must use transaction ID 0; the first increment takes it there. */
     private var transactionId = -1
     private var eventScope: CoroutineScope? = null
-    private var eventJob: Job? = null
     @Volatile var cameraName = ""
         private set
     /** Keeps a second operation from starting before the first has its response. */
@@ -152,8 +146,6 @@ class PtpIpClient(val host: String, val port: Int) {
 
     /** Called on a background thread with one line per operation and event. */
     @Volatile var logger: ((String) -> Unit)? = null
-    /** Called on a background thread for every event from the camera. */
-    @Volatile var onEvent: ((Event) -> Unit)? = null
 
     /** Opens both channels. `guid` identifies this phone (cameras that remember paired devices use it). */
     suspend fun connect(guid: ByteArray, name: String) = withContext(Dispatchers.IO) {
@@ -162,11 +154,11 @@ class PtpIpClient(val host: String, val port: Int) {
         this@PtpIpClient.command = command
         command.open()
 
-        val payload = ByteArrayOutputStream()
-        payload.write(guid.copyOf(16))
-        payload.write(utf16z(name))
-        payload.writeLe32(0x0001_0000L)   // protocol version 1.0
-        command.send(packet(PtpIpPacket.INIT_COMMAND_REQUEST, payload.toByteArray()))
+        command.send(packet(PtpIpPacket.INIT_COMMAND_REQUEST, buildBytes {
+            write(guid.copyOf(16))
+            write(utf16z(name))
+            writeLe32(0x0001_0000L)   // protocol version 1.0
+        }))
 
         val (type, reply) = readPacket(command, System.currentTimeMillis() + 30_000)
         if (type == PtpIpPacket.INIT_FAIL) {
@@ -183,9 +175,7 @@ class PtpIpClient(val host: String, val port: Int) {
         val event = TcpChannel(host, port)
         this@PtpIpClient.event = event
         event.open()
-        val eventPayload = ByteArrayOutputStream()
-        eventPayload.writeLe32(connectionNumber)
-        event.send(packet(PtpIpPacket.INIT_EVENT_REQUEST, eventPayload.toByteArray()))
+        event.send(packet(PtpIpPacket.INIT_EVENT_REQUEST, buildBytes { writeLe32(connectionNumber) }))
         val (eventType, _) = readPacket(event, System.currentTimeMillis() + 10_000)
         if (eventType != PtpIpPacket.INIT_EVENT_ACK) {
             throw CameraException("The camera didn't open its event channel (packet type $eventType).")
@@ -193,10 +183,11 @@ class PtpIpClient(val host: String, val port: Int) {
         startEventLoop(event)
     }
 
+    /** Logs the camera's events (code, then UInt32 parameters) and answers its probes. */
     private fun startEventLoop(channel: TcpChannel) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         eventScope = scope
-        eventJob = scope.launch {
+        scope.launch {
             while (isActive) {
                 val (type, payload) = try {
                     readPacket(channel, null)
@@ -204,13 +195,8 @@ class PtpIpClient(val host: String, val port: Int) {
                     return@launch
                 }
                 if (type == PtpIpPacket.EVENT && payload.size >= 6) {
-                    val params = mutableListOf<Long>()
-                    var offset = 6
-                    while (offset + 4 <= payload.size) {
-                        params.add(payload.readLe32(offset))
-                        offset += 4
-                    }
-                    deliver(Event(payload.readLe16(0), params))
+                    val params = (6..payload.size - 4 step 4).map { payload.readLe32(it) }
+                    logger?.invoke(fmt("PTP event 0x%04X %s", payload.readLe16(0), params.joinToString(" ") { fmt("0x%X", it) }))
                 } else if (type == PtpIpPacket.PROBE_REQUEST) {
                     runCatching { channel.send(packet(PtpIpPacket.PROBE_RESPONSE, ByteArray(0))) }
                 }
@@ -218,16 +204,9 @@ class PtpIpClient(val host: String, val port: Int) {
         }
     }
 
-    private fun deliver(event: Event) {
-        logger?.invoke(fmt("PTP event 0x%04X %s", event.code, event.params.joinToString(" ") { fmt("0x%X", it) }))
-        onEvent?.invoke(event)
-    }
-
     /** Closes both channels; a running operation fails with an IOException. */
     fun close() {
-        eventJob?.cancel()
         eventScope?.cancel()
-        eventJob = null
         eventScope = null
         command?.close()
         event?.close()
@@ -247,22 +226,15 @@ class PtpIpClient(val host: String, val port: Int) {
         val tid = transactionId.toLong() and 0xFFFF_FFFFL
         val started = System.currentTimeMillis()
         val response = withContext(Dispatchers.IO) {
-            val request = ByteArrayOutputStream()
-            request.writeLe32(if (dataOut == null) 1L else 2L)
-            request.writeLe16(opcode)
-            request.writeLe32(tid)
-            for (p in params.take(5)) request.writeLe32(p)
-            command.send(packet(PtpIpPacket.OPERATION_REQUEST, request.toByteArray()))
-
+            command.send(packet(PtpIpPacket.OPERATION_REQUEST, buildBytes {
+                writeLe32(if (dataOut == null) 1L else 2L)
+                writeLe16(opcode)
+                writeLe32(tid)
+                for (p in params.take(5)) writeLe32(p)
+            }))
             if (dataOut != null) {
-                val start = ByteArrayOutputStream()
-                start.writeLe32(tid)
-                start.writeLe64(dataOut.size.toLong())
-                command.send(packet(PtpIpPacket.START_DATA, start.toByteArray()))
-                val end = ByteArrayOutputStream()
-                end.writeLe32(tid)
-                end.write(dataOut)
-                command.send(packet(PtpIpPacket.END_DATA, end.toByteArray()))
+                command.send(packet(PtpIpPacket.START_DATA, buildBytes { writeLe32(tid); writeLe64(dataOut.size.toLong()) }))
+                command.send(packet(PtpIpPacket.END_DATA, buildBytes { writeLe32(tid); write(dataOut) }))
             }
 
             val deadline = started + (timeout * 1000).toLong()
@@ -280,15 +252,7 @@ class PtpIpClient(val host: String, val port: Int) {
                         if (payload.size > 4 && payload.readLe32(0) == tid) incoming.write(payload, 4, payload.size - 4)
                     PtpIpPacket.OPERATION_RESPONSE -> {
                         if (payload.size < 6) throw CameraException("Short PTP response.")
-                        if (payload.readLe32(2) == tid) {
-                            val responseParams = mutableListOf<Long>()
-                            var offset = 6
-                            while (offset + 4 <= payload.size) {
-                                responseParams.add(payload.readLe32(offset))
-                                offset += 4
-                            }
-                            result = Response(payload.readLe16(0), responseParams, incoming.toByteArray())
-                        }
+                        if (payload.readLe32(2) == tid) result = Response(payload.readLe16(0), incoming.toByteArray())
                     }
                     PtpIpPacket.PROBE_REQUEST -> command.send(packet(PtpIpPacket.PROBE_RESPONSE, ByteArray(0)))
                 }
@@ -310,12 +274,10 @@ class PtpIpClient(val host: String, val port: Int) {
     }
 
     companion object {
-        fun packet(type: Int, payload: ByteArray): ByteArray {
-            val data = ByteArrayOutputStream(8 + payload.size)
-            data.writeLe32(8L + payload.size)
-            data.writeLe32(type.toLong())
-            data.write(payload)
-            return data.toByteArray()
+        fun packet(type: Int, payload: ByteArray): ByteArray = buildBytes {
+            writeLe32(8L + payload.size)
+            writeLe32(type.toLong())
+            write(payload)
         }
 
         /** One packet: its type and payload. Blocking; call on an IO thread. */
@@ -335,22 +297,11 @@ class PtpIpClient(val host: String, val port: Int) {
             return header.readLe32(4).toInt() to payload
         }
 
-        fun utf16z(text: String): ByteArray {
-            val data = ByteArrayOutputStream()
-            for (unit in text) data.writeLe16(unit.code)
-            data.writeLe16(0)
-            return data.toByteArray()
+        fun utf16z(text: String): ByteArray = buildBytes {
+            for (unit in text) writeLe16(unit.code)
+            writeLe16(0)
         }
     }
-}
-
-/** Swallows failures (not cancellation): for best-effort PTP calls. */
-internal suspend fun <T> ptpOrNull(block: suspend () -> T): T? = try {
-    block()
-} catch (e: CancellationException) {
-    throw e
-} catch (ignored: Exception) {
-    null
 }
 
 // MARK: - PTP datasets
@@ -359,31 +310,16 @@ internal suspend fun <T> ptpOrNull(block: suspend () -> T): T? = try {
 class PtpReader(val data: ByteArray, var offset: Int = 0) {
     val remaining: Int get() = data.size - offset
 
-    fun u8(): Int {
-        if (remaining < 1) { offset = data.size; return 0 }
-        return (data[offset++].toInt() and 0xFF)
+    /** Reads `size` bytes at the offset with `get`; past the end, gives `zero` and stays at the end. */
+    private inline fun <T> read(size: Int, zero: T, get: (Int) -> T): T {
+        if (remaining < size) { offset = data.size; return zero }
+        return get(offset).also { offset += size }
     }
 
-    fun u16(): Int {
-        if (remaining < 2) { offset = data.size; return 0 }
-        val v = data.readLe16(offset)
-        offset += 2
-        return v
-    }
-
-    fun u32(): Long {
-        if (remaining < 4) { offset = data.size; return 0 }
-        val v = data.readLe32(offset)
-        offset += 4
-        return v
-    }
-
-    fun u64(): Long {
-        if (remaining < 8) { offset = data.size; return 0 }
-        val v = data.readLe64(offset)
-        offset += 8
-        return v
-    }
+    fun u8(): Int = read(1, 0) { data[it].toInt() and 0xFF }
+    fun u16(): Int = read(2, 0) { data.readLe16(it) }
+    fun u32(): Long = read(4, 0L) { data.readLe32(it) }
+    fun u64(): Long = read(8, 0L) { data.readLe64(it) }
 
     fun string(): String {
         val count = u8()
@@ -441,36 +377,30 @@ class PtpReader(val data: ByteArray, var offset: Int = 0) {
 }
 
 class PtpDeviceInfo(data: ByteArray) {
-    val vendorExtensionId: Long
     val operations: Set<Int>
-    val events: Set<Int>
     val properties: Set<Int>
-    val manufacturer: String
     val model: String
     val version: String
-    val serial: String
 
     init {
         val r = PtpReader(data)
         r.u16()                          // standard version
-        vendorExtensionId = r.u32()
+        r.u32()                          // vendor extension ID
         r.u16()                          // vendor extension version
         r.string()                       // vendor extension description
         r.u16()                          // functional mode
         operations = r.u16Array().toSet()
-        events = r.u16Array().toSet()
+        r.u16Array()                     // events
         properties = r.u16Array().toSet()
         r.u16Array()                     // capture formats
         r.u16Array()                     // image formats
-        manufacturer = r.string()
+        r.string()                       // manufacturer
         model = r.string()
         version = r.string()
-        serial = r.string()
     }
 }
 
 class PtpPropDesc(data: ByteArray) {
-    val code: Int
     val dataType: Int
     val settable: Boolean
     val current: Long
@@ -479,7 +409,7 @@ class PtpPropDesc(data: ByteArray) {
 
     init {
         val r = PtpReader(data)
-        code = r.u16()
+        r.u16()                          // property code
         dataType = r.u16()
         settable = r.u8() == 1
         r.value(dataType)                // factory default
@@ -501,33 +431,28 @@ class PtpPropDesc(data: ByteArray) {
     }
 
     /** Encodes `value` in this property's data type, for SetDevicePropValue. */
-    fun encode(value: Long): ByteArray {
-        val d = ByteArrayOutputStream()
+    fun encode(value: Long): ByteArray = buildBytes {
         when (dataType) {
-            0x0001, 0x0002 -> d.write(value.toInt() and 0xFF)
-            0x0003, 0x0004 -> d.writeLe16(value.toInt())
-            0x0005, 0x0006 -> d.writeLe32(value)
-            else -> d.writeLe64(value)
+            0x0001, 0x0002 -> write(value.toInt() and 0xFF)
+            0x0003, 0x0004 -> writeLe16(value.toInt())
+            0x0005, 0x0006 -> writeLe32(value)
+            else -> writeLe64(value)
         }
-        return d.toByteArray()
     }
 }
 
 class PtpObjectInfo(data: ByteArray) {
-    val storageId: Long
-    val format: Int
+    /** Association (folder) objects have format 0x3001. */
+    val isFolder: Boolean
     val size: Long
     val parent: Long
     val filename: String
     val captureDate: String
 
-    /** Association (folder) objects have format 0x3001. */
-    val isFolder: Boolean get() = format == 0x3001
-
     init {
         val r = PtpReader(data)
-        storageId = r.u32()
-        format = r.u16()
+        r.u32()                                   // storage ID
+        isFolder = r.u16() == 0x3001              // format
         r.u16()                                   // protection
         size = r.u32()
         r.u16(); r.u32(); r.u32(); r.u32()        // thumb format, size, width, height
@@ -546,6 +471,8 @@ class PtpObjectInfo(data: ByteArray) {
 }
 
 // MARK: - Little-endian helpers
+
+inline fun buildBytes(build: ByteArrayOutputStream.() -> Unit): ByteArray = ByteArrayOutputStream().apply(build).toByteArray()
 
 fun ByteArrayOutputStream.writeLe16(value: Int) {
     write(value and 0xFF)

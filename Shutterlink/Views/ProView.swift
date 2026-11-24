@@ -47,8 +47,7 @@ struct ProView: View {
                         }
                     }
                     .padding(18)
-                    .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
-                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+                    .surface(.regular, in: .rect(cornerRadius: 20, style: .continuous))
                     Text("Free stays free: connecting to every brand, live view, all exposure settings, the shutter, video, Bulb and Live Composite, the card browser, saving, auto-save, geotagging and Wi-Fi joining.")
                         .font(.footnote)
                         .foregroundStyle(Theme.tertiary)
