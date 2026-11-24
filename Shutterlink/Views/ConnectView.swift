@@ -151,7 +151,7 @@ struct ConnectView: View {
                 .font(.system(size: compact ? 30 : 38, weight: .heavy))
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Remote control for Olympus, OM System and Panasonic LUMIX cameras over their own Wi-Fi, with Nikon, Canon and Sony in beta.")
+            Text("Remote control for Olympus, OM System, Panasonic LUMIX, Nikon, Canon and Sony cameras over their own Wi-Fi.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -252,7 +252,6 @@ struct ConnectView: View {
                     } else {
                         HStack(spacing: 6) {
                             CapsLabel(saved.brand.shortTitle)
-                            if saved.brand.isBeta { BetaBadge() }
                             Text("· \(lastUsed)")
                                 .font(.footnote)
                                 .foregroundStyle(Theme.tertiary)
@@ -480,7 +479,6 @@ struct AddCameraSheet: View {
                         if brand == nil {
                             Text("Recommended").font(.caption2.weight(.bold)).foregroundStyle(Theme.accent)
                         }
-                        if brand?.isBeta == true { BetaBadge() }
                     }
                     Text(brand?.coverage ?? "Works out which camera it is from its Wi-Fi")
                         .font(.footnote)
@@ -606,8 +604,8 @@ struct AddCameraSheet: View {
                     }
                 }
                 Text(camera.autoDetectBrand
-                     ? "Leave the address empty and the app looks for the camera at each brand's usual address. For the mock cameras in the Simulator, enter 127.0.0.1 with the mock's port: 8080 Olympus, 8082 LUMIX, 15740 Nikon, 8084 Canon, 8086 Sony."
-                     : "The \(camera.brand.shortTitle) camera is normally at \(camera.brand.defaultHost). For the mock cameras in the Simulator, use 127.0.0.1 with the mock's port: 8080 Olympus, 8082 LUMIX, 15740 Nikon, 8084 Canon, 8086 Sony.")
+                     ? "Leave the address empty and the app looks for the camera at each brand's usual address." + simulatorMockHint
+                     : "The \(camera.brand.shortTitle) camera is normally at \(camera.brand.defaultHost)." + simulatorMockHint)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Button("Open iPhone Settings", systemImage: "gear") {
@@ -621,20 +619,6 @@ struct AddCameraSheet: View {
             .surface(.regular, in: .rect(cornerRadius: 24, style: .continuous))
             .transition(.blurReplace)
         }
-    }
-}
-
-/// "Beta" next to brands whose drivers have only been tried against mock cameras.
-struct BetaBadge: View {
-    var body: some View {
-        Text("BETA")
-            .font(.system(size: 10, weight: .heavy))
-            .tracking(0.8)
-            .foregroundStyle(Theme.accent)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .overlay(Capsule().stroke(Theme.accent.opacity(0.7), lineWidth: 1))
-            .accessibilityLabel("Beta")
     }
 }
 
@@ -721,3 +705,10 @@ private struct StepRow: View {
         .accessibilityLabel("Step \(number): \(title). \(detail.replacingOccurrences(of: " ▸ ", with: ", then "))")
     }
 }
+
+/// Where the mock cameras listen, shown under the address field in the Simulator only.
+#if targetEnvironment(simulator)
+private let simulatorMockHint = " For the mock cameras, use 127.0.0.1 with the mock's port: 8080 Olympus, 8082 LUMIX, 15740 Nikon, 8084 Canon, 8086 Sony."
+#else
+private let simulatorMockHint = ""
+#endif

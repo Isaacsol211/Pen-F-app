@@ -2,7 +2,7 @@
 
 Effective 24 November 2026
 
-Shutterlink is an iPhone and Apple Watch remote for cameras, published on the App Store as Shutterlink Remote by Apexmerce Solutions Private Limited. This policy covers the app.
+Shutterlink is an iPhone, iPad and Apple Watch remote for cameras, published on the App Store as Shutterlink Remote by Apexmerce Solutions Private Limited. This policy covers the app.
 
 ## We don't collect data
 
@@ -10,13 +10,14 @@ Shutterlink has no account, no analytics, no advertising, no tracking and no thi
 
 ## What the app does on your device
 
-- **Your camera.** The app talks only to your camera, over the camera's own Wi-Fi network (the Local Network permission). Live view, settings and pictures go between the camera and your iPhone and nowhere else.
+- **Your camera.** The app talks only to your camera, over the camera's own Wi-Fi network (the Local Network permission). Live view, settings and pictures go between the camera and your iPhone or iPad and nowhere else.
 - **Photos.** When you download a picture from the camera's card, the app saves it to your Photos library (the add-only Photos permission) or to Files. It doesn't read your library.
-- **Location (optional).** If you turn on geotagging, the app notes your iPhone's location while it's connected to the camera and adds it to the photos you save. The location stays on your iPhone.
-- **Settings.** The cameras you've connected to and your preferences are stored on your iPhone. The Apple Watch app gets live view and camera status from the iPhone app through Apple's Watch connection, not over the internet.
-- **Request log.** The app keeps a log of the commands it sends to the camera, to help with troubleshooting. It stays on your iPhone unless you copy it yourself.
+- **Scene suggestions.** If scene suggestions are on, the app looks at the live view image on your device, using Apple's on-device image recognition, to suggest settings (for example the night-sky helper when you point at the stars). The image isn't stored or sent anywhere, and nothing changes on the camera until you tap the suggestion. You can turn scene suggestions off in the app.
+- **Location (optional).** If you turn on geotagging, the app notes your location while it's connected to the camera and adds it to the photos you save. If you've turned on geotagging, the app also uses that location to work out where the sun and moon are, for scene suggestions. The location stays on your device.
+- **Settings.** The cameras you've connected to, your saved setups and your preferences are stored on your device. The Apple Watch app gets live view and camera status from the iPhone app through Apple's Watch connection, not over the internet.
+- **Request log.** The app keeps a log of the commands it sends to the camera, to help with troubleshooting. It stays on your device unless you copy it yourself.
 
-You can turn off the Local Network, Photos and Location permissions at any time in Settings on your iPhone. Deleting the app deletes its data.
+You can turn off the Local Network, Photos and Location permissions at any time in Settings on your iPhone or iPad. Deleting the app deletes its data.
 
 ## Children
 
@@ -28,4 +29,4 @@ If this policy changes, the new version will be posted here with a new date.
 
 ## Contact
 
-Questions about this policy: open an issue at https://github.com/Isaacsol211/Pen-F-app/issues.
+Questions about this policy: email isaacsolomon211@gmail.com or open an issue at https://github.com/Isaacsol211/Pen-F-app/issues.

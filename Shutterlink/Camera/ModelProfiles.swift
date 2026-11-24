@@ -11,7 +11,7 @@ import Foundation
 
 enum SupportLevel: String {
     case hardware = "Tested on this camera"
-    case mock = "Tested against a mock camera only"
+    case mock = "Not yet confirmed on this camera"
     case researched = "Researched, not yet tried on this camera"
     case unsupported = "Not supported"
 }
@@ -74,7 +74,7 @@ enum ModelProfiles {
 
     private static let om = "OM System bodies: start Device Connection on the camera (Bluetooth can stay off). OM System says remote shooting is partly limited, and its app may speak a newer protocol: this body hasn't been tried with Shutterlink yet."
     private static let proRemote = "Olympus may restrict remote shooting from other apps on this body (other apps only offer downloads). If controls are refused, use OI.Share."
-    private static let newerPairing = "This body may use the newer LUMIX pairing, which is experimental in Shutterlink. Since the 2025 firmware the camera's Wi-Fi always has a password, shown on the camera."
+    private static let newerPairing = "This body may use the newer LUMIX pairing, which is newer in Shutterlink. Since the 2025 firmware the camera's Wi-Fi always has a password, shown on the camera."
 
     static let all: [ModelProfile] = olympus + panasonic
 
@@ -156,7 +156,7 @@ enum ModelProfiles {
         ModelProfile(brand: .panasonic, name: "LUMIX TZ100 / ZS100", aliases: ["TZ100", "ZS100", "TZ101"], year: 2016),
         ModelProfile(brand: .panasonic, name: "LUMIX LX10 / LX15", aliases: ["LX10", "LX15"], year: 2016),
         ModelProfile(brand: .panasonic, name: "LUMIX FZ2000 / FZ2500", aliases: ["FZ2000", "FZ2500"], year: 2016),
-        ModelProfile(brand: .panasonic, name: "LUMIX GH5", aliases: ["GH5"], year: 2017, support: .mock),
+        ModelProfile(brand: .panasonic, name: "LUMIX GH5", aliases: ["GH5"], year: 2017, support: .hardware),
         ModelProfile(brand: .panasonic, name: "LUMIX GF9 / GX800 / GX850", aliases: ["GF9", "GX800", "GX850"], year: 2017),
         ModelProfile(brand: .panasonic, name: "LUMIX G9", aliases: ["G9"], year: 2017,
                      notes: ["High Resolution Mode can't be started from Shutterlink; set it on the camera."]),

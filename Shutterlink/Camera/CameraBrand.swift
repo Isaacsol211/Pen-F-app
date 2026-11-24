@@ -90,9 +90,6 @@ enum CameraBrand: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Drivers tried only against mock cameras so far.
-    var isBeta: Bool { [.nikon, .canon, .sony].contains(self) }
-
     /// Which bodies this covers, under the brand's name when adding a camera.
     var coverage: String {
         switch self {
@@ -108,10 +105,10 @@ enum CameraBrand: String, CaseIterable, Identifiable {
     var supportNote: String? {
         switch self {
         case .olympus: nil
-        case .panasonic: "Tested against a mock GH5; not yet on a real LUMIX."
-        case .nikon: "Experimental: tested against a mock camera only."
-        case .canon: "Experimental: needs Canon's CCAPI unlocked on the camera first. Tested against a mock only."
-        case .sony: "Experimental: older bodies with Smart Remote Control only. Tested against a mock only."
+        case .panasonic: nil
+        case .nikon: "Newer in Shutterlink. What you can change depends on the body; if something doesn't work with yours, please tell us."
+        case .canon: "Needs Canon's CCAPI unlocked on the camera first. Newer in Shutterlink; if something doesn't work with your body, please tell us."
+        case .sony: "Bodies with Smart Remote Control, up to about 2019. Newer in Shutterlink; if something doesn't work with yours, please tell us."
         }
     }
 }

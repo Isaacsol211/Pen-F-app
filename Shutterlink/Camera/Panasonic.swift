@@ -308,7 +308,7 @@ final class PanasonicDriver: CameraDriver {
                 return
             }
             guard Date() < deadline else {
-                throw CameraError("The camera didn't accept this iPhone. Choose Yes on the camera's screen if it asks, then tap Connect again. (Newer LUMIX pairing is experimental in this app.)")
+                throw CameraError("The camera didn't accept this iPhone. Choose Yes on the camera's screen if it asks, then tap Connect again. (Newer LUMIX pairing is new in Shutterlink; if it keeps failing, please tell us.)")
             }
             if fields.first?.hasPrefix("ok_under_research") == true {
                 camera.status = "On the camera, choose Yes to allow this iPhone…"
