@@ -21,6 +21,10 @@ Shutterlink has no account, no analytics, no advertising, no tracking and no thi
 
 You can turn off the Local Network, Photos, Camera and Location permissions at any time in Settings on your iPhone or iPad. Deleting the app deletes its data.
 
+## Purchases
+
+Shutterlink Pro and its free trial are bought through Apple's App Store. Apple handles the payment; we don't receive your name, payment details or Apple Account. The app only asks the App Store whether Pro is unlocked on this device.
+
 ## Children
 
 The app doesn't collect data from anyone, including children.

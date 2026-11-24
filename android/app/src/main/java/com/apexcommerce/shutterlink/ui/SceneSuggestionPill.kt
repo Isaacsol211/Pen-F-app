@@ -15,6 +15,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AcUnit
+import androidx.compose.material.icons.filled.BackHand
+import androidx.compose.material.icons.filled.Fluorescent
+import androidx.compose.material.icons.filled.WbCloudy
+import androidx.compose.material.icons.filled.WbIncandescent
+import androidx.compose.material.icons.filled.WbShade
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
@@ -61,6 +66,11 @@ private fun icon(name: String): ImageVector = when (name) {
     "snow" -> Icons.Filled.AcUnit
     "sunset" -> Icons.Filled.WbTwilight
     "landscape" -> Icons.Filled.Landscape
+    "shake" -> Icons.Filled.BackHand
+    "lamp" -> Icons.Filled.WbIncandescent
+    "tube" -> Icons.Filled.Fluorescent
+    "shade" -> Icons.Filled.WbShade
+    "cloud" -> Icons.Filled.WbCloudy
     else -> Icons.Filled.WbSunny
 }
 

@@ -1,0 +1,50 @@
+{
+  "identifier" : "5E1D0C7A",
+  "nonRenewingSubscriptions" : [ ],
+  "products" : [
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : true,
+      "internalID" : "5E1D0C7B",
+      "localizations" : [
+        {
+          "description" : "Setups, time-lapse, bracketing and focus stacks, exposure tools, the Watch remote and more.",
+          "displayName" : "Shutterlink Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.apexcommerce.shutterlink.pro",
+      "referenceName" : "Shutterlink Pro",
+      "type" : "NonConsumable"
+    },
+    {
+      "displayPrice" : "0.0",
+      "familyShareable" : false,
+      "internalID" : "5E1D0C7C",
+      "localizations" : [
+        {
+          "description" : "Try every Pro tool free for 7 days. Doesn't renew or charge you.",
+          "displayName" : "7-Day Pro Trial",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.apexcommerce.shutterlink.pro.trial",
+      "referenceName" : "7-Day Pro Trial",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "6838288535",
+    "_developerTeamID" : "9FK83T63MP",
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 0,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [ ]
+  },
+  "subscriptionGroups" : [ ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

@@ -44,6 +44,8 @@ data class SceneSuggestion(
         data object ExposeToTheRight : Action()
         data object OpenND : Action()
         data object OpenMotion : Action()
+        /** Shutter priority at 1/500 s with Auto ISO (a small preset, so Undo puts it back). */
+        data object FreezeMotion : Action()
     }
 }
 
@@ -57,6 +59,16 @@ data class SceneSignals(
     val clipped: Double = 0.0,
     /** From the phone's clock and last known location; null without a location. */
     val sky: Astronomy.Sky? = null,
+    /** Share of the frame that changed between two live-view frames a quarter-second apart (0…1). */
+    val motion: Double = 0.0,
+    /** The colour that near-white surfaces come out in live view, after the camera's white balance. */
+    val cast: ColourCast? = null,
+    /** Exposure time in seconds, as the camera has set it now. */
+    val shutter: Double? = null,
+    /** Lens focal length as on a full-frame camera (focal length × crop factor). */
+    val focal35: Double? = null,
+    /** The ISO in use (the value Auto ISO picked, when the camera says). */
+    val iso: Int? = null,
 ) {
     fun score(vararg names: String): Float = names.maxOf { labels[it] ?: 0f }
     val isDaylight: Boolean get() = sky?.let { it.sunAltitude > 0 } ?: (brightness > 0.08)
@@ -92,6 +104,24 @@ object SceneLabels {
         "Mountain" to listOf("mountain"), "Forest" to listOf("forest"), "Hill" to listOf("hill"),
     )
 
+    /**
+     * ML Kit labels that place the camera indoors or outdoors, for the white-balance suggestions. They
+     * become "room" and "outdoor" (both in the iOS app's indoor and outdoor lists).
+     */
+    private val indoor = setOf(
+        "Bathroom", "Bedroom", "Blackboard", "Bunk bed", "Cabinetry", "Casino", "Chair", "Clock", "Computer",
+        "Cookware and bakeware", "Countertop", "Couch", "Curtain", "Cushion", "Cutlery", "Desk", "Drawer", "Kitchen",
+        "Lampshade", "Loveseat", "Nightclub", "Placemat", "Porcelain", "Room", "Shelf", "Sink", "Stairs", "Tablecloth",
+        "Tableware", "Television", "Whiteboard", "Armrest", "Ballroom",
+    )
+    private val outdoor = setOf(
+        "Aurora", "Beach", "Branch", "Canyon", "Camping", "Cave", "Cliff", "Dune", "Desert", "Farm", "Field", "Flora",
+        "Flower", "Forest", "Fog", "Fireworks", "Garden", "Glacier", "Ice", "Icicle", "Jungle", "Lake", "Lightning", "Moon",
+        "Mountain", "Park", "Pier", "Plant", "Playground", "Prairie", "Reef", "River", "Road", "Rock", "Sand", "Sky",
+        "Skyline", "Skyscraper", "Snowboarding", "Soil", "Space", "Star", "Storm", "Sunset", "Swamp", "Volcano",
+        "Waterfall", "Dam", "Lighthouse", "Ranch", "Barn", "Rainbow", "Asphalt", "Building", "Tower", "Bridge",
+    )
+
     /** Maps one frame's ML Kit labels (text → confidence) onto scene names. */
     fun fromMlKit(labels: Map<String, Float>, brightness: Double): Map<String, Float> {
         val out = HashMap<String, Float>()
@@ -104,6 +134,8 @@ object SceneLabels {
             if (text == "Sky") put(if (brightness < 0.03) "night_sky" else "blue_sky", confidence)
             // ML Kit also calls a low sun a "Moon": only count it when the frame is dark, as a moon shot is.
             if (text == "Moon" && brightness < 0.1) put("moon", confidence)
+            if (text in indoor) put("room", confidence)
+            if (text in outdoor) put("outdoor", confidence)
         }
         return out
     }
@@ -167,6 +199,25 @@ fun CameraModel.sceneSuggestions(s: SceneSignals): List<SceneSuggestion> {
     if (s.clipped > 0.02) exposureChange(-2)?.let {
         setting("clipping", "warning", "Highlights clipping", "${(s.clipped * 100).roundToInt()}% of the picture is blown out", it)
     }
+    // Blur: something moving at a slow shutter, or a slow shutter for the lens held by hand.
+    val t = s.shutter
+    if (t != null && t < 0.5 && !isOpenEndedShutter) {
+        val f = s.focal35
+        val iso = s.iso
+        val mode = properties["takemode"]?.value?.uppercase()
+        if (s.motion >= 0.04 && t > 1.0 / 250) {
+            out.add(SceneSuggestion("motion", "action", "Movement in the frame",
+                "At ${shutterText(t)} it will blur. 1/500 s freezes it, with ISO raised to match",
+                "1/500 s", SceneSuggestion.Action.FreezeMotion))
+        } else if (f != null && t > 1 / (2 * f) && iso != null && mode in setOf("P", "A")) {
+            isoForSteadyShutter(t, f, iso)?.let { (value, raised) ->
+                out.add(SceneSuggestion("shake", "shake", "Camera shake",
+                    "${shutterText(t)} is slow for a ${f.roundToInt()} mm view by hand. ISO $raised gives about ${shutterText(t * iso / raised)}",
+                    "ISO $raised", SceneSuggestion.Action.Setting("isospeedvalue", value)))
+            }
+        }
+    }
+    out += whiteBalanceSuggestions(s)
     if (s.score("snow") >= 0.4f && s.clipped < 0.01) exposureChange(2)?.let {
         setting("snow", "snow", "Snow", "Snow fools the meter into grey: brighten it", it)
     }
@@ -184,6 +235,73 @@ fun CameraModel.sceneSuggestions(s: SceneSignals): List<SceneSuggestion> {
     }
     return out
 }
+
+/**
+ * White balance for the light the scene is in: lamps or tubes indoors, shade or cloud outside, golden
+ * hour, or an indoor setting left on outdoors. Only offered while the camera's white balance can be set.
+ */
+fun CameraModel.whiteBalanceSuggestions(s: SceneSignals): List<SceneSuggestion> {
+    val wb = settableProperty("wbvalue") ?: return emptyList()
+    val current = PropertyFormat.display("wbvalue", wb.value)
+    val isAuto = current.contains("auto", ignoreCase = true)
+    val indoor = s.score("furniture", "table", "door", "room", "interior_room", "ceiling", "sofa", "bed", "kitchen",
+        "shelf", "lamp", "painting", "decoration", "frame", "office", "restaurant") >= 0.3f
+    val outdoor = s.score("sky", "blue_sky", "cloudy", "tree", "mountain", "beach", "land", "grass", "plant",
+        "street", "building", "field", "forest", "hill", "sunset_sunrise", "outdoor") >= 0.3f
+    val sunUp = s.sky?.let { it.sunAltitude > 0 } ?: (s.brightness > 0.15)
+    val golden = (s.sky?.let { it.sunAltitude in -4.0..6.0 } ?: false) || s.score("sunset_sunrise") >= 0.3f
+    fun suggest(id: String, icon: String, title: String, detail: String, keywords: List<String>): List<SceneSuggestion> {
+        val value = whiteBalanceOption(keywords) ?: return emptyList()
+        if (value == wb.value) return emptyList()
+        val name = PropertyFormat.display("wbvalue", value)
+        return listOf(SceneSuggestion(id, icon, title, detail, "$name WB", SceneSuggestion.Action.Setting("wbvalue", value)))
+    }
+    if (isAuto && outdoor && golden) {
+        return suggest("wb-golden", "sunset", "Golden light", "Auto white balance cools the warm glow. Sunny keeps it",
+            listOf("sunny", "daylight", "fine"))
+    }
+    val cast = s.cast
+    if (isAuto && indoor && cast != null && cast.warmth >= 0.08) {
+        if (cast.orange >= 0.04) {
+            return suggest("wb-lamps", "lamp", "Warm lamp light",
+                "Whites come out orange. Incandescent makes them white, or keep Auto for a cosy look", listOf("incandescent", "tungsten"))
+        }
+        return suggest("wb-tubes", "tube", "Tube light", "White walls come out cream under this light. Fluorescent neutralises it",
+            listOf("fluorescent"))
+    }
+    if (isAuto && outdoor && sunUp && cast != null && cast.warmth <= -0.06) {
+        return if (s.brightness < 0.12) {
+            suggest("wb-shade", "shade", "In the shade", "Shade turns everything blue. Shade white balance warms it back", listOf("shade"))
+        } else {
+            suggest("wb-cloudy", "cloud", "Overcast", "A grey sky turns things blue. Cloudy warms them back", listOf("cloudy", "overcast"))
+        }
+    }
+    val indoorSetting = listOf("incandescent", "tungsten", "fluorescent").any { current.contains(it, ignoreCase = true) }
+    if (!isAuto && indoorSetting && outdoor && sunUp) {
+        return suggest("wb-outdoors", "sun", "Indoor white balance outside", "$current turns daylight blue. Back to Auto", listOf("auto"))
+    }
+    return emptyList()
+}
+
+/** The first white balance the camera offers whose name contains one of `keywords`. */
+fun CameraModel.whiteBalanceOption(keywords: List<String>): String? =
+    settableProperty("wbvalue")?.options?.firstOrNull { option ->
+        val name = PropertyFormat.display("wbvalue", option)
+        keywords.any { name.contains(it, ignoreCase = true) }
+    }
+
+/** The ISO that brings the shutter to about 1/(2 × focal length), up to ISO 6400. (camera value, ISO) */
+fun CameraModel.isoForSteadyShutter(shutter: Double, focal35: Double, iso: Int): Pair<String, Int>? {
+    val target = iso * shutter * 2 * focal35
+    val numeric = (settableProperty("isospeedvalue")?.options ?: emptyList())
+        .mapNotNull { o -> o.toIntOrNull()?.let { o to it } }
+        .filter { it.second in (iso + 1)..6400 }
+        .sortedBy { it.second }
+    return numeric.firstOrNull { it.second >= target * 0.9 } ?: numeric.lastOrNull()
+}
+
+fun shutterText(seconds: Double): String =
+    if (seconds >= 1) "${seconds.roundToInt()} s" else "1/${(1 / seconds).roundToInt()} s"
 
 /** A change of `thirds` of a stop: exposure compensation in P/A/S, else the shutter in M. (property, value, label) */
 fun CameraModel.exposureChange(thirds: Int): Triple<String, String, String>? {
@@ -266,7 +384,14 @@ suspend fun CameraModel.runSceneAssistant() {
             val labels = override ?: SceneLabels.fromMlKit(raw, brightness)
             val location = lastKnownLocation()
             val sky = location?.let { Astronomy.sky(System.currentTimeMillis(), it.latitude, it.longitude) }
-            val signals = SceneSignals(labels, brightness, clipped, sky)
+            val motion = frameChange(frame)
+            val cast = withContext(Dispatchers.Default) { FrameMeter.neutralCast(frame) }
+            val shutter = liveInfo.shutter?.let(::secondsFromDisplay)
+                ?: properties["shutspeedvalue"]?.let { PropertyFormat.seconds(it.value) }
+            val focal35 = liveInfo.focalLength?.let { it * cropFactor }
+            val iso = liveInfo.iso?.split(" ")?.firstNotNullOfOrNull { it.toIntOrNull() }
+                ?: properties["isospeedvalue"]?.value?.toIntOrNull()
+            val signals = SceneSignals(labels, brightness, clipped, sky, motion, cast, shutter, focal35, iso)
             sceneSignals = signals
             sceneRawLabels = raw
             showBest(sceneSuggestions(signals))
@@ -276,6 +401,17 @@ suspend fun CameraModel.runSceneAssistant() {
             debugLog("scene assistant: $e")
         }
     }
+}
+
+/** Share of the frame that changed between `frame` and the live-view frame a quarter-second later. */
+private suspend fun CameraModel.frameChange(frame: Bitmap): Double {
+    val before = withContext(Dispatchers.Default) { FrameMeter.grey(frame, width = 32, height = 24) } ?: return 0.0
+    delay(250)
+    val later = recentFrame ?: return 0.0
+    if (later === frame) return 0.0
+    val after = withContext(Dispatchers.Default) { FrameMeter.grey(later, width = 32, height = 24) } ?: return 0.0
+    if (after.size != before.size) return 0.0
+    return before.indices.count { abs(before[it] - after[it]) > 16 }.toDouble() / before.size
 }
 
 /** Shows a suggestion once it has topped two looks in a row (no flicker), and hides it after two without. */
@@ -330,5 +466,18 @@ suspend fun CameraModel.applySceneSuggestion(suggestion: SceneSuggestion) {
             exposeToTheRight()
         }
         SceneSuggestion.Action.OpenND, SceneSuggestion.Action.OpenMotion -> snooze(600_000)
+        SceneSuggestion.Action.FreezeMotion -> {
+            snooze(600_000)
+            runPreset("freeze", "Freeze movement") {
+                val (mode, inS) = modeStep("S", "You pick the shutter, the camera the aperture")
+                listOf(
+                    mode,
+                    presetStep("Shutter 1/500 s", "Freezes people moving and most sport indoors", "shutspeedvalue",
+                        shutter(near = 1.0 / 500), mode = "S", inMode = inS),
+                    presetStep("Auto ISO", "Raises ISO to keep the fast shutter in this light", "isospeedvalue", autoIso,
+                        unavailable = "Set Auto ISO on the camera"),
+                )
+            }
+        }
     }
 }

@@ -37,6 +37,7 @@ object CameraNetwork {
     /** The network the app joined itself (WifiNetworkSpecifier), while it holds it. */
     @Volatile var joinedSsid: String? = null
         private set
+    @Volatile private var joinedNetwork: Network? = null
 
     fun init(context: Context) {
         cm = context.getSystemService(ConnectivityManager::class.java)
@@ -75,6 +76,13 @@ object CameraNetwork {
      */
     suspend fun acquireWifi(timeoutMs: Long = 4000): Boolean {
         boundNetwork?.let { if (cm.getNetworkCapabilities(it) != null) return true }
+        // The camera network the app joined itself: bind to it again (e.g. after a failed attempt).
+        joinedNetwork?.let { joined ->
+            if (cm.getNetworkCapabilities(joined) != null) {
+                bind(joined)
+                return true
+            }
+        }
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -160,6 +168,7 @@ object CameraNetwork {
                     override fun onLost(network: Network) {
                         if (network == boundNetwork) unbind()
                         joinedSsid = null
+                        joinedNetwork = null
                     }
                 }
                 joinCallback = callback
@@ -174,8 +183,23 @@ object CameraNetwork {
             return "Couldn't join $ssid. Check the network name and password the camera shows, and that its Wi-Fi is on."
         }
         joinedSsid = ssid
+        joinedNetwork = result
         releaseWifiCallback()
         bind(result)
+        // Android only reports the specifier's network once it's on that SSID, but the address can
+        // come a moment later. Wait for it, so the first request goes to the camera (iOS was seen to
+        // report success while staying on a home Wi-Fi with the same 192.168.0.x range).
+        val deadline = System.currentTimeMillis() + 10_000
+        while (System.currentTimeMillis() < deadline) {
+            val address = cm.getLinkProperties(result)?.linkAddresses?.firstOrNull { it.address is Inet4Address }
+            if (address != null) {
+                debugLog("wifi: on $ssid at ${address.address.hostAddress}")
+                break
+            }
+            kotlinx.coroutines.delay(300)
+        }
+        // A moment for the camera to see the new client before the first request.
+        kotlinx.coroutines.delay(1000)
         return null
     }
 
@@ -183,6 +207,7 @@ object CameraNetwork {
         joinCallback?.let { runCatching { cm.unregisterNetworkCallback(it) } }
         joinCallback = null
         joinedSsid = null
+        joinedNetwork = null
     }
 
     /** Emulator or loopback addresses: the Mac running the mock cameras. */

@@ -304,7 +304,21 @@ class OlympusDriver(private val camera: CameraModel) : CameraDriver {
     }
 
     /** The PEN-F lists both `getrecview` and `getlastjpg`; try the first, fall back to the second. */
+    /**
+     * Grabs a preview of the capture that just finished, for the review thumbnail, then hands the full
+     * JPEG (`getlastjpg`, available during live view) to auto-save when it's on.
+     */
     override suspend fun fetchLastShot() {
+        fetchReviewImage()
+        if (camera.autoSaveApplies && commands.supports("exec_takemisc", "getlastjpg")) {
+            camera.autoSave(camera.autoSaveName()) {
+                client.get("exec_takemisc", listOf("com" to "getlastjpg"), timeout = 60.0, log = false)
+            }
+        }
+    }
+
+    /** The PEN-F lists both `getrecview` and `getlastjpg`; try the first, fall back to the second. */
+    private suspend fun fetchReviewImage() {
         for (command in listOf("getrecview", "getlastjpg")) {
             if (!commands.supports("exec_takemisc", command)) continue
             val data = runCatching { client.get("exec_takemisc", listOf("com" to command), timeout = 8.0) }.getOrNull()
