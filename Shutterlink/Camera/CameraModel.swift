@@ -297,8 +297,13 @@ final class CameraModel {
     func setBrand(_ newBrand: CameraBrand?) {
         guard phase == .disconnected else { return }
         let hostIsDefault = host.isEmpty || CameraBrand.allCases.contains { $0.defaultHost == host }
+        // A typed address belongs to the brand it was typed for: keep it with that brand, and bring
+        // back the new brand's own (or its usual one) rather than trying Nikon's port on a Canon.
+        var typed = UserDefaults.standard.dictionary(forKey: "hostByBrand") as? [String: String] ?? [:]
+        if !autoDetectBrand { typed[brand.rawValue] = hostIsDefault ? nil : host }
+        UserDefaults.standard.set(typed, forKey: "hostByBrand")
         if let newBrand {
-            if hostIsDefault { host = newBrand.defaultHost }
+            host = typed[newBrand.rawValue] ?? newBrand.defaultHost
             brand = newBrand
             autoDetectBrand = false
         } else {
@@ -429,6 +434,7 @@ final class CameraModel {
             phase = .connected
             UserDefaults.standard.set(true, forKey: "hasConnected")
             await rememberConnectedCamera()
+            restorePresetUndo()
             KeepAwake.set(true)
             status = nil
             updateLocationLogging()

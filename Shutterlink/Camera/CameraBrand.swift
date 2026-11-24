@@ -95,6 +95,10 @@ enum CameraBrand: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Only tried against test cameras so far, not real bodies: marked Beta wherever a brand is picked
+    /// and on the Pro screen.
+    var isBeta: Bool { [.nikon, .canon, .sony].contains(self) }
+
     /// How far the app gets with this brand, shown on the Connect screen.
     var supportNote: String? {
         switch self {

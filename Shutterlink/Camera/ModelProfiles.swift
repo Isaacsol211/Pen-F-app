@@ -136,7 +136,7 @@ enum ModelProfiles {
                      fixedExposure: true, noExposureComp: true),
         ModelProfile(brand: .panasonic, name: "LUMIX FZ1000", aliases: ["FZ1000"], year: 2014),
         ModelProfile(brand: .panasonic, name: "LUMIX GM5", aliases: ["GM5"], year: 2014),
-        ModelProfile(brand: .panasonic, name: "LUMIX G7 / G70", aliases: ["G7", "G70"], year: 2015),
+        ModelProfile(brand: .panasonic, name: "LUMIX G7 / G70", aliases: ["G7", "G70"], year: 2015, support: .hardware),
         ModelProfile(brand: .panasonic, name: "LUMIX GF7", aliases: ["GF7"], year: 2015),
         ModelProfile(brand: .panasonic, name: "LUMIX TZ70 / ZS50", aliases: ["TZ70", "ZS50", "TZ71"], year: 2015, noISO: true),
         ModelProfile(brand: .panasonic, name: "LUMIX FZ300 / FZ330", aliases: ["FZ300", "FZ330"], year: 2015),

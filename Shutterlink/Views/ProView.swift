@@ -48,6 +48,11 @@ struct ProView: View {
                     }
                     .padding(18)
                     .surface(.regular, in: .rect(cornerRadius: 20, style: .continuous))
+                    Label("Nikon, Canon and Sony are in beta: so far tried only on test cameras, not real bodies. Use the free trial to check yours works before buying.",
+                          systemImage: "flask")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text("Free stays free: connecting to every brand, live view, all exposure settings, the shutter, video, Bulb and Live Composite, the card browser, saving, auto-save, geotagging and Wi-Fi joining.")
                         .font(.footnote)
                         .foregroundStyle(Theme.tertiary)

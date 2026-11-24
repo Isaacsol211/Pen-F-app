@@ -95,10 +95,16 @@ extension CameraModel {
     /// What a plan would shoot, or why it can't run with the current settings.
     func bracketSet(_ plan: BracketPlan) -> Result<BracketSet, CameraError> {
         // The setting a bracket varies: shutter speed in M, exposure compensation in P, A and S.
-        let name = switch plan.target {
+        let inM = properties["takemode"]?.value.uppercased() == "M"
+        var name = switch plan.target {
         case .ev: "expcomp"
         case .shutter: "shutspeedvalue"
-        case .auto: properties["takemode"]?.value.uppercased() == "M" ? "shutspeedvalue" : "expcomp"
+        case .auto: inM ? "shutspeedvalue" : "expcomp"
+        }
+        // Automatic: when that one can't be changed (a compact with a fixed shutter), use the other.
+        if plan.target == .auto, properties[name]?.settable != true {
+            let other = name == "expcomp" ? "shutspeedvalue" : "expcomp"
+            if properties[other]?.settable == true { name = other }
         }
         let isEV = name == "expcomp"
         guard let property = properties[name] else {
@@ -106,9 +112,13 @@ extension CameraModel {
         }
         guard property.settable else {
             let mode = PropertyFormat.display("takemode", properties["takemode"]?.value ?? "")
-            return .failure(CameraError(isEV
-                ? "Exposure compensation is locked in \(mode). Use P, A or S, or bracket the shutter in M."
-                : "The shutter speed is locked in \(mode). Use S or M, or bracket EV instead."))
+            let why = switch (isEV, inM || mode.isEmpty) {
+            case (true, true): "Exposure compensation can't be changed from the phone here. Bracket the shutter instead."
+            case (true, false): "Exposure compensation is locked in \(mode). Use P, A or S, or bracket the shutter in M."
+            case (false, true): "This camera doesn't let the phone change the shutter speed. Bracket EV instead."
+            case (false, false): "The shutter speed is locked in \(mode). Use S or M, or bracket EV instead."
+            }
+            return .failure(CameraError(why))
         }
         // In thirds of a stop, in the usual camera order: 0, −1, +1, −2, +2…
         let offsets = (0..<max(plan.frames, 1)).map { i in (i + 1) / 2 * plan.thirds * (i.isMultiple(of: 2) ? 1 : -1) }

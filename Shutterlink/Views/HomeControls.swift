@@ -144,7 +144,7 @@ struct ExposureStrip: View {
         let property = camera.properties[name].map(camera.dialOptions(for:))
         let locked = !(property?.settable ?? false)
         let selected = active == name
-        let auto = locked && !["drivemode", "quality"].contains(name)
+        let auto = ExposureGrid.isAuto(name, locked: locked, mode: camera.properties["takemode"]?.value)
         return Button {
             active = selected ? nil : name
         } label: {
@@ -153,16 +153,17 @@ struct ExposureStrip: View {
                 CapsLabel(auto ? "Auto" : ExposureGrid.label(name),
                           color: selected ? Theme.accent : (auto ? Theme.accent.opacity(0.85) : Theme.tertiary))
                 Group {
-                    if name == "drivemode" {
-                        Image(systemName: SettingSpec.optionIcon(name, property?.value ?? "") ?? "square")
-                            .font(.system(size: valueSize * 0.9, weight: .semibold))
+                    if name == "drivemode" || name == "quality" {
+                        // Words, not an icon: Single and Anti-shock look the same as symbols.
+                        Text(camera.stripValue(name, property))
+                            .font(.system(size: valueSize * 0.72, weight: .semibold))
                     } else {
                         Text(camera.stripValue(name, property))
                             .font(.system(size: valueSize, weight: .semibold, design: .monospaced))
                             .contentTransition(.numericText())
                     }
                 }
-                .foregroundStyle(selected ? Theme.accent : (auto ? Theme.secondary : .white))
+                .foregroundStyle(selected ? Theme.accent : (locked ? Theme.secondary : .white))
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
             }

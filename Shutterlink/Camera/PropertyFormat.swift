@@ -98,6 +98,8 @@ enum PropertyFormat {
         "35": "Fluorescent", "64": "Underwater", "23": "Flash",
         "256": "One-touch 1", "257": "One-touch 2", "258": "One-touch 3", "259": "One-touch 4",
         "512": "Custom K",
+        // Canon's two auto modes
+        "awb_white": "Auto (white priority)", "awb_ambience": "Auto (ambience priority)",
     ]
 
     private static func drive(_ value: String) -> String {

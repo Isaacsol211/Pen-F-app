@@ -15,8 +15,9 @@ struct PresetStep: Identifiable, Equatable {
     var value: String?
     /// Why the step can't run on this camera, shown when `value` is nil.
     var unavailable = "Not offered by the camera over Wi-Fi"
-    /// Added to "The camera refused …" when the likely cause is a setting the app can't see.
-    var hint: String?
+    /// What to set on the camera when the phone can't (a dial, the mode): if the camera doesn't take
+    /// the value, the step says this instead of "refused".
+    var onCamera: String?
     var state: State = .pending
 }
 
@@ -102,7 +103,8 @@ extension CameraModel {
             return isFullFrame ? 1 : 1.5
         case .canon:
             let name = m.replacingOccurrences(of: "CANON", with: "").replacingOccurrences(of: "EOS", with: "")
-            if ["R", "RP", "R1", "R3", "R5", "R5II", "R5MARKII", "R6", "R6II", "R6MARKII", "R8"].contains(name)
+            // Full frame: R, RP, and R1, R3, R5 (II, C), R6 (II, "R6m2"), R8, but not R10, R50, R100 or R7.
+            if ["R", "RP"].contains(name) || name.range(of: #"^R[13568](?![0-9])"#, options: .regularExpression) != nil
                 || name.hasPrefix("5D") || name.hasPrefix("6D") || name.hasPrefix("1D") { return 1 }
             if name.hasPrefix("POWERSHOT") || name.hasPrefix("G") || name.hasPrefix("SX") { return 2.7 }
             return 1.6
@@ -111,6 +113,7 @@ extension CameraModel {
             let name = m.replacingOccurrences(of: "SONY", with: "")
             if ["DSCRX10", "RX10"].contains(where: { name.hasPrefix($0) }) { return 2.7 }
             if ["ILCE7", "ILCE9", "ILCE1", "A7", "A9", "A1", "DSCRX1", "RX1"].contains(where: { name.hasPrefix($0) }) { return 1 }
+            if name.hasPrefix("ZVE1"), !name.hasPrefix("ZVE10") { return 1 }   // ZV-E1 is full frame, ZV-E10 APS-C
             return 1.5
         }
     }

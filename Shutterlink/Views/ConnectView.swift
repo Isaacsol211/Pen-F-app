@@ -412,7 +412,7 @@ struct ConnectView: View {
     private func footer(workspace: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if let error = camera.lastError, !showAdd {
-                ConnectErrorBanner(text: error)
+                ConnectErrorBanner(text: error) { camera.lastError = nil }
             }
             TimelineView(.periodic(from: .now, by: 2)) { _ in
                 WifiStatusRow(address: NetworkInfo.wifiAddress(), host: camera.host)
@@ -562,8 +562,11 @@ struct AddCameraSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                        .disabled(camera.phase == .connecting)
+                    Button("Cancel") {
+                        camera.lastError = nil   // a failed try here shouldn't follow the user home
+                        dismiss()
+                    }
+                    .disabled(camera.phase == .connecting)
                 }
             }
         }
@@ -612,6 +615,8 @@ struct AddCameraSheet: View {
                             .foregroundStyle(.white)
                         if brand == nil {
                             Text("Recommended").font(.caption2.weight(.bold)).foregroundStyle(Theme.accent)
+                        } else if brand?.isBeta == true {
+                            Text("Beta").font(.caption2.weight(.bold)).foregroundStyle(.orange)
                         }
                     }
                     Text(brand?.coverage ?? "Works out which camera it is from its Wi-Fi")
@@ -648,7 +653,7 @@ struct AddCameraSheet: View {
         let connecting = camera.phase == .connecting
         return VStack(alignment: .leading, spacing: 10) {
             if let error = camera.lastError {
-                ConnectErrorBanner(text: error)
+                ConnectErrorBanner(text: error) { camera.lastError = nil }
             }
             TimelineView(.periodic(from: .now, by: 2)) { _ in
                 WifiStatusRow(address: NetworkInfo.wifiAddress(), host: camera.host)
@@ -832,12 +837,26 @@ struct AddCameraSheet: View {
 
 private struct ConnectErrorBanner: View {
     let text: String
+    var dismiss: () -> Void
+    @State private var expanded = false
 
     var body: some View {
-        Label {
-            Text(text)
-        } icon: {
+        // Long explanations open on request, so the banner doesn't cover the form.
+        let long = text.count > 140
+        HStack(alignment: .top, spacing: 10) {
             Image(systemName: "wifi.exclamationmark").foregroundStyle(.red)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(text).lineLimit(expanded || !long ? nil : 3)
+                if long {
+                    Button(expanded ? "Less" : "More") { withAnimation(.snappy) { expanded.toggle() } }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button { withAnimation { dismiss() } } label: { Image(systemName: "xmark").foregroundStyle(Theme.secondary) }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss")
         }
         .font(.callout)
         .foregroundStyle(.white)

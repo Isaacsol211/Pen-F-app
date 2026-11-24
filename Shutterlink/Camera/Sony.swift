@@ -73,10 +73,22 @@ final class SonyDriver: CameraDriver {
 
     // MARK: - Connect
 
+    /// Bodies from about 2020 on, which moved to Creators' App and may not offer the older remote API.
+    static func isNewerBody(_ model: String) -> Bool {
+        let m = model.uppercased().replacingOccurrences(of: "-", with: "").replacingOccurrences(of: " ", with: "")
+        return ["ILCE1", "ILCE9M3", "ILCE7M4", "ILCE7RM5", "ILCE7SM3", "ILCE7CM2", "ILCE7CR", "ILCE6700",
+                "ZVE1", "ZVE10", "ZV1M2", "ILME"].contains { m.hasPrefix($0) }
+    }
+
     func connect() async throws {
         try await camera.retryingConnect { try await call("getVersions", timeout: 5) }
         camera.status = "Reading camera info…"
         camera.cameraName = await deviceName() ?? "Sony"
+        if Self.isNewerBody(camera.cameraName ?? "") {
+            camera.cameraNote = "Shutterlink uses Sony's older remote control (Smart Remote / Ctrl w/ Smartphone). "
+                + "Newer bodies like this one use Creators' App instead and may allow only some of it, or none. "
+                + "Try it before buying Pro, and tell us what works."
+        }
         if let info = try? await call("getApplicationInfo") {
             camera.rawCommandList = "Application: \(info.map { "\($0)" }.joined(separator: " "))\n"
         }

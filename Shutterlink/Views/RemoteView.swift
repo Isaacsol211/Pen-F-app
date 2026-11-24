@@ -846,25 +846,49 @@ struct NightVision: ViewModifier {
 
 struct ErrorBanner: View {
     @Environment(CameraModel.self) private var camera
+    /// Long messages show three lines until tapped, so the banner doesn't bury the live view.
+    @State private var expanded = false
 
     var body: some View {
-        if let error = camera.lastError {
-            banner(error, icon: "exclamationmark.triangle.fill", color: .yellow, tint: .red.opacity(0.35)) {
-                camera.lastError = nil
+        VStack(spacing: 6) {
+            if let error = camera.lastError {
+                banner(error, icon: "exclamationmark.triangle.fill", color: .yellow, tint: .red.opacity(0.35)) {
+                    camera.lastError = nil
+                }
+            } else if let note = camera.cameraNote {
+                // Model-specific advice from the model table, until dismissed once for this model.
+                banner(note, icon: "info.circle.fill", color: Theme.accent, tint: Theme.accent.opacity(0.18)) {
+                    camera.dismissCameraNote()
+                }
             }
-        } else if let note = camera.cameraNote {
-            // Model-specific advice from the model table, until dismissed once for this model.
-            banner(note, icon: "info.circle.fill", color: Theme.accent, tint: Theme.accent.opacity(0.18)) {
-                camera.dismissCameraNote()
+            // A one-tap setup that's on stays in view, with its way back.
+            if let on = camera.presetUndo, !camera.presetRunning {
+                Button {
+                    Task { await camera.undoPreset() }
+                } label: {
+                    Label("\(on.title) on · Turn off", systemImage: "checkmark.circle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                }
+                .buttonStyle(.plain)
+                .surface(.regular.tint(.green.opacity(0.35)), in: .capsule)
+                .accessibilityHint("Puts back the settings from before \(on.title)")
+                .transition(.scale.combined(with: .opacity))
             }
         }
+        .animation(.snappy, value: camera.presetUndo)
     }
 
     private func banner(_ text: String, icon: String, color: Color, tint: Color,
                         dismiss: @escaping () -> Void) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon).foregroundStyle(color)
-            Text(text).font(.footnote).frame(maxWidth: .infinity, alignment: .leading)
+            Text(text).font(.footnote).lineLimit(expanded ? nil : 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+                .onTapGesture { withAnimation(.snappy) { expanded.toggle() } }
             Button { withAnimation { dismiss() } } label: { Image(systemName: "xmark") }
                 .accessibilityLabel("Dismiss")
         }

@@ -110,10 +110,20 @@ struct OptionPanel: View {
         case "expcomp": ("Switch to A", "A")
         default: nil
         }
+        let exposure = ["focalvalue", "shutspeedvalue", "isospeedvalue", "wbvalue"].contains(spec.name)
+        let why = if spec.name == "expcomp", mode.uppercased() == "M" {
+            "Exposure compensation has no effect in M, where you set the exposure yourself. It works in P, A and S."
+        } else if mode.isEmpty || !(exposure || spec.name == "expcomp") {
+            // No mode to blame (the body doesn't report it), or not an exposure setting (a drive dial).
+            "Set this on the camera: this body doesn't let the phone change it right now."
+        } else {
+            "The camera sets this itself in \(PropertyFormat.display("takemode", mode)) mode."
+        }
         VStack(alignment: .leading, spacing: 8) {
-            Text("The camera sets this itself in \(PropertyFormat.display("takemode", mode)) mode.")
+            Text(why)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if let unlock, camera.properties["takemode"]?.options.contains(unlock.mode) == true {
                 Button(unlock.label, systemImage: "lock.open") {
                     Task { await camera.setProperty("takemode", to: unlock.mode) }
@@ -130,7 +140,10 @@ struct OptionGrid: View {
     let onSelect: (String) -> Void
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
+        // A fixed height for the rows it needs (up to three), so the panel isn't squeezed to a
+        // row and a half; longer lists scroll, with the indicator showing there's more.
+        let rows = (property.options.count + 2) / 3
+        ScrollView(.vertical, showsIndicators: rows > 3) {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
                 ForEach(Array(property.options.enumerated()), id: \.offset) { _, option in
                     let selected = option == property.value
@@ -158,7 +171,7 @@ struct OptionGrid: View {
             }
             .padding(2)
         }
-        .frame(maxHeight: 190)
+        .frame(height: CGFloat(min(rows, 3)) * 60 + (rows > 3 ? 30 : 0))
         .sensoryFeedback(.selection, trigger: property.value)
     }
 }

@@ -57,7 +57,7 @@ struct ExposureGrid: View {
         let property = camera.properties[name].map(camera.dialOptions(for:))
         let locked = !(property?.settable ?? false)
         let selected = active == name
-        let auto = locked && !["drivemode", "quality"].contains(name)
+        let auto = Self.isAuto(name, locked: locked, mode: camera.properties["takemode"]?.value)
         let value = Self.value(name, property, camera: camera)
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
         return Button {
@@ -69,9 +69,12 @@ struct ExposureGrid: View {
                           color: selected ? Theme.accent : (auto ? Theme.accent.opacity(0.85) : Theme.tertiary))
                 Group {
                     if name == "drivemode" {
-                        Image(systemName: SettingSpec.optionIcon(name, property?.value ?? "") ?? "square")
-                            .font(.system(size: valueSize * 0.85, weight: .semibold))
-                            .frame(height: valueSize * 1.2)
+                        HStack(spacing: 6) {
+                            Image(systemName: SettingSpec.optionIcon(name, property?.value ?? "") ?? "square")
+                            readout(camera.stripValue(name, property), scale: 0.72)
+                        }
+                        .font(.system(size: valueSize * 0.85, weight: .semibold))
+                        .frame(height: valueSize * 1.2)
                     } else if name == "wbvalue" {
                         // A named white balance in full where the cell is wide enough for it.
                         ViewThatFits(in: .horizontal) {
@@ -114,6 +117,13 @@ struct ExposureGrid: View {
             return full
         }
         return camera.stripValue(name, property)
+    }
+
+    /// The camera picks this value itself (shutter in A, aperture in S…), so the cell says AUTO. Not
+    /// for drive or quality, and not for EV in M, where it simply has no effect.
+    static func isAuto(_ name: String, locked: Bool, mode: String?) -> Bool {
+        guard locked, !["drivemode", "quality"].contains(name) else { return false }
+        return !(name == "expcomp" && mode?.uppercased() == "M")
     }
 
     static func label(_ name: String) -> String {

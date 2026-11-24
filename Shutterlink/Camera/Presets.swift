@@ -49,7 +49,7 @@ enum PresetRecipe: String, CaseIterable, Identifiable {
 }
 
 /// The settings before a preset changed them, so Undo can put them back.
-struct SettingsSnapshot: Equatable {
+struct SettingsSnapshot: Equatable, Codable {
     /// The setup that's on (a recipe's id, or a saved preset's).
     let id: String
     let title: String
@@ -119,7 +119,10 @@ extension CameraModel {
         var step = PresetStep(title: title, detail: detail, property: name, value: available ? value : nil,
                               unavailable: unavailable)
         if let mode, !inMode, ["focalvalue", "shutspeedvalue", "expcomp"].contains(name) {
-            step.hint = "Is the camera's mode dial on \(mode)?"
+            step.onCamera = "Turn the camera's mode dial to \(mode), then apply again."
+        } else if name == "drivemode" {
+            // Several bodies have a drive dial the phone can't turn (or say OK and ignore the change).
+            step.onCamera = unavailable
         }
         return step
     }
@@ -167,15 +170,17 @@ extension CameraModel {
     /// Keeps a tripod shot steady: anti-shock drive where the camera has it, else a 2 s self-timer,
     /// else what to set on the camera, so the step never just says "not offered".
     func antiShockStep(_ detail: String = "Avoids shutter-shock blur on a tripod") -> PresetStep {
-        if let timer = option("drivemode", in: ["selftimer|2sec"]), option("drivemode", in: ["lowvib-normal"]) == nil {
-            return presetStep("2 s self-timer", "\(detail): the camera waits 2 s after the press", "drivemode", timer)
-        }
         let onCamera = brand == .panasonic
             ? "Set it on the camera: turn the drive dial to the self-timer and choose 2 s in MENU ▸ Rec ▸ Self Timer, "
-                + "or choose ESHTR (electronic shutter) in MENU ▸ Rec ▸ Shutter Type"
-            : "Set it on the camera: a 2 s self-timer, or the electronic (silent) shutter"
-        return presetStep("Anti-shock drive", detail, "drivemode", option("drivemode", in: ["lowvib-normal"]),
-                          unavailable: onCamera)
+                + "or choose ESHTR (electronic shutter) in MENU ▸ Rec ▸ Shutter Type."
+            : "Set it on the camera: a 2 s self-timer, or the electronic (silent) shutter."
+        var step = if let timer = option("drivemode", in: ["selftimer|2sec"]), option("drivemode", in: ["lowvib-normal"]) == nil {
+            presetStep("2 s self-timer", "\(detail): the camera waits 2 s after the press", "drivemode", timer)
+        } else {
+            presetStep("Anti-shock drive", detail, "drivemode", option("drivemode", in: ["lowvib-normal"]), unavailable: onCamera)
+        }
+        step.onCamera = onCamera
+        return step
     }
 
     /// Runs steps in order and records what the camera accepted. They're worked out again before each
@@ -197,7 +202,7 @@ extension CameraModel {
             guard index < fresh.count else { break }
             presetSteps[index].value = fresh[index].value
             presetSteps[index].unavailable = fresh[index].unavailable
-            presetSteps[index].hint = fresh[index].hint
+            presetSteps[index].onCamera = fresh[index].onCamera
             let step = presetSteps[index]
             guard let value = step.value, let property = properties[step.property] else {
                 presetSteps[index].state = .skipped(step.unavailable)
@@ -212,16 +217,20 @@ extension CameraModel {
             if ok {
                 changed = true
                 presetSteps[index].state = .done
+            } else if let onCamera = step.onCamera {
+                // A dial or mode the phone can't turn: say what to do, not "refused".
+                presetSteps[index].state = .skipped("Couldn't set \(PropertyFormat.display(step.property, value)) from the phone. \(onCamera)")
             } else {
-                var refused = "The camera refused \(PropertyFormat.display(step.property, value))"
-                if let hint = step.hint { refused += ". " + hint }
-                presetSteps[index].state = .failed(refused)
+                presetSteps[index].state = .failed("The camera refused \(PropertyFormat.display(step.property, value))")
             }
         }
         let failed = presetSteps.contains { if case .failed = $0.state { true } else { false } }
         // The setup stays on (even when the camera was already set that way) until it's turned off,
         // which puts back the settings from just before it.
-        if changed || !failed { presetUndo = SettingsSnapshot(id: id, title: title, values: before) }
+        if changed || !failed {
+            presetUndo = SettingsSnapshot(id: id, title: title, values: before)
+            savePresetUndo()
+        }
         return !failed
     }
 
@@ -229,6 +238,23 @@ extension CameraModel {
     /// app set (in A, for example, the camera picks the shutter itself again).
     /// The setup (recipe or saved preset) is on: applied, and not yet turned off.
     func isPresetOn(_ id: String) -> Bool { presetUndo?.id == id }
+
+    /// A setup that's on is kept per camera, so after a restart it still shows and can be turned off.
+    private var presetUndoKey: String? { savedCameras.first.map { "presetOn.\($0.id)" } }
+
+    func savePresetUndo() {
+        guard let key = presetUndoKey else { return }
+        if let presetUndo, let data = try? JSONEncoder().encode(presetUndo) {
+            UserDefaults.standard.set(data, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
+    func restorePresetUndo() {
+        guard let key = presetUndoKey, let data = UserDefaults.standard.data(forKey: key) else { return }
+        presetUndo = try? JSONDecoder().decode(SettingsSnapshot.self, from: data)
+    }
 
     /// Turns the setup off: puts back the settings from before it.
     func undoPreset() async {
@@ -244,6 +270,7 @@ extension CameraModel {
             }
         }
         presetUndo = nil
+        savePresetUndo()
         presetSteps = []
         presetResultsFor = nil
         if missed.isEmpty {
