@@ -29,6 +29,9 @@ struct BracketPanel: View {
     @AppStorage("bracket.frames") private var frames = 3
     @AppStorage("bracket.thirds") private var thirds = 3
     @AppStorage("bracket.target") private var targetRaw = BracketTarget.auto.rawValue
+    @AppStorage("bracket.focus") private var focusMode = false
+    @AppStorage("focusStack.frames") private var focusFrames = 10
+    @AppStorage("focusStack.step") private var focusStepRaw = FocusStepSize.fine.rawValue
 
     private var plan: BracketPlan {
         BracketPlan(frames: frames, thirds: thirds, target: BracketTarget(rawValue: targetRaw) ?? .auto)
@@ -39,7 +42,16 @@ struct BracketPanel: View {
             if camera.bracket.running {
                 progressCard
             } else {
-                setupCards
+                Picker("Bracket", selection: $focusMode) {
+                    Label("Exposure", systemImage: "plusminus.circle").tag(false)
+                    Label("Focus", systemImage: "scope").tag(true)
+                }
+                .pickerStyle(.segmented)
+                if focusMode {
+                    focusCards
+                } else {
+                    setupCards
+                }
             }
         }
         .animation(.smooth, value: camera.bracket.running)
@@ -109,8 +121,61 @@ struct BracketPanel: View {
             Text("Bracketing needs a timed shutter speed, not Bulb or Live modes.")
                 .font(.footnote).foregroundStyle(.secondary)
         }
-        Text("No focus bracketing here: there's no Wi-Fi command to step the focus. Use the camera's own Focus BKT in its Bracketing menu.")
-            .font(.footnote).foregroundStyle(.secondary)
+    }
+
+    // MARK: Focus stacking
+
+    @ViewBuilder private var focusCards: some View {
+        if camera.capabilities.focusDrive {
+            glassCard {
+                Stepper(value: $focusFrames, in: 2...200) {
+                    HStack {
+                        Text("Frames").font(.headline)
+                        Spacer()
+                        Text("\(focusFrames)").font(.body.monospacedDigit().weight(.semibold))
+                    }
+                }
+                Text("Step").font(.headline)
+                Picker("Step", selection: $focusStepRaw) {
+                    ForEach(FocusStepSize.allCases) { Text($0.title).tag($0.rawValue) }
+                }
+                .pickerStyle(.segmented)
+                Text("Fine for macro and wide apertures, coarser for landscapes and stopped-down lenses. The stack stops early if the lens reaches infinity.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            glassCard {
+                Label("Before you start", systemImage: "lightbulb").font(.headline)
+                Text(camera.focusStackSetup)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Label("Not yet tried on a real camera of this brand: shoot a short stack first.", systemImage: "flask")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Button {
+                camera.startFocusStack(frames: focusFrames, step: FocusStepSize(rawValue: focusStepRaw) ?? .fine)
+            } label: {
+                Label("Shoot \(focusFrames)-frame focus stack", systemImage: "square.stack.3d.forward.dottedline")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.accent)
+            .tint(Theme.accent)
+            .disabled(!camera.canFocusStack)
+            if camera.isOpenEndedShutter {
+                Text("Focus stacking needs a timed shutter speed, not Bulb or Live modes.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        } else {
+            glassCard {
+                Label("Use the camera's own focus bracketing", systemImage: "scope").font(.headline)
+                Text(camera.focusStackUnavailable)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var progressCard: some View {
@@ -129,7 +194,7 @@ struct BracketPanel: View {
                 }
                 .frame(width: 84, height: 84)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Bracketing").font(.headline)
+                    Text(camera.bracket.isFocusStack ? "Focus stack" : "Bracketing").font(.headline)
                     if let label = camera.bracket.label {
                         Text(label).font(.subheadline.monospaced()).foregroundStyle(.secondary)
                     }

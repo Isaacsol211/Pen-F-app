@@ -38,6 +38,7 @@ enum PTPOp {
     static let nikonStartLiveView: UInt16 = 0x9201
     static let nikonEndLiveView: UInt16 = 0x9202
     static let nikonGetLiveViewImage: UInt16 = 0x9203
+    static let nikonMfDrive: UInt16 = 0x9204
     static let nikonChangeAfArea: UInt16 = 0x9205
     static let nikonCaptureToCard: UInt16 = 0x9207
     static let nikonStartMovie: UInt16 = 0x920A
@@ -65,6 +66,8 @@ enum NikonResponse {
     static let changeCameraModeFailed: UInt16 = 0xA003
     static let invalidStatus: UInt16 = 0xA004
     static let notLiveView: UInt16 = 0xA00B
+    static let mfDriveStepEnd: UInt16 = 0xA00C
+    static let mfDriveStepInsufficiency: UInt16 = 0xA00E
     static let bulbReleaseBusy: UInt16 = 0xA200
     static let silentReleaseBusy: UInt16 = 0xA201
     static let mediaFull: UInt16 = 0xA207
@@ -103,7 +106,7 @@ final class NikonDriver: CameraDriver {
                            movie: supports(PTPOp.nikonStartMovie), videoSwitch: true,
                            lastShotReview: supports(PTPOp.nikonGetEvent) || supports(PTPOp.nikonGetEventEx),
                            clockSync: false, highResShot: false, cardBrowser: supports(PTPOp.getObjectHandles),
-                           powerOff: false)
+                           powerOff: false, focusDrive: supports(PTPOp.nikonMfDrive))
     }
 
     /// Stable per-install id: cameras that remember paired devices know us by it.
@@ -224,6 +227,36 @@ final class NikonDriver: CameraDriver {
             try? await Task.sleep(for: .milliseconds(100))
         }
         return PTPError.deviceBusy
+    }
+
+    // MARK: - Focus stacking
+
+    /// MfDrive (0x9204): direction 1 = towards the closest point, 2 = towards infinity, then an amount
+    /// (1–32767). Only works in live view and with the lens's AF/MF switch on AF (the camera drives it).
+    func driveFocus(farther: Bool, step: FocusStepSize) async throws -> FocusDriveResult {
+        let amount: UInt32 = switch step {
+        case .fine: 40
+        case .medium: 120
+        case .coarse: 400
+        }
+        for attempt in 0..<2 {
+            let response = try await ptp.transaction(PTPOp.nikonMfDrive, [farther ? 2 : 1, amount], timeout: 10)
+            switch response.code {
+            case PTPError.ok:
+                await waitUntilReady()
+                return .moved
+            case NikonResponse.mfDriveStepEnd, NikonResponse.mfDriveStepInsufficiency:
+                return .endOfTravel
+            case NikonResponse.notLiveView where attempt == 0:
+                // Live view pauses around each capture; give it a moment to come back.
+                try? await Task.sleep(for: .milliseconds(800))
+            case NikonResponse.notLiveView:
+                throw CameraError("The camera only moves focus while live view is on.")
+            default:
+                throw PTPError(code: response.code, operation: PTPOp.nikonMfDrive)
+            }
+        }
+        return .moved
     }
 
     // MARK: - Live view
