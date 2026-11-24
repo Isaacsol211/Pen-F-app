@@ -19,8 +19,10 @@ struct RemoteView: View {
     /// The canvas is big enough for the workspace layouts (see `Workspace`): tools that are sheets on a
     /// phone open as panels in the inspector instead.
     @State private var isWorkspace = false
+    #if !targetEnvironment(macCatalyst)
     /// The scene showing this screen (not just the first connected one).
     @State private var windowScene: UIWindowScene?
+    #endif
     @AppStorage("ui.histogram") private var showHistogram = false
     @AppStorage("ui.grid") private var showGrid = false
     @AppStorage("ui.nightMode") private var nightMode = false
@@ -49,7 +51,7 @@ struct RemoteView: View {
                     // Keep the shutter rail on the side away from the system's vertical bar, or,
                     // where there's no such bar, away from the Dynamic Island.
                     VerticalBarEdgeReader { barEdge in
-                        landscapeLayout(railOnLeading: barEdge.map { $0 == .trailing } ?? !Self.islandOnLeading(in: windowScene),
+                        landscapeLayout(railOnLeading: barEdge.map { $0 == .trailing } ?? !islandOnLeading,
                                         size: geo.size)
                     }
                     .transition(.opacity)
@@ -63,8 +65,12 @@ struct RemoteView: View {
             .onAppear { isWorkspace = workspace }
             .onChange(of: workspace) { _, value in isWorkspace = value }
         }
+        #if !targetEnvironment(macCatalyst)
         .background(WindowSceneReader { windowScene = $0 })
+        #endif
         .task { await camera.runSceneAssistant() }
+        // The Mac menu bar and iPad keyboard shortcuts (see KeyCommands.swift).
+        .focusedSceneValue(\.remoteActions, remoteActions)
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
         // Red night-vision mode keeps your eyes dark-adapted under the stars. Applied only when on:
         // a colour filter over the whole screen forces it to re-render offscreen on every frame.
@@ -124,6 +130,16 @@ struct RemoteView: View {
     /// Widest the portrait controls get, so they stay within reach on an iPad.
     static let controlsMaxWidth: CGFloat = 640
 
+    /// Whether the Dynamic Island is on the leading side (phone layouts in landscape).
+    private var islandOnLeading: Bool {
+        #if targetEnvironment(macCatalyst)
+        false   // A Mac window has no island, and it always gets the workspace layouts anyway.
+        #else
+        Self.islandOnLeading(in: windowScene)
+        #endif
+    }
+
+    #if !targetEnvironment(macCatalyst)
     /// Fallback for scenes with no vertical bar (iPhones without one, iOS before 27.1). Landscape
     /// safe-area insets are symmetric there, so ask this view's scene which way round the phone is.
     /// `.landscapeRight` means the top of the phone (and the island) is on the left.
@@ -135,6 +151,7 @@ struct RemoteView: View {
         // Decide whether to keep it there or fix the rail to one side when the island isn't beside it.
         scene?.effectiveGeometry.interfaceOrientation == .landscapeRight
     }
+    #endif
 
     /// Portrait, like the iPhone Camera app: status on top, a clean viewfinder, and everything you
     /// touch in one band at the bottom (values → modes → shutter).
@@ -408,6 +425,25 @@ struct RemoteView: View {
         }
     }
 
+    // MARK: - Menus and keyboard
+
+    /// What the menu bar (Mac) and keyboard shortcuts (iPad) can do here: the same as the buttons.
+    private var remoteActions: RemoteActions {
+        RemoteActions(
+            openCard: { showGallery = true },
+            cardAvailable: !camera.isBusyExposing && !camera.interval.running && camera.capabilities.cardBrowser,
+            allSettings: { showAllSettings = true },
+            log: { showLog = true },
+            disconnect: { confirmDisconnect = true },
+            activeSetting: activeSetting,
+            toggleDial: { name in
+                // A dial lives where the tool panels do, so close any panel first.
+                for panel in [SidePanel.interval, .bracket, .highRes, .presets, .nd, .motion] { close(panel) }
+                withAnimation(.snappy) { activeSetting = activeSetting == name ? nil : name }
+            },
+            tools: tools)
+    }
+
     // MARK: - Panels (sheets on a phone)
 
     /// The tool panel that is open. One at a time: in the workspace they share the inspector.
@@ -543,7 +579,7 @@ struct RemoteView: View {
                 }
                 if camera.capabilities.clockSync {
                     Button {
-                        Task { if await camera.syncClock() { camera.showToast("Camera clock set to this iPhone") } }
+                        Task { if await camera.syncClock() { camera.showToast("Camera clock set to this \(Platform.device)") } }
                     } label: {
                         Label("Sync camera clock", systemImage: "clock.arrow.2.circlepath")
                     }
@@ -1019,16 +1055,7 @@ struct ShutterButton: View {
         .accessibilityLabel(movie ? (camera.isRecordingMovie ? "Stop recording" : "Record movie") : "Shutter")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction {
-            Task {
-                if camera.isMovieMode {
-                    await camera.toggleMovie()
-                } else if camera.isOpenEndedShutter {
-                    await camera.toggleOpenExposure()
-                } else {
-                    await camera.shutterPressed()
-                    await camera.shutterReleased()
-                }
-            }
+            Task { await camera.pressShutterOnce() }
         }
     }
 }

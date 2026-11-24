@@ -132,7 +132,7 @@ final class NikonDriver: CameraDriver {
         var failure: Error?
         for attempt in 1...3 {
             do {
-                try await ptp.connect(guid: Self.guid, name: UIDevice.current.name.isEmpty ? "iPhone" : UIDevice.current.name)
+                try await ptp.connect(guid: Self.guid, name: UIDevice.current.name.isEmpty ? Platform.device : UIDevice.current.name)
                 failure = nil
                 break
             } catch {
@@ -186,7 +186,7 @@ final class NikonDriver: CameraDriver {
                 } else if self.hasProperty(PTPProp.batteryLevel) {
                     failures += 1
                     if failures == 3 {
-                        self.camera.lastError = "Lost contact with the camera. Check that this iPhone is still on the camera's Wi-Fi."
+                        self.camera.lastError = "Lost contact with the camera. Check that this \(Platform.device) is still on the camera's Wi-Fi."
                     }
                 }
                 try? await Task.sleep(for: .seconds(5))

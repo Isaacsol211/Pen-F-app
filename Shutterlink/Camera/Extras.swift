@@ -319,7 +319,9 @@ extension CameraModel {
 
     /// Fetches the RAW of every starred photo and adds it to Photos (geotagged when that's on).
     /// If Photos won't take a file, it goes to Files ▸ On My iPhone ▸ Shutterlink ▸ RAW instead.
-    func downloadStarredRAWs() {
+    /// With `folder` (a folder picked in the Mac's open panel) the files go straight there instead,
+    /// as they came off the card.
+    func downloadStarredRAWs(to folder: URL? = nil) {
         guard rawImportTask == nil else { return }
         var raws: [CameraImage] = []
         var withoutRAW = 0
@@ -333,21 +335,30 @@ extension CameraModel {
         guard !raws.isEmpty else {
             rawImport = RawImportProgress(message: withoutRAW > 0
                 ? "None of the starred photos has a RAW file next to it. Shoot RAW+JPEG to use this."
-                : "Star some photos first: tap and hold a photo, or use the star when viewing it.")
+                : "Star some photos first: \(Platform.isMac ? "right-click" : "tap and hold") a photo, or use the star when viewing it.")
             return
         }
         rawImport = RawImportProgress(done: 0, total: raws.count)
         rawImportTask = Task { [weak self] in
             guard let self else { return }
-            let access = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-            let photosAllowed = access == .authorized || access == .limited
-            var toPhotos = 0, toFiles = 0, failed = 0, tagged = 0
+            // A folder from the open panel is only ours while we hold its security scope.
+            let scoped = folder?.startAccessingSecurityScopedResource() ?? false
+            defer { if scoped { folder?.stopAccessingSecurityScopedResource() } }
+            var photosAllowed = false
+            if folder == nil {
+                let access = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+                photosAllowed = access == .authorized || access == .limited
+            }
+            var toPhotos = 0, toFiles = 0, toFolder = 0, failed = 0, tagged = 0
             for raw in raws {
                 if Task.isCancelled { break }
                 self.rawImport?.current = raw.name
                 do {
                     let data = try await self.downloadOriginal(raw)
-                    if photosAllowed, let didTag = try? await self.addToPhotos(data, for: raw) {
+                    if let folder {
+                        try Self.save(data, name: raw.name, in: folder)
+                        toFolder += 1
+                    } else if photosAllowed, let didTag = try? await self.addToPhotos(data, for: raw) {
                         toPhotos += 1
                         if didTag { tagged += 1 }
                     } else {
@@ -363,17 +374,34 @@ extension CameraModel {
             var parts: [String] = []
             if toPhotos > 0 { parts.append("\(toPhotos) to Photos\(tagged > 0 ? " (\(tagged) geotagged)" : "")") }
             if toFiles > 0 { parts.append("\(toFiles) to Files ▸ Shutterlink ▸ RAW") }
+            if toFolder > 0, let folder { parts.append("\(toFolder) to \(folder.lastPathComponent)") }
             var message = parts.isEmpty ? "No RAW files were saved." : "Saved \(parts.joined(separator: ", "))."
             if failed > 0 { message += " \(failed) couldn't be downloaded." }
             if withoutRAW > 0 { message += " \(withoutRAW) starred photo\(withoutRAW == 1 ? " has" : "s have") no RAW." }
             if Task.isCancelled { message = "Stopped. " + message }
-            self.rawImport = RawImportProgress(done: toPhotos + toFiles, total: raws.count, message: message)
+            self.rawImport = RawImportProgress(done: toPhotos + toFiles + toFolder, total: raws.count, message: message)
             self.rawImportTask = nil
         }
     }
 
     func cancelRawImport() {
         rawImportTask?.cancel()
+    }
+
+    /// Writes into `folder` under the card's file name, adding " 2", " 3"… rather than replacing a
+    /// different file of the same name (cameras restart their numbering).
+    static func save(_ data: Data, name: String, in folder: URL) throws {
+        let fm = FileManager.default
+        var target = folder.appendingPathComponent(name)
+        let base = (name as NSString).deletingPathExtension, ext = (name as NSString).pathExtension
+        var n = 2
+        while fm.fileExists(atPath: target.path) {
+            // The same file saved before: nothing to do.
+            if let size = (try? fm.attributesOfItem(atPath: target.path))?[.size] as? Int, size == data.count { return }
+            target = folder.appendingPathComponent("\(base) \(n)").appendingPathExtension(ext)
+            n += 1
+        }
+        try data.write(to: target, options: .atomic)
     }
 
     /// Writes into the app's Documents/RAW folder, which the Files app shows.

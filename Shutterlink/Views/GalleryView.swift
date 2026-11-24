@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Browses the SD card. The camera has to be in playback mode for this, so live view
 /// stops while it's open and restarts on Done.
@@ -9,6 +10,8 @@ struct GalleryView: View {
     @State private var starredOnly = false
     /// Workspace only: the photo in the preview pane.
     @State private var selectedID: CameraImage.ID?
+    /// Mac: the open panel that picks where the starred RAWs go.
+    @State private var pickRawFolder = false
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 3)]
     /// Larger thumbnails where there's a large canvas to fill.
@@ -70,7 +73,7 @@ struct GalleryView: View {
                                    description: Text("Nothing on the card yet."))
         } else if starredOnly && starredCount == 0 {
             ContentUnavailableView("No starred photos", systemImage: "star",
-                                   description: Text("Tap and hold a photo to star it, or use the star when viewing it."))
+                                   description: Text("\(Platform.isMac ? "Right-click" : "Tap and hold") a photo to star it, or use the star when viewing it."))
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14, pinnedViews: [.sectionHeaders]) {
@@ -155,14 +158,19 @@ struct GalleryView: View {
                     .frame(maxWidth: 230)
                     Spacer(minLength: 0)
                     Button {
-                        camera.downloadStarredRAWs()
+                        // On a Mac the RAWs go to a folder you pick (for Lightroom, Capture One…);
+                        // on iPhone and iPad, to Photos.
+                        if Platform.isMac { pickRawFolder = true } else { camera.downloadStarredRAWs() }
                     } label: {
-                        Label("RAWs", systemImage: "arrow.down.circle")
+                        Label(Platform.isMac ? "RAWs to Folder…" : "RAWs", systemImage: "arrow.down.circle")
                     }
                     .buttonStyle(.accent)
                     .tint(Theme.accent)
                     .disabled(starredCount == 0 || importing)
                     .accessibilityLabel("Download the RAW files of starred photos")
+                    .fileImporter(isPresented: $pickRawFolder, allowedContentTypes: [.folder]) { result in
+                        if case .success(let folder) = result { camera.downloadStarredRAWs(to: folder) }
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 4)
@@ -177,7 +185,7 @@ struct GalleryView: View {
             EmptyView()
         } else if items.isEmpty {
             Label(folder.isForeign
-                  ? "The camera lists this folder (made by another camera) as empty, so nothing in it can be fetched over Wi-Fi. If it holds photos, put the card in a USB-C SD reader on your iPhone and use Photos ▸ Import."
+                  ? "The camera lists this folder (made by another camera) as empty, so nothing in it can be fetched over Wi-Fi. If it holds photos, \(Platform.isMac ? "put the card in your Mac's SD card slot or a card reader and import it with Photos or Finder" : "put the card in a USB-C SD reader on your iPhone and use Photos ▸ Import")."
                   : "No photos in this folder.",
                   systemImage: folder.isForeign ? "camera.badge.ellipsis" : "photo")
                 .font(.footnote)
@@ -348,6 +356,9 @@ private struct PhotoPage: View {
     @State private var loadError: String?
     @State private var saving = false
     @State private var saveMessage: String?
+    /// Mac: the original, downloaded and waiting for the save panel.
+    @State private var exportFile: OriginalFile?
+    @State private var exporting = false
 
     var body: some View {
         ZStack {
@@ -394,6 +405,24 @@ private struct PhotoPage: View {
                     .buttonStyle(.accent)
                     .tint(Theme.accent)
                     .allowsHitTesting(!saving)
+                    #if targetEnvironment(macCatalyst)
+                    // The original as it came off the card, to a folder you pick.
+                    Button {
+                        Task { await saveAs() }
+                    } label: {
+                        Label("Save As…", systemImage: "folder")
+                    }
+                    .buttonStyle(.surface)
+                    .allowsHitTesting(!saving)
+                    .fileExporter(isPresented: $exporting, document: exportFile, contentType: .data,
+                                  defaultFilename: image.name) { result in
+                        switch result {
+                        case .success(let url): saveMessage = "Saved \(url.lastPathComponent) to \(url.deletingLastPathComponent().lastPathComponent)."
+                        case .failure(let error): saveMessage = error.localizedDescription
+                        }
+                        exportFile = nil
+                    }
+                    #endif
                 }
                 if let saveMessage {
                     Text(saveMessage).font(.footnote).foregroundStyle(.secondary).transition(.blurReplace)
@@ -409,6 +438,20 @@ private struct PhotoPage: View {
             do { preview = try await camera.preview(for: image) } catch { loadError = error.localizedDescription }
         }
     }
+
+    #if targetEnvironment(macCatalyst)
+    private func saveAs() async {
+        saving = true
+        saveMessage = nil
+        defer { saving = false }
+        do {
+            exportFile = OriginalFile(data: try await camera.downloadOriginal(image))
+            exporting = true
+        } catch {
+            saveMessage = error.localizedDescription
+        }
+    }
+    #endif
 
     private func save() async {
         saving = true
@@ -464,5 +507,21 @@ private struct ZoomableImage: View {
 
     private func reset() {
         scale = 1; lastScale = 1; offset = .zero; lastOffset = .zero
+    }
+}
+
+/// A photo or video as it came off the card, for the Mac's save panel.
+struct OriginalFile: FileDocument {
+    static let readableContentTypes: [UTType] = [.data]
+    let data: Data
+
+    init(data: Data) { self.data = data }
+
+    init(configuration: ReadConfiguration) throws {
+        data = configuration.file.regularFileContents ?? Data()
+    }
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
     }
 }

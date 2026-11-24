@@ -168,7 +168,7 @@ actor PTPIPClient {
         let (type, reply) = try await withTimeout(30) { try await Self.readPacket(command) }
         if type == PTPIPPacket.initFail.rawValue {
             let reason = reply.count >= 4 ? reply.le32(0) : 0
-            throw CameraError(String(format: "The camera turned the connection down (PTP/IP Init Fail 0x%X). On the camera, allow this iPhone or start its Wi-Fi connection again.", reason))
+            throw CameraError(String(format: "The camera turned the connection down (PTP/IP Init Fail 0x%X). On the camera, allow this \(Platform.device) or start its Wi-Fi connection again.", reason))
         }
         guard type == PTPIPPacket.initCommandAck.rawValue, reply.count >= 20 else {
             throw CameraError("The camera didn't answer the PTP/IP handshake (packet type \(type)).")

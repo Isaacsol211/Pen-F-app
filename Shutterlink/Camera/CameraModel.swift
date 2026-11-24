@@ -413,7 +413,7 @@ final class CameraModel {
             phase = .connected
             UserDefaults.standard.set(true, forKey: "hasConnected")
             rememberConnectedCamera()
-            UIApplication.shared.isIdleTimerDisabled = true
+            KeepAwake.set(true)
             status = nil
             updateLocationLogging()
             await enterRecMode()
@@ -456,7 +456,7 @@ final class CameraModel {
     }
 
     private func teardown() {
-        UIApplication.shared.isIdleTimerDisabled = false
+        KeepAwake.set(false)
         driver?.teardown()
         driver = nil
         activeHost = nil
@@ -740,7 +740,7 @@ final class CameraModel {
         let data = try await downloadOriginal(image)
         let access = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard access == .authorized || access == .limited else {
-            throw CameraError("Photos access is off. Turn it on in Settings ▸ Shutterlink ▸ Photos.")
+            throw CameraError("Photos access is off. Turn it on in \(Platform.photosSettings).")
         }
         return try await addToPhotos(data, for: image)
     }
@@ -787,14 +787,14 @@ final class CameraModel {
         // iOS reports a denied Local Network permission inside the error's network-path details.
         let details = "\(urlError) \((urlError as NSError).userInfo)"
         if details.localizedCaseInsensitiveContains("local network prohibited") {
-            return "iOS is blocking Local Network access for Shutterlink. Turn it on in Settings ▸ Privacy & Security ▸ Local Network, then tap Connect again."
+            return "\(Platform.os) is blocking Local Network access for Shutterlink. Turn it on in \(Platform.settings) ▸ Privacy & Security ▸ Local Network, then \(Platform.tap) Connect again."
         }
 
         let reason: String
         switch urlError.code {
         case .timedOut: reason = "No reply from \(host) (timed out)."
         case .cannotConnectToHost: reason = "\(host) refused the connection."
-        case .notConnectedToInternet, .dataNotAllowed: reason = "iOS says there is no network route to \(host)."
+        case .notConnectedToInternet, .dataNotAllowed: reason = "\(Platform.os) says there is no network route to \(host)."
         case .networkConnectionLost: reason = "The connection to \(host) dropped."
         case .cannotFindHost: reason = "Can't find \(host)."
         default: reason = urlError.localizedDescription
@@ -802,9 +802,9 @@ final class CameraModel {
 
         let network: String
         if let wifi = NetworkInfo.wifiAddress() {
-            network = "This iPhone is on Wi-Fi (\(wifi)), but probably not the camera's network: home routers often use 192.168.0.x too. Open Settings ▸ Wi-Fi and check it says \(ssidHint); iOS likes to switch back to a network with internet. Also check Local Network is on for Shutterlink in Settings ▸ Privacy & Security."
+            network = "This \(Platform.device) is on Wi-Fi (\(wifi)), but probably not the camera's network: home routers often use 192.168.0.x too. Open \(Platform.settings) ▸ Wi-Fi and check it says \(ssidHint); \(Platform.os) likes to switch back to a network with internet. Also check Local Network is on for Shutterlink in \(Platform.settings) ▸ Privacy & Security."
         } else {
-            network = "This iPhone isn't on Wi-Fi. Join \(ssidHint) in Settings ▸ Wi-Fi."
+            network = "This \(Platform.device) isn't on Wi-Fi. Join \(ssidHint) in \(Platform.settings) ▸ Wi-Fi."
         }
         return "\(reason) \(network) [code \(urlError.code.rawValue)]"
     }

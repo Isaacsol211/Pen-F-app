@@ -153,7 +153,7 @@ final class SonyDriver: CameraDriver {
                 } catch {
                     failures += 1
                     if failures == 3 {
-                        self.camera.lastError = "Lost contact with the camera. Check that this iPhone is still on the camera's Wi-Fi."
+                        self.camera.lastError = "Lost contact with the camera. Check that this \(Platform.device) is still on the camera's Wi-Fi."
                     }
                 }
             }

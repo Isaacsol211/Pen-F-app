@@ -188,7 +188,7 @@ struct ConnectView: View {
     private func cameraList(grid: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             CapsLabel("Your cameras")
-            Text("Turn on the camera's Wi-Fi and join it in Settings ▸ Wi-Fi, then tap it.")
+            Text("Turn on the camera's Wi-Fi and join it in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) it.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -292,7 +292,12 @@ struct ConnectView: View {
 
     private var tip: some View {
         Label {
+            #if targetEnvironment(macCatalyst)
+            // No Action button on a Mac; the same shortcut is in Shortcuts and Spotlight.
+            Text("**One step next time:** run the \"Connect to Camera\" shortcut from Spotlight or the Shortcuts app, or give it a keyboard shortcut there. It reconnects to the camera you used last.")
+            #else
             Text("**One tap next time:** put the \"Connect to Camera\" shortcut on the Action button (Settings ▸ Action Button ▸ Shortcut ▸ Shutterlink). It reconnects to the camera you used last.")
+            #endif
         } icon: {
             Image(systemName: "bolt.circle").foregroundStyle(Theme.accent)
         }
@@ -338,50 +343,50 @@ struct ConnectView: View {
                 ("Start the camera's Wi-Fi",
                  "Open its smartphone or Wi-Fi connection menu. Pick your brand above for the exact steps."),
                 ("Join that network",
-                 "Settings ▸ Wi-Fi ▸ the camera's network, with the password the camera shows. \"No Internet Connection\" is expected."),
+                 "\(Platform.settings) ▸ Wi-Fi ▸ the camera's network, with the password the camera shows. \"No Internet Connection\" is expected."),
                 ("Connect",
-                 "Allow Local Network access when iOS asks. The app works out which camera it is from the network and by asking it."),
+                 "Allow Local Network access when \(Platform.os) asks. The app works out which camera it is from the network and by asking it."),
             ]
         case .olympus:
             return [
                 ("Start Wi-Fi on the camera",
                  "Open Connection to Smartphone (OM System: Wi-Fi/Bluetooth ▸ Connection to Smartphone) and wait for the screen with the SSID, password and QR code."),
                 ("Join that network",
-                 "Settings ▸ Wi-Fi ▸ the camera's network (E-M10-P-…, PEN-F-P-…, OM-1-P-…) with the password from the camera. \"No Internet Connection\" is expected. If iOS hops back to your home Wi-Fi, turn off Auto-Join for it."),
-                ("Connect", "Allow Local Network access when iOS asks. Live view needs it."),
+                 "\(Platform.settings) ▸ Wi-Fi ▸ the camera's network (E-M10-P-…, PEN-F-P-…, OM-1-P-…) with the password from the camera. \"No Internet Connection\" is expected. If \(Platform.os) hops back to your home Wi-Fi, turn off Auto-Join for it."),
+                ("Connect", "Allow Local Network access when \(Platform.os) asks. Live view needs it."),
             ]
         case .panasonic:
             return [
                 ("Start Wi-Fi on the camera",
                  "MENU ▸ Setup ▸ Wi-Fi ▸ Wi-Fi Function ▸ New Connection ▸ Remote Shooting & View. The camera shows its network name."),
                 ("Join that network",
-                 "Settings ▸ Wi-Fi ▸ the camera's network (e.g. GH5-…). Enter the password if the camera shows one. \"No Internet Connection\" is expected."),
+                 "\(Platform.settings) ▸ Wi-Fi ▸ the camera's network (e.g. GH5-…). Enter the password if the camera shows one. \"No Internet Connection\" is expected."),
                 ("Connect, then approve on the camera",
-                 "Allow Local Network access when iOS asks. The first time, the camera asks whether to connect to this iPhone: choose Yes."),
+                 "Allow Local Network access when \(Platform.os) asks. The first time, the camera asks whether to connect to this \(Platform.device): choose Yes."),
             ]
         case .nikon:
             return [
                 ("Start Wi-Fi on the camera",
                  "Z bodies: MENU ▸ Network ▸ Connect to smart device ▸ Wi-Fi connection ▸ Establish Wi-Fi connection. Older DSLRs with built-in Wi-Fi: turn Wi-Fi on in the Setup menu."),
                 ("Join that network",
-                 "Settings ▸ Wi-Fi ▸ the camera's network, with the password the camera shows. \"No Internet Connection\" is expected."),
-                ("Connect", "Allow Local Network access when iOS asks. If the camera asks to allow the connection, choose OK."),
+                 "\(Platform.settings) ▸ Wi-Fi ▸ the camera's network, with the password the camera shows. \"No Internet Connection\" is expected."),
+                ("Connect", "Allow Local Network access when \(Platform.os) asks. If the camera asks to allow the connection, choose OK."),
             ]
         case .canon:
             return [
                 ("Unlock CCAPI once",
                  "Canon locks third-party control until the camera is activated with Canon's free CCAPI tool (developer account, one time per camera). Without it the app can't connect."),
                 ("Start Wi-Fi on the camera",
-                 "MENU ▸ Wireless ▸ Wi-Fi ▸ the CCAPI connection, as camera access point. Join the camera's network in Settings ▸ Wi-Fi."),
-                ("Connect", "Allow Local Network access when iOS asks."),
+                 "MENU ▸ Wireless ▸ Wi-Fi ▸ the CCAPI connection, as camera access point. Join the camera's network in \(Platform.settings) ▸ Wi-Fi."),
+                ("Connect", "Allow Local Network access when \(Platform.os) asks."),
             ]
         case .sony:
             return [
                 ("Start Smart Remote on the camera",
                  "Older Alpha / RX bodies: MENU ▸ Application ▸ Smart Remote Control (or Ctrl w/ Smartphone). Bodies from 2020 on (a7 IV, ZV-E10…) don't offer this to other apps."),
                 ("Join that network",
-                 "Settings ▸ Wi-Fi ▸ DIRECT-xxxx:ILCE-…, with the password the camera shows."),
-                ("Connect", "Allow Local Network access when iOS asks."),
+                 "\(Platform.settings) ▸ Wi-Fi ▸ DIRECT-xxxx:ILCE-…, with the password the camera shows."),
+                ("Connect", "Allow Local Network access when \(Platform.os) asks."),
             ]
         }
     }
@@ -608,12 +613,22 @@ struct AddCameraSheet: View {
                      : "The \(camera.brand.shortTitle) camera is normally at \(camera.brand.defaultHost)." + simulatorMockHint)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                #if targetEnvironment(macCatalyst)
+                // The Mac joins the camera's network itself: open System Settings ▸ Wi-Fi.
+                Button("Open Wi-Fi Settings", systemImage: "wifi") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.wifi-settings-extension") {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                .buttonStyle(.surface)
+                #else
                 Button("Open iPhone Settings", systemImage: "gear") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         UIApplication.shared.open(url)
                     }
                 }
                 .buttonStyle(.surface)
+                #endif
             }
             .padding(20)
             .surface(.regular, in: .rect(cornerRadius: 24, style: .continuous))
@@ -665,7 +680,7 @@ private struct WifiStatusRow: View {
 
     var body: some View {
         let (icon, color, text): (String, Color, String) = {
-            guard let address else { return ("wifi.slash", .orange, "This iPhone isn't on Wi-Fi") }
+            guard let address else { return ("wifi.slash", .orange, "This \(Platform.device) isn't on Wi-Fi") }
             // The phone should be on the camera's subnet (192.168.0.x for Olympus, 192.168.54.x for LUMIX).
             let octets = host.split(separator: ":").first.map { $0.split(separator: ".") } ?? []
             if octets.count == 4, octets[0] != "127", !address.hasPrefix(octets.prefix(3).joined(separator: ".") + ".") {
@@ -673,7 +688,7 @@ private struct WifiStatusRow: View {
                         "On another Wi-Fi network (\(address)). Join the camera's network first.")
             }
             return ("wifi", Theme.secondary,
-                    "Wi-Fi \(address). Check Settings ▸ Wi-Fi shows the camera's network.")
+                    "Wi-Fi \(address). Check \(Platform.settings) ▸ Wi-Fi shows the camera's network.")
         }()
         Label(text, systemImage: icon)
             .font(.footnote)
@@ -707,7 +722,7 @@ private struct StepRow: View {
 }
 
 /// Where the mock cameras listen, shown under the address field in the Simulator only.
-#if targetEnvironment(simulator)
+#if targetEnvironment(simulator) || (DEBUG && targetEnvironment(macCatalyst))
 private let simulatorMockHint = " For the mock cameras, use 127.0.0.1 with the mock's port: 8080 Olympus, 8082 LUMIX, 15740 Nikon, 8084 Canon, 8086 Sony."
 #else
 private let simulatorMockHint = ""
