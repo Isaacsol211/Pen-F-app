@@ -6,6 +6,9 @@ struct ConnectView: View {
     @Environment(CameraModel.self) private var camera
     @State private var showAdd = false
     @State private var connectingID: String?
+    /// Edit on "Your cameras": each card shows a button to forget it.
+    @State private var editingCameras = false
+    @State private var forgetting: SavedCamera?
     /// The canvas is big enough for the two-pane home (see `Workspace`).
     @State private var isWorkspace = false
     /// Brand whose steps the connection guide shows; until one is picked, the last camera's.
@@ -248,7 +251,16 @@ struct ConnectView: View {
     /// `grid`: cards side by side where the column is wide enough (the workspace home).
     private func cameraList(grid: Bool) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            CapsLabel("Your cameras")
+            HStack {
+                CapsLabel("Your cameras")
+                Spacer()
+                Button(editingCameras ? "Done" : "Edit") {
+                    withAnimation(.snappy) { editingCameras.toggle() }
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .disabled(camera.phase != .disconnected)
+            }
             Text(CameraWiFi.canJoin
                  ? "Turn on the camera's Wi-Fi and tap it. A camera added by scanning joins its Wi-Fi by itself; for others, join it in Settings ▸ Wi-Fi first, or scan its code once."
                  : "Turn on the camera's Wi-Fi and join it in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) it.")
@@ -265,6 +277,19 @@ struct ConnectView: View {
                 ForEach(camera.savedCameras) { card($0) }
                 addButton(minHeight: 60)
             }
+        }
+        .confirmationDialog("Forget \(forgetting?.name ?? "this camera")?", isPresented: .init(
+            get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }), titleVisibility: .visible) {
+            Button("Forget", role: .destructive) {
+                guard let saved = forgetting else { return }
+                withAnimation(.snappy) {
+                    camera.forget(saved)
+                    if camera.savedCameras.isEmpty { editingCameras = false }
+                }
+                forgetting = nil
+            }
+        } message: {
+            Text("It comes off this list, with the Wi-Fi password Shutterlink saved for it. Connect again to add it back.")
         }
     }
 
@@ -321,7 +346,7 @@ struct ConnectView: View {
                 Spacer(minLength: 8)
                 if connecting {
                     ProgressView().tint(Theme.accent)
-                } else {
+                } else if !editingCameras {
                     Image(systemName: "chevron.right")
                         .font(.footnote.weight(.bold))
                         .foregroundStyle(Theme.tertiary)
@@ -336,7 +361,24 @@ struct ConnectView: View {
             .contentShape(.rect(cornerRadius: 20))
         }
         .buttonStyle(.plain)
-        .disabled(camera.phase != .disconnected)
+        .disabled(camera.phase != .disconnected || editingCameras)
+        .overlay(alignment: .trailing) {
+            if editingCameras {
+                Button {
+                    forgetting = saved
+                } label: {
+                    Image(systemName: "trash.circle.fill")
+                        .font(.system(size: 30))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .red)
+                        .frame(width: Theme.target, height: Theme.target)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
+                .accessibilityLabel("Forget \(saved.name)")
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
         .contextMenu {
             Button("Forget this camera", systemImage: "trash", role: .destructive) {
                 withAnimation(.snappy) { camera.forget(saved) }
