@@ -339,9 +339,16 @@ password the camera shows, then Join Wi-Fi and Connect. Android asks you to conf
 the phone on that network while the app holds it, and lets go on Disconnect. The app waits until the phone has an
 address on that network before its first request. The network is saved with the camera (the password encrypted
 with a key in the Android Keystore), so tapping the camera's card later joins and connects in one go. Joining it in
-Settings ▸ Wi-Fi works too. The camera's QR code is read the same way as on iOS (Olympus/OM `OIS1,…` with its
-scrambled name and password, the standard `WIFI:S:…;P:…;;`, Sony `W01:…`, unverified), and each scanned code goes
-to the request log; the scan buttons stay hidden until a QR scanning library is added (`ui/QrScanner.kt`).
+Settings ▸ Wi-Fi works too.
+
+**Scanning the camera's QR code.** "Scan the camera's QR code" (top of the home screen and of Add a camera) opens
+Google's code scanner, which runs in Google Play services with its own camera screen, so the app needs no camera
+permission (`play-services-code-scanner`, about 0.4 MB on top of what ML Kit already brings). The scan joins the
+camera's Wi-Fi and connects straight away. Codes are read as on iOS (Olympus/OM `OIS1,…` with its scrambled name
+and password, the standard `WIFI:S:…;P:…;;`, Sony `W01:…`, unverified), and each scanned code goes to the request
+log. A Play Store install fetches the scanner with the app; otherwise Play services downloads it on first use, and
+the button says so meanwhile. Phones without Google Play services don't show the scan buttons: type the name and
+password instead.
 
 **Permissions**, all asked only when needed:
 - **Nearby Wi-Fi devices** (Android 13+; location on Android 10–12): only for joining a camera's Wi-Fi from the app
@@ -410,7 +417,9 @@ the emulator join its own Wi-Fi through the same "Connect to device" prompt a ca
     prompt, then the Sony mock), the camera saved with that network, and its card joining and connecting again
     after Disconnect; Save new photos to the gallery from the shutter button; the typed Wi-Fi fields.
 - Not tried yet (needs a real phone and camera): joining a real camera's network, how often Android asks to confirm
-  it (the emulator asked every time), the Nearby devices prompt, and scanning a code with the phone's camera.
+  it (the emulator asked every time), the Nearby devices prompt, and the scanner screen itself (the emulator's Google
+  APIs image, with no Play Store or account, never finished downloading the scanner module; the "still downloading"
+  message showed instead).
 - Not ported yet: geotagging, the "Connect to Camera" shortcut, a Wear OS remote, and a tablet layout like the iPad one.
 
 ## Test without the camera (mock cameras)

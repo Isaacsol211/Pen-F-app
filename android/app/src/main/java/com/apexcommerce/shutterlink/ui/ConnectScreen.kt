@@ -111,7 +111,7 @@ fun ConnectScreen(camera: CameraModel) {
         withWifiPermission {
             scanNote = if (camera.connectFromScannedCode(code)) null else UNREADABLE_CODE
         }
-    })
+    }, onError = { scanNote = it })
 
     if (showAdd) {
         AddCameraScreen(camera) { showAdd = false }
@@ -356,7 +356,7 @@ private fun AddCameraScreen(camera: CameraModel, onClose: () -> Unit) {
         } else {
             scanNote = UNREADABLE_CODE
         }
-    })
+    }, onError = { scanNote = it })
     val joinsWifi = camera.wifiSsid.isNotBlank()
     androidx.activity.compose.BackHandler(enabled = !connecting) { onClose() }
 
