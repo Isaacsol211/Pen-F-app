@@ -184,7 +184,7 @@ struct RemoteView: View {
         }
         .sheet(isPresented: $toolsOpen) {
             ToolsSheet(tools: tools, isOpen: $toolsOpen)
-                .presentationDetents([.large])
+                .presentationDetents([.height(600), .large])
                 .dSheet()
         }
     }

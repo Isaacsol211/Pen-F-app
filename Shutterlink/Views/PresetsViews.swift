@@ -24,6 +24,10 @@ struct PresetsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            Text("One tap.\nCamera set.")
+                .font(.num(60, relativeTo: .largeTitle))
+                .lineSpacing(-8)
+                .fixedSize(horizontal: false, vertical: true)
             if let undo = camera.presetUndo {
                 undoCard(undo)
             }
@@ -106,10 +110,10 @@ struct PresetsPanel: View {
                         on: Bool = false) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Theme.onAccent)
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(Theme.accent)
                 .frame(width: 36, height: 36)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.accent))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.outline, lineWidth: 1))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.headline).foregroundStyle(Theme.text)
                 Text(subtitle).font(.footnote).foregroundStyle(Theme.secondary).lineLimit(2)

@@ -400,3 +400,12 @@ struct DialReadout: View {
         .accessibilityElement(children: .combine)
     }
 }
+
+private struct AstroPaletteKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    /// Set inside the Astro sheet: its night-blue palette.
+    var astroPalette: Bool {
+        get { self[AstroPaletteKey.self] }
+        set { self[AstroPaletteKey.self] = newValue }
+    }
+}

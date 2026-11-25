@@ -18,6 +18,10 @@ struct AstroView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    BigNumber(value: trails ? (camera.hasLiveComposite ? "Live Composite" : "30 s series")
+                                             : "\(Int(plan.maxSeconds.rounded())) s",
+                              caption: trails ? "Star trails" : "The longest exposure that keeps stars round",
+                              size: trails ? 60 : 132, color: Theme.astroText, accent: Theme.astroAccent)
                     Picker("Style", selection: $trails) {
                         Label("Stars", systemImage: "sparkles").tag(false)
                         Label("Star trails", systemImage: "circle.dotted.circle").tag(true)
@@ -36,7 +40,7 @@ struct AstroView: View {
                             Label(Int(focalLength) == lens ? "From your lens (\(lens) mm)" : "Your lens reports \(lens) mm",
                                   systemImage: Int(focalLength) == lens ? "checkmark.circle.fill" : "camera.aperture")
                                 .font(.footnote)
-                                .foregroundStyle(Int(focalLength) == lens ? Color.green : .secondary)
+                                .foregroundStyle(Int(focalLength) == lens ? Theme.green : Theme.secondary)
                                 .onTapGesture { withAnimation(.snappy) { focalLength = Double(lens) } }
                         }
                         Slider(value: $focalLength, in: 7...45, step: 1)
@@ -139,7 +143,7 @@ struct AstroView: View {
                         .padding(.vertical, 8)
                     }
                     .buttonStyle(.accent)
-                    .tint(astroOn ? Color.green : Theme.accent)
+                    .tint(astroOn ? Theme.green : Theme.astroAccent)
                     .disabled(camera.presetRunning || camera.mode != .rec)
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
@@ -165,6 +169,11 @@ struct AstroView: View {
         }
         .presentationDetents([.medium, .large])
         .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+        .presentationBackground(Theme.astroBackground)
+        .presentationCornerRadius(28)
+        .presentationDragIndicator(.visible)
+        .tint(Theme.astroAccent)
+        .environment(\.astroPalette, true)
     }
 
     private func tip(_ text: String) -> some View {

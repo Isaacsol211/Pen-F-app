@@ -5,17 +5,7 @@ import SwiftUI
 struct HighResPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Image(systemName: "square.grid.3x3.square")
-                    .font(.system(size: 34, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .symbolEffect(.pulse, options: .repeating.speed(0.4))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("High Res Shot").font(.title3.weight(.semibold))
-                    Text("8 sensor-shifted frames → 50 MP JPEG, 80 MP RAW")
-                        .font(.subheadline).foregroundStyle(Theme.secondary)
-                }
-            }
+            BigNumber(value: "50 MP", caption: "8 sensor-shifted frames → 50 MP JPEG, 80 MP RAW", size: 120)
             card(spacing: 10) {
                 Label("Turn it on at the camera", systemImage: "camera")
                     .font(.headline)
