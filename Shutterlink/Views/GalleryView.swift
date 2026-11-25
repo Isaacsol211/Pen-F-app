@@ -45,15 +45,15 @@ struct GalleryView: View {
                 }
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Done", systemImage: "checkmark") {
+                        Button("Done") {
                             dismiss()
                             Task { await camera.closeGallery() }
                         }
-                    }
+                    }.sharedBackgroundVisibility(.hidden)
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("Reload", systemImage: "arrow.clockwise") { Task { await camera.openGallery() } }
+                        Button("Reload") { Task { await camera.openGallery() } }
                             .disabled(camera.galleryLoading)
-                    }
+                    }.sharedBackgroundVisibility(.hidden)
                 }
                 .animation(.smooth, value: camera.rawImport)
                 .task { await camera.openGallery() }
@@ -194,8 +194,12 @@ struct GalleryView: View {
                 .surface(.regular, in: .rect(cornerRadius: 16, style: .continuous))
                 .padding(.horizontal, 10)
         } else if !items.isEmpty {
-            LazyVGrid(columns: selects ? Self.workspaceColumns : columns, spacing: 3) {
-                ForEach(items) { image in
+            let perRow = selects ? 4 : 3
+            let rows = stride(from: 0, to: items.count, by: perRow).map { Array(items[$0..<min($0 + perRow, items.count)]) }
+            LazyVStack(spacing: 8) {
+              ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                FilmStrip {
+                  ForEach(row) { image in
                     Group {
                         if selects {
                             // In the split, a tap shows the photo in the preview pane.
@@ -230,9 +234,13 @@ struct GalleryView: View {
                             Text("Has a RAW file")
                         }
                     }
+                  }
+                  if row.count < perRow {
+                      ForEach(0..<(perRow - row.count), id: \.self) { _ in Color.clear.frame(maxWidth: .infinity) }
+                  }
                 }
+              }
             }
-            .padding(.horizontal, 3)
         }
     }
 }
@@ -241,22 +249,66 @@ private struct FolderHeader: View {
     let folder: CardFolder
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "folder")
-            Text(folder.name).font(.subheadline.monospaced().weight(.semibold))
+        HStack(spacing: 10) {
+            Text(folder.name).font(.num(20)).tracking(0.8)
             Text("\(folder.count)")
-                .font(.caption.monospacedDigit().weight(.bold))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 2)
-                .surface(.regular, in: .capsule)
+                .font(.system(size: 12))
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background(Theme.stroke, in: .capsule)
             if folder.isForeign {
-                Text("other camera").font(.caption).foregroundStyle(Theme.secondary)
+                Text("other camera").font(.caption).foregroundStyle(Theme.accent)
             }
             Spacer()
         }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+        .background(Theme.background.opacity(0.92))
+    }
+}
+
+/// A row of frames on a strip of film: sprocket holes above and below.
+private struct FilmStrip<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(spacing: 4) {
+            holes
+            HStack(alignment: .top, spacing: 8) { content }
+            holes
+        }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.black.opacity(0.6))
+        .padding(.top, 6)
+        .padding(.bottom, 2)
+        .background(Color(hex: 0x161513))
+    }
+
+    private var holes: some View {
+        Canvas { ctx, size in
+            var x: CGFloat = 0
+            while x < size.width {
+                ctx.fill(Path(roundedRect: CGRect(x: x, y: 0, width: 9, height: size.height), cornerRadius: 2),
+                         with: .color(Theme.background))
+                x += 18
+            }
+        }
+        .frame(height: 8)
+        .accessibilityHidden(true)
+    }
+}
+
+/// A hand-drawn red circle round a starred frame.
+private struct Scribble: Shape {
+    func path(in r: CGRect) -> Path {
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: r.minX + r.width * x, y: r.minY + r.height * y) }
+        var path = Path()
+        path.move(to: p(0.09, 0.51))
+        path.addCurve(to: p(0.62, 0.06), control1: p(0.07, 0.15), control2: p(0.38, 0.03))
+        path.addCurve(to: p(0.93, 0.62), control1: p(0.9, 0.1), control2: p(0.98, 0.36))
+        path.addCurve(to: p(0.31, 0.92), control1: p(0.88, 0.9), control2: p(0.53, 1.0))
+        path.addCurve(to: p(0.10, 0.44), control1: p(0.12, 0.86), control2: p(0.05, 0.7))
+        return path
     }
 }
 
@@ -266,9 +318,25 @@ private struct ThumbnailCell: View {
     @State private var thumbnail: UIImage?
     @State private var noThumbnail = false
 
+    private var frameNumber: String {
+        let index = (camera.images.firstIndex { $0.id == image.id } ?? 0) + 1
+        return "\(index)"
+    }
+
     var body: some View {
-        Color(white: 0.12)
-            .aspectRatio(1, contentMode: .fit)
+        VStack(alignment: .leading, spacing: 3) {
+            picture
+            Text(frameNumber)
+                .font(.num(13, weight: .medium))
+                .tracking(1)
+                .foregroundStyle(Color(hex: 0xE8B04A))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var picture: some View {
+        Color(hex: 0x1F1F1D)
+            .aspectRatio(3.0 / 2.0, contentMode: .fit)
             .overlay {
                 if let thumbnail {
                     Image(uiImage: thumbnail).resizable().scaledToFill().transition(.opacity)
@@ -284,25 +352,21 @@ private struct ThumbnailCell: View {
                 }
             }
             .animation(.smooth, value: thumbnail != nil)
-            .clipShape(.rect(cornerRadius: 6, style: .continuous))
+            .clipShape(.rect(cornerRadius: 2, style: .continuous))
+            .overlay {
+                if camera.isStarred(image) {
+                    Scribble().stroke(Color(hex: 0xFF4B3A), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .padding(-3)
+                        .transition(.opacity)
+                        .accessibilityLabel("Starred")
+                }
+            }
             .overlay(alignment: .bottomLeading) {
                 HStack(spacing: 4) {
                     if image.fileExtension != "JPG" { badge(image.fileExtension) }
                     if image.looksHighRes { badge("50 MP", tint: Theme.accent) }
                 }
                 .padding(4)
-            }
-            .overlay(alignment: .topTrailing) {
-                if camera.isStarred(image) {
-                    Image(systemName: "star.fill")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Theme.accent)
-                        .padding(4)
-                        .background(Color.black.opacity(0.55), in: .circle)
-                        .padding(4)
-                        .transition(.scale.combined(with: .opacity))
-                        .accessibilityLabel("Starred")
-                }
             }
             .animation(.bouncy, value: camera.isStarred(image))
             .task(id: image.path) {
@@ -374,7 +438,7 @@ private struct PhotoPage: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(image.name).font(.headline.monospaced())
+                        Text(image.name).font(.num(24))
                         Text(image.size == 0 && image.urls == nil
                              ? "From another camera"
                              : "\(image.date.formatted(date: .abbreviated, time: .shortened)) · \(ByteCountFormatter.string(fromByteCount: Int64(image.size), countStyle: .file))\(image.looksHighRes ? " · High Res" : "")")

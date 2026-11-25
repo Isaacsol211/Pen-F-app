@@ -154,8 +154,8 @@ struct AstroView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
-                }
+                    Button("Done") { dismiss() }
+                }.sharedBackgroundVisibility(.hidden)
             }
             .onChange(of: trails) { camera.presetSteps = [] }
             .onChange(of: focalLength) { camera.presetSteps = [] }

@@ -57,7 +57,7 @@ struct QRScannerSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(unreadable ? "Type It Instead" : "Cancel") { dismiss() }
-                }
+                }.sharedBackgroundVisibility(.hidden)
             }
         }
         .tint(Theme.accent)

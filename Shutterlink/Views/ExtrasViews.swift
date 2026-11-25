@@ -309,13 +309,13 @@ private struct BulbTimerSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", systemImage: "xmark") { dismiss() }
-                }
+                }.sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Set", systemImage: "checkmark") {
                         onSet(Double(minutes * 60 + seconds))
                         dismiss()
                     }
-                }
+                }.sharedBackgroundVisibility(.hidden)
             }
         }
     }

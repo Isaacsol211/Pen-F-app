@@ -110,7 +110,10 @@ struct PropertyOptionsList: View {
                 .id(option)
             }
             .onAppear { proxy.scrollTo(current.value, anchor: .center) }
+            .listStyle(.plain)
+            .listRowBackgroundClear()
         }
+        .background(Theme.background)
         .navigationTitle(PropertyFormat.title(for: property.name))
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -143,15 +146,16 @@ struct AllSettingsView: View {
                     Text("Everything the camera lets the app read or change over Wi-Fi. Locked rows can't be changed in the current mode.")
                 }
             }
+            .listRowBackgroundClear()
             .navigationTitle("Camera settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { dismiss() }
-                }
+                    Button("Done") { dismiss() }
+                }.sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Reload", systemImage: "arrow.clockwise") { Task { await camera.refreshProperties() } }
-                }
+                    Button("Reload") { Task { await camera.refreshProperties() } }
+                }.sharedBackgroundVisibility(.hidden)
             }
         }
     }

@@ -69,7 +69,7 @@ struct ProView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
-                }
+                }.sharedBackgroundVisibility(.hidden)
             }
         }
         .presentationBackground(Theme.background)

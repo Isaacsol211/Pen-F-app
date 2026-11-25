@@ -555,7 +555,7 @@ struct AddCameraSheet: View {
                         dismiss()
                     }
                     .disabled(camera.phase == .connecting)
-                }
+                }.sharedBackgroundVisibility(.hidden)
             }
         }
         #if !targetEnvironment(macCatalyst)

@@ -409,3 +409,12 @@ extension EnvironmentValues {
         set { self[AstroPaletteKey.self] = newValue }
     }
 }
+
+extension View {
+    /// Lists in the app: no grouped grey, rows on the app background with hairline separators.
+    func listRowBackgroundClear() -> some View {
+        scrollContentBackground(.hidden)
+            .background(Theme.background)
+            .listRowSeparatorTint(Theme.stroke)
+    }
+}

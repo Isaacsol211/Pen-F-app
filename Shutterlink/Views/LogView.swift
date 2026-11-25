@@ -37,7 +37,7 @@ struct LogView: View {
             .navigationTitle("Camera log")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }.sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         Button("Copy log") {
@@ -47,7 +47,7 @@ struct LogView: View {
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
-                }
+                }.sharedBackgroundVisibility(.hidden)
             }
         }
     }
