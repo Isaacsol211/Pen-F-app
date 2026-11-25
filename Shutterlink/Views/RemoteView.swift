@@ -37,6 +37,7 @@ struct RemoteView: View {
             let workspace = Workspace.isWorkspace(geo)
             ZStack {
                 Theme.background.ignoresSafeArea()
+                if workspace || landscape { LiveBackdrop() }
                 if workspace {
                     // The inspector (and with it the shutter) keeps to the side away from the
                     // system's vertical bar; with no bar it sits on the trailing side.
@@ -84,7 +85,7 @@ struct RemoteView: View {
         // A tool's sheet is only for the phone layouts; in the workspace the same state opens its panel.
         .sheet(item: Binding(get: { isWorkspace ? nil : openPanel }, set: { openPanel = $0 })) { panel in
             SidePanelView(panel: panel, openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
-                .presentationDetents([.medium, .large])
+                .presentationDetents(panel == .motion ? [.medium, .large] : [.large])
                 .dSheet()
                 // Live view stays usable above the motion trigger, so the box can be dragged into place.
                 .presentationBackgroundInteraction(panel == .motion ? .enabled(upThrough: .medium) : .automatic)
@@ -384,7 +385,7 @@ struct RemoteView: View {
                         .foregroundStyle(Theme.secondary)
                         .frame(maxWidth: .infinity, minHeight: 68)
                 } else {
-                    ExposureGrid(active: $activeSetting)
+                    ExposureGrid(active: Binding(get: { workspaceSetting }, set: { activeSetting = $0 }))
                 }
                 optionPanel
                 ToolTiles(tools: tools.filter { item in !quickAids.contains { $0.id == item.id } }, columns: tileColumns)
@@ -507,8 +508,15 @@ struct RemoteView: View {
         if case .openND = suggestion.action { open(.nd) }
     }
 
+    /// In the workspace one value is always selected, shutter first, like the phone remote.
+    private var workspaceSetting: String? {
+        if let activeSetting { return activeSetting }
+        let names = ["shutspeedvalue", "focalvalue", "isospeedvalue"]
+        return names.first { camera.properties[$0] != nil }
+    }
+
     @ViewBuilder private var optionPanel: some View {
-        if let name = activeSetting, let spec = SettingSpec.spec(for: name), camera.properties[name] != nil {
+        if let name = (isWorkspace ? workspaceSetting : activeSetting), let spec = SettingSpec.spec(for: name), camera.properties[name] != nil {
             OptionPanel(spec: spec) {
                 withAnimation(.bouncy(duration: 0.35)) { activeSetting = nil }
             }

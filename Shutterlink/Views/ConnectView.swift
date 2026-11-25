@@ -249,22 +249,31 @@ struct ConnectView: View {
                 .foregroundStyle(Theme.accent)
                 .disabled(camera.phase != .disconnected)
             }
+            if grid {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), spacing: 12)], spacing: 12) {
+                    ForEach(camera.savedCameras) { card($0, hero: true) }
+                    addButton(minHeight: 84)
+                }
             Text(CameraWiFi.canJoin
                  ? "Turn on the camera's Wi-Fi and tap it. A camera added by scanning joins its Wi-Fi by itself; for others, join it in Settings ▸ Wi-Fi first, or scan its code once."
                  : "Turn on the camera's Wi-Fi and join it in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) it.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 4)
-            if grid {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), spacing: 12)], spacing: 12) {
-                    ForEach(camera.savedCameras) { card($0, hero: true) }
-                    addButton(minHeight: 84)
-                }
+                .padding(.top, 4)
+
             } else {
                 ForEach(Array(camera.savedCameras.enumerated()), id: \.element.id) { card($1, hero: $0 == 0) }
                 addButton(minHeight: 60)
             }
+            Text(CameraWiFi.canJoin
+                 ? "Turn on the camera's Wi-Fi and tap it. A camera added by scanning joins its Wi-Fi by itself; for others, join it in Settings ▸ Wi-Fi first, or scan its code once."
+                 : "Turn on the camera's Wi-Fi and join it in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) it.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+
         }
         .confirmationDialog("Forget \(forgetting?.name ?? "this camera")?", isPresented: .init(
             get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }), titleVisibility: .visible) {
@@ -326,6 +335,7 @@ struct ConnectView: View {
                     }
                 }
                 Spacer(minLength: 8)
+                if hero && !connecting { CameraLineArt().frame(width: 120, height: 84) }
                 if connecting {
                     ProgressView().tint(Theme.accent)
                 } else if !editingCameras && !hero {
@@ -925,3 +935,24 @@ private let simulatorMockHint = " For the mock cameras, use 127.0.0.1 with the m
 #else
 private let simulatorMockHint = ""
 #endif
+
+/// A line drawing of a camera (body, hump, lens, viewfinder) for the saved-camera hero card.
+private struct CameraLineArt: View {
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width, h = size.height
+            let line = StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
+            let body = Path(roundedRect: CGRect(x: 2, y: h * 0.28, width: w - 4, height: h * 0.68), cornerRadius: 12)
+            ctx.stroke(body, with: .color(Theme.text.opacity(0.9)), style: line)
+            var hump = Path()
+            hump.move(to: CGPoint(x: w * 0.12, y: h * 0.28)); hump.addLine(to: CGPoint(x: w * 0.12, y: h * 0.14))
+            hump.addLine(to: CGPoint(x: w * 0.34, y: h * 0.14)); hump.addLine(to: CGPoint(x: w * 0.34, y: h * 0.28))
+            ctx.stroke(hump, with: .color(Theme.text.opacity(0.9)), style: line)
+            let c = CGPoint(x: w * 0.56, y: h * 0.62)
+            ctx.stroke(Path(ellipseIn: CGRect(x: c.x - 26, y: c.y - 26, width: 52, height: 52)), with: .color(Theme.text.opacity(0.9)), style: line)
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - 10, y: c.y - 10, width: 20, height: 20)), with: .color(Theme.accent))
+            ctx.fill(Path(ellipseIn: CGRect(x: w * 0.82, y: h * 0.4, width: 7, height: 7)), with: .color(Theme.text.opacity(0.6)))
+        }
+        .accessibilityHidden(true)
+    }
+}

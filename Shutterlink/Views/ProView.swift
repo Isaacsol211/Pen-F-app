@@ -69,6 +69,12 @@ struct ProView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 8) {
+                        ApertureMark().frame(width: 22, height: 22)
+                        Text("Shutterlink Pro").font(.system(size: 15, weight: .semibold))
+                    }
+                }.sharedBackgroundVisibility(.hidden)
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
                 }.sharedBackgroundVisibility(.hidden)
