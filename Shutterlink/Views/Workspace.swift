@@ -70,7 +70,7 @@ struct ExposureGrid: View {
             VStack(alignment: .leading, spacing: 5) {
                 // AUTO replaces the label when the camera is choosing this value itself.
                 CapsLabel(auto ? "Auto" : Self.label(name),
-                          color: selected ? Theme.accent : (auto ? Theme.accent.opacity(0.85) : Theme.tertiary))
+                          color: selected ? Theme.onAccent.opacity(0.75) : (auto ? Theme.accent.opacity(0.85) : Theme.secondary))
                 Group {
                     if name == "drivemode" {
                         HStack(spacing: 6) {
@@ -93,14 +93,14 @@ struct ExposureGrid: View {
                             .frame(height: valueSize * 1.2)
                     }
                 }
-                .foregroundStyle(selected ? Theme.accent : (auto ? Theme.secondary : .white))
+                .foregroundStyle(selected ? Theme.onAccent : (auto ? Theme.secondary : Theme.text))
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
-            .background(shape.fill(selected ? Theme.accent.opacity(0.16) : Theme.surface))
-            .overlay(shape.stroke(selected ? Theme.accent.opacity(0.85) : Theme.stroke, lineWidth: selected ? 1.5 : 1))
+            .background(shape.fill(selected ? Theme.accent : Color.clear))
+            .overlay(shape.stroke(selected ? Color.clear : Theme.outline, lineWidth: 1))
             .contentShape(shape)
         }
         .buttonStyle(.plain)
@@ -111,7 +111,7 @@ struct ExposureGrid: View {
 
     private func readout(_ text: String, scale: CGFloat) -> some View {
         Text(text)
-            .font(.system(size: valueSize * scale, weight: .semibold, design: .monospaced))
+            .font(.num(valueSize * scale * 1.15))
             .lineLimit(1)
     }
 

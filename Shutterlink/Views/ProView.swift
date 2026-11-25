@@ -30,24 +30,25 @@ struct ProView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 0) {
                         ForEach(Self.features, id: \.title) { item in
-                            Label {
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(Theme.green)
+                                    .frame(width: 22)
+                                    .padding(.top, 3)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.title).font(.headline).foregroundStyle(Theme.text)
-                                    Text(item.detail).font(.subheadline).foregroundStyle(Theme.secondary)
+                                    Text(item.title).font(.system(size: 16, weight: .medium)).foregroundStyle(Theme.text)
+                                    Text(item.detail).font(.footnote).foregroundStyle(Theme.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
-                            } icon: {
-                                Image(systemName: item.icon)
-                                    .font(.system(size: 17, weight: .semibold))
-                                    .foregroundStyle(Theme.accent)
-                                    .frame(width: 30)
                             }
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .hairRow()
                         }
                     }
-                    .padding(18)
-                    .surface(.regular, in: .rect(cornerRadius: 20, style: .continuous))
                     Label("Nikon, Canon and Sony are in beta: so far tried only on test cameras, not real bodies. Use the free trial to check yours works before buying.",
                           systemImage: "flask")
                         .font(.footnote)
@@ -66,6 +67,7 @@ struct ProView: View {
             .background(Theme.background)
             .navigationTitle("Shutterlink Pro")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { dismiss() }
@@ -87,8 +89,9 @@ struct ProView: View {
                     .foregroundStyle(Theme.accent)
             }
             Text(pro.isUnlocked ? "Pro is unlocked" : "The tools that do the work for you")
-                .font(.system(size: 28, weight: .heavy))
-                .foregroundStyle(Theme.text)
+                .font(.num(pro.isUnlocked ? 64 : 52, relativeTo: .largeTitle))
+                .lineSpacing(-6)
+                .foregroundStyle(pro.isUnlocked ? Theme.green : Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Text(pro.isUnlocked ? pro.statusText : "One purchase for iPhone, iPad and Mac. Yours to keep, no subscription.")
                 .font(.subheadline)
@@ -135,11 +138,12 @@ struct ProView: View {
                 if pro.trialUsed {
                     buy.buttonStyle(.accent)
                 } else {
-                    buy.buttonStyle(.surface)
+                    buy.buttonStyle(.outline)
                 }
                 HStack {
                     Button("Restore purchase") { Task { await pro.restore() } }
-                        .font(.footnote.weight(.semibold))
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.secondary)
                         .disabled(pro.busy)
                     Spacer()
                     if pro.busy { ProgressView() }

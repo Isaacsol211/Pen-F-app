@@ -34,6 +34,8 @@ struct LogView: View {
                     }
                 }
             }
+            .listStyle(.plain)
+            .listRowBackgroundClear()
             .navigationTitle("Camera log")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -61,7 +63,7 @@ private struct LogRow: View {
             HStack(spacing: 6) {
                 Text(entry.status.map(String.init) ?? "ERR")
                     .font(.caption.monospaced().weight(.bold))
-                    .foregroundStyle(entry.ok ? .green : .red)
+                    .foregroundStyle(entry.ok ? Theme.green : Theme.red)
                 Text(entry.method).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
                 Spacer()
                 Text("\(entry.millis) ms").font(.caption2.monospaced()).foregroundStyle(Theme.secondary)
