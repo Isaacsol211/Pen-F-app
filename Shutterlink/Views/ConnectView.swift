@@ -28,7 +28,7 @@ struct ConnectView: View {
                         .frame(maxWidth: 560, alignment: .leading)
                         .frame(maxWidth: .infinity)
                         .padding(.horizontal, 20)
-                        .padding(.bottom, 24)
+                        .padding(.bottom, 56)
                 }
             }
             .scrollEdgeEffectStyle(.soft, for: .top)

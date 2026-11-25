@@ -79,42 +79,110 @@ struct ValueDial: View {
     }
 }
 
-/// List picker for one property, used from the full settings list.
+/// One setting's options as a wheel: the chosen value very large between two accent rules, the neighbours
+/// shrinking and fading away above and below. Drag to turn it; tap a value to set it.
 struct PropertyOptionsList: View {
     @Environment(CameraModel.self) private var camera
     @Environment(\.dismiss) private var dismiss
     let property: CameraProperty
 
+    @State private var position: Double?
+    @State private var dragStart: Double?
+    @State private var highlighted: String?
+
     private var current: CameraProperty { camera.properties[property.name] ?? property }
+    private var options: [String] { current.options }
+    private var centreIndex: Int {
+        if let position { return Int(position.rounded()) }
+        return options.firstIndex(of: highlighted ?? current.value) ?? 0
+    }
+    private var centre: Double { position ?? Double(centreIndex) }
+
+    // Size and vertical offset by distance from the centre (in values), interpolated between whole steps.
+    private static let sizes: [CGFloat] = [150, 38, 26, 20, 14]
+    private static let offsets: [CGFloat] = [0, 128, 176, 212, 240]
+    private func lerp(_ table: [CGFloat], _ d: Double) -> CGFloat {
+        let a = min(abs(d), Double(table.count - 1))
+        let i = Int(a), f = CGFloat(a - Double(i))
+        return table[i] + (table[min(i + 1, table.count - 1)] - table[i]) * f
+    }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            List(current.options, id: \.self) { option in
-                Button {
-                    Task { await camera.setProperty(property.name, to: option) }
-                    dismiss()
-                } label: {
-                    HStack {
-                        let label = PropertyFormat.display(property.name, option)
-                        Text(label)
-                            .font(.num(24, weight: option == current.value ? .semibold : .medium))
-                            .foregroundStyle(option == current.value ? Theme.accent : Theme.text)
+        VStack(spacing: 0) {
+            GeometryReader { geo in
+                let mid = geo.size.height / 2
+                ZStack {
+                    // The two accent rules round the chosen value.
+                    VStack(spacing: 0) {
+                        Rectangle().fill(Theme.accent).frame(height: 1)
                         Spacer()
-                        if !label.contains(option) {
-                            Text(option).font(.caption).foregroundStyle(Theme.secondary)
-                        }
-                        if option == current.value {
-                            Image(systemName: "checkmark").foregroundStyle(Theme.accent)
+                        Rectangle().fill(Theme.accent).frame(height: 1)
+                    }
+                    .frame(height: 168)
+                    .position(x: geo.size.width / 2, y: mid)
+                    ForEach(options.indices, id: \.self) { i in
+                        let d = Double(i) - centre
+                        if abs(d) < 4.5 {
+                            let isCentre = abs(d) < 0.5
+                            Button {
+                                guard current.settable else { return }
+                                Task { await camera.setProperty(property.name, to: options[i]) }
+                                dismiss()
+                            } label: {
+                                Text(PropertyFormat.display(property.name, options[i]))
+                                    .font(.num(lerp(Self.sizes, d), weight: isCentre ? .semibold : .medium))
+                                    .foregroundStyle(isCentre ? Theme.text : Color(hex: 0xA9A8A2))
+                                    .opacity(max(0.15, 1 - abs(d) * 0.22))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.3)
+                                    .frame(maxWidth: geo.size.width - 90)
+                                    .frame(height: max(30, lerp(Self.sizes, d) * 1.05))
+                                    .contentShape(.rect)
+                            }
+                            .buttonStyle(.plain)
+                            .position(x: geo.size.width / 2, y: mid + (d < 0 ? -1 : 1) * lerp(Self.offsets, d))
+                            .accessibilityLabel(PropertyFormat.display(property.name, options[i]))
+                            .accessibilityAddTraits(options[i] == current.value ? .isSelected : [])
                         }
                     }
+                    // The pointer, left of the chosen value.
+                    Image(systemName: "triangle.fill")
+                        .font(.system(size: 14))
+                        .rotationEffect(.degrees(90))
+                        .foregroundStyle(Theme.accent)
+                        .position(x: 28, y: mid)
                 }
-                .disabled(!current.settable)
-                .listRowBackground(Color.clear)
-                .id(option)
+                .contentShape(.rect)
+                .gesture(
+                    DragGesture(minimumDistance: 6)
+                        .onChanged { drag in
+                            if dragStart == nil { dragStart = Double(centreIndex) }
+                            let moved = -Double(drag.translation.height / 46)
+                            position = min(Double(options.count - 1), max(0, (dragStart ?? 0) + moved))
+                        }
+                        .onEnded { _ in
+                            dragStart = nil
+                            highlighted = options.indices.contains(centreIndex) ? options[centreIndex] : nil
+                            withAnimation(.snappy(duration: 0.2)) { position = nil }
+                        }
+                )
+                .sensoryFeedback(.selection, trigger: centreIndex)
+                .animation(.snappy(duration: 0.15), value: centreIndex)
             }
-            .onAppear { proxy.scrollTo(current.value, anchor: .center) }
-            .listStyle(.plain)
-            .listRowBackgroundClear()
+            let value = options.indices.contains(centreIndex) ? options[centreIndex] : current.value
+            HStack {
+                Text("\(options.count) options")
+                Spacer()
+                Text("camera code \(value)")
+            }
+            .font(.footnote)
+            .foregroundStyle(Theme.secondary)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            Text(current.settable ? "Drag to turn, tap a value to set it." : "This setting is locked in the current mode.")
+                .font(.footnote)
+                .foregroundStyle(Theme.tertiary)
+                .padding(.bottom, 16)
         }
         .background(Theme.background)
         .navigationTitle(PropertyFormat.title(for: property.name))

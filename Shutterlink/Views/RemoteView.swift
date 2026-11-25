@@ -30,6 +30,8 @@ struct RemoteView: View {
     /// Drive or Quality, whose options open in a sheet from the small line under the picture.
     @State private var settingSheet: String?
     @State private var showMore = false
+    /// Height of the Tools sheet's content, so the sheet is only as tall as it needs to be.
+    @State private var toolsHeight: CGFloat = 560
 
     var body: some View {
         GeometryReader { geo in
@@ -184,8 +186,8 @@ struct RemoteView: View {
             }
         }
         .sheet(isPresented: $toolsOpen) {
-            ToolsSheet(tools: tools, isOpen: $toolsOpen)
-                .presentationDetents([.height(600), .large])
+            ToolsSheet(tools: tools, isOpen: $toolsOpen, height: $toolsHeight)
+                .presentationDetents([.height(max(320, toolsHeight)), .large])
                 .dSheet()
         }
     }

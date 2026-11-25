@@ -372,6 +372,7 @@ struct ToolsSheet: View {
     @Environment(CameraModel.self) private var camera
     let tools: [ToolItem]
     @Binding var isOpen: Bool
+    @Binding var height: CGFloat
 
     var body: some View {
         ScrollView {
@@ -394,6 +395,7 @@ struct ToolsSheet: View {
             .padding(.horizontal, 20)
             .padding(.top, 8)
             .padding(.bottom, 24)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 + 16 }
         }
         .scrollIndicators(.hidden)
         .background(Theme.background)

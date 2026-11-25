@@ -106,15 +106,24 @@ struct PresetsPanel: View {
     }
 
     private func header(icon: String, title: String, subtitle: String, open: Bool, chevron: String,
-                        on: Bool = false) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.system(size: 20, weight: .regular))
-                .foregroundStyle(Theme.accent)
-                .frame(width: 36, height: 36)
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Theme.outline, lineWidth: 1))
+                        on: Bool = false, recipe: PresetRecipe? = nil) -> some View {
+        HStack(spacing: 14) {
+            Group {
+                if let recipe {
+                    RecipeArt(recipe: recipe)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 26, weight: .regular))
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 68, height: 68)
+                        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.surface))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.outline, lineWidth: 1))
+                }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Theme.green, lineWidth: 2.5).padding(-4).opacity(on ? 1 : 0))
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline).foregroundStyle(Theme.text)
+                Text(title).font(.num(28)).foregroundStyle(Theme.text)
                 Text(subtitle).font(.footnote).foregroundStyle(Theme.secondary).lineLimit(2)
             }
             Spacer(minLength: 0)
@@ -138,7 +147,8 @@ struct PresetsPanel: View {
             if recipe == .astro { openAstro() } else { expanded = open ? nil : recipe.id }
         } label: {
             header(icon: recipe.icon, title: recipe.title, subtitle: recipe.summary, open: open,
-                   chevron: recipe == .astro ? "arrow.up.right" : "chevron.right", on: camera.isPresetOn(recipe.id))
+                   chevron: recipe == .astro ? "arrow.up.right" : "chevron.right", on: camera.isPresetOn(recipe.id),
+                   recipe: recipe)
         }
         .buttonStyle(.plain)
         if open {
@@ -409,5 +419,83 @@ struct MotionPanel: View {
         }
         .frame(height: 8)
         .accessibilityLabel("Movement level")
+    }
+}
+
+
+/// The 68 pt illustrated tile for a one-tap recipe, drawn on a 64-unit grid.
+struct RecipeArt: View {
+    let recipe: PresetRecipe
+
+    var body: some View {
+        Canvas { ctx, size in
+            let k = size.width / 64
+            ctx.scaleBy(x: k, y: k)
+            func rect(_ r: CGRect, _ c: Color) { ctx.fill(Path(r), with: .color(c)) }
+            func dot(_ x: CGFloat, _ y: CGFloat, _ r: CGFloat, _ c: Color) {
+                ctx.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r)), with: .color(c))
+            }
+            func poly(_ pts: [(CGFloat, CGFloat)], _ c: Color) {
+                var p = Path(); p.move(to: CGPoint(x: pts[0].0, y: pts[0].1))
+                for q in pts.dropFirst() { p.addLine(to: CGPoint(x: q.0, y: q.1)) }
+                p.closeSubpath(); ctx.fill(p, with: .color(c))
+            }
+            func line(_ pts: [(CGFloat, CGFloat)], _ c: Color, _ w: CGFloat) {
+                var p = Path(); p.move(to: CGPoint(x: pts[0].0, y: pts[0].1))
+                for q in pts.dropFirst() { p.addLine(to: CGPoint(x: q.0, y: q.1)) }
+                ctx.stroke(p, with: .color(c), style: StrokeStyle(lineWidth: w, lineCap: .round, lineJoin: .round))
+            }
+            let cream = Color(hex: 0xF4F1EA)
+            switch recipe {
+            case .astro:
+                rect(CGRect(x: 0, y: 0, width: 64, height: 64), Color(hex: 0x070A18))
+                for s in [(12, 14, 1.2), (30, 8, 1.0), (50, 18, 1.4), (22, 30, 1.0), (44, 36, 1.1), (56, 8, 0.9)] as [(CGFloat, CGFloat, CGFloat)] {
+                    dot(s.0, s.1, s.2, Color(hex: 0xEEF1F7))
+                }
+                var arc = Path(); arc.move(to: CGPoint(x: 6, y: 44))
+                arc.addQuadCurve(to: CGPoint(x: 58, y: 18), control: CGPoint(x: 14, y: 12))
+                ctx.stroke(arc, with: .color(Theme.astroAccent), style: StrokeStyle(lineWidth: 1.4, lineCap: .round, dash: [14, 60]))
+                poly([(0, 52), (14, 44), (26, 50), (42, 40), (64, 52), (64, 64), (0, 64)], Color(hex: 0x141A36))
+            case .moon:
+                rect(CGRect(x: 0, y: 0, width: 64, height: 64), Color(hex: 0x070A18))
+                dot(32, 30, 17, Color(hex: 0xE8E4D8)); dot(26, 25, 4, Color(hex: 0xC9C5BA))
+                dot(38, 36, 3, Color(hex: 0xC9C5BA)); dot(37, 23, 2, Color(hex: 0xC9C5BA))
+            case .fireworks:
+                rect(CGRect(x: 0, y: 0, width: 64, height: 64), Color(hex: 0x0A0A0A))
+                for end in [(32, 10), (45, 16), (49, 30), (43, 41), (21, 41), (15, 30), (19, 16)] as [(CGFloat, CGFloat)] {
+                    line([(32, 28), end], Theme.accent, 2)
+                }
+                for end in [(46, 39), (51, 42), (51, 49), (41, 49), (41, 42)] as [(CGFloat, CGFloat)] {
+                    line([(46, 46), end], Color(hex: 0xFF6A45), 2)
+                }
+                dot(32, 28, 2.4, Color(hex: 0xFFE2A6))
+            case .landscape:
+                rect(CGRect(x: 0, y: 0, width: 64, height: 64), Color(hex: 0x4B4470))
+                rect(CGRect(x: 0, y: 34, width: 64, height: 30), Color(hex: 0xC77F6E))
+                dot(44, 38, 7, Color(hex: 0xFFE2A6))
+                poly([(0, 46), (14, 32), (24, 40), (38, 24), (64, 48), (64, 64), (0, 64)], Color(hex: 0x1B1C33))
+            case .action:
+                rect(CGRect(x: 0, y: 0, width: 64, height: 64), Color(hex: 0x16233A))
+                line([(6, 22), (28, 22)], Color(hex: 0x8FB8FF), 2.4); line([(4, 32), (22, 32)], Color(hex: 0x8FB8FF), 2.4)
+                line([(10, 42), (24, 42)], Color(hex: 0x8FB8FF), 2.4)
+                dot(42, 32, 12, cream); line([(34, 32), (50, 32)], Color(hex: 0x16233A), 2)
+            case .macro:
+                rect(CGRect(x: 0, y: 0, width: 64, height: 64), Color(hex: 0x16281F))
+                for c in [(32, 18), (45, 28), (40, 43), (24, 43), (19, 28)] as [(CGFloat, CGFloat)] { dot(c.0, c.1, 8, Color(hex: 0xF3B36F)) }
+                dot(32, 32, 7, Color(hex: 0xFFE2A6))
+            case .trails:
+                rect(CGRect(x: 0, y: 0, width: 64, height: 64), Color(hex: 0x0E1430))
+                var a = Path(); a.move(to: CGPoint(x: -2, y: 56)); a.addCurve(to: CGPoint(x: 66, y: 24), control1: CGPoint(x: 20, y: 44), control2: CGPoint(x: 30, y: 30))
+                ctx.stroke(a, with: .color(Theme.red), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                var b = Path(); b.move(to: CGPoint(x: -2, y: 62)); b.addCurve(to: CGPoint(x: 66, y: 34), control1: CGPoint(x: 24, y: 50), control2: CGPoint(x: 36, y: 38))
+                ctx.stroke(b, with: .color(Theme.red.opacity(0.6)), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                var c = Path(); c.move(to: CGPoint(x: -2, y: 46)); c.addCurve(to: CGPoint(x: 66, y: 14), control1: CGPoint(x: 16, y: 38), control2: CGPoint(x: 26, y: 22))
+                ctx.stroke(c, with: .color(Color(hex: 0xFFE2A6)), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+            }
+        }
+        .frame(width: 68, height: 68)
+        .clipShape(.rect(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+        .accessibilityHidden(true)
     }
 }
