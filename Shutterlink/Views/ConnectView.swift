@@ -114,11 +114,11 @@ struct ConnectView: View {
             .scrollClipDisabled()
             Self.stepRows(for: brand)
         }
-        .padding(18)
+        .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
-        .clipShape(.rect(cornerRadius: 20, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+        .clipShape(.rect(cornerRadius: 24, style: .continuous))
         .animation(.smooth, value: brand)
         .sensoryFeedback(.selection, trigger: brand)
     }
@@ -129,12 +129,12 @@ struct ConnectView: View {
             guidePicked = true
         } label: {
             Text(brand?.shortTitle ?? "Any")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(selected ? Theme.onAccent : .white)
-                .padding(.horizontal, 14)
+                .font(.system(size: 14, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Theme.background : Theme.secondary)
+                .padding(.horizontal, 16)
                 .frame(minHeight: 36)
-                .background(selected ? Theme.accent : Theme.surfaceRaised, in: .capsule)
-                .overlay(Capsule().stroke(selected ? Color.clear : Theme.stroke, lineWidth: 1))
+                .background(selected ? Theme.text : Color.clear, in: .capsule)
+                .overlay(Capsule().stroke(selected ? Color.clear : Theme.outline, lineWidth: 1))
                 // 44 pt to tap, 36 pt to look at.
                 .frame(minHeight: Theme.target)
                 .contentShape(.rect)
@@ -172,26 +172,23 @@ struct ConnectView: View {
                             }
                         }
                         .foregroundStyle(Theme.onAccent)
-                        .frame(width: 50, height: 50)
-                        .background(Theme.accent, in: .rect(cornerRadius: 13, style: .continuous))
+                        .frame(width: 40, height: 50)
                         VStack(alignment: .leading, spacing: 3) {
                             Text(busy ? (camera.status ?? "Connecting…") : "Scan the camera's QR code")
                                 .font(.headline)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Theme.onAccent)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
                             Text("Joins its Wi-Fi and connects. No trip to Settings.")
                                 .font(.footnote)
-                                .foregroundStyle(Theme.secondary)
+                                .foregroundStyle(Theme.onAccent.opacity(0.75))
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 0)
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
-                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Theme.accent.opacity(0.6), lineWidth: 1))
+                    .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.accent))
                     .contentShape(.rect(cornerRadius: 20))
                 }
                 .buttonStyle(.plain)
@@ -212,8 +209,9 @@ struct ConnectView: View {
         VStack(alignment: .leading, spacing: compact ? 10 : 16) {
             BrandLockup(markSize: compact ? 38 : 48)
             Text("Shoot from\nyour phone.")
-                .font(.system(size: compact ? 30 : 38, weight: .heavy))
-                .foregroundStyle(.white)
+                .font(.num(compact ? 52 : 68, relativeTo: .largeTitle))
+                .lineSpacing(-6)
+                .foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Text("Remote control for Olympus, OM System, Panasonic LUMIX, Nikon, Canon and Sony cameras over their own Wi-Fi.")
                 .font(.subheadline)
@@ -224,25 +222,15 @@ struct ConnectView: View {
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
             CapsLabel("Your cameras")
-            VStack(spacing: 14) {
-                Image(systemName: "camera.badge.ellipsis")
-                    .font(.system(size: 34, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                Text("No cameras yet")
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                Text("Add your camera once. After that it waits here: turn on its Wi-Fi and tap it.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 28)
-            .padding(.horizontal, 20)
-            .background(RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
+            Text("No cameras yet")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            Text("Add your camera once. After that it waits here: turn on its Wi-Fi and tap it.")
+                .font(.subheadline)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -270,11 +258,11 @@ struct ConnectView: View {
                 .padding(.bottom, 4)
             if grid {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), spacing: 12)], spacing: 12) {
-                    ForEach(camera.savedCameras) { card($0) }
+                    ForEach(camera.savedCameras) { card($0, hero: true) }
                     addButton(minHeight: 84)
                 }
             } else {
-                ForEach(camera.savedCameras) { card($0) }
+                ForEach(Array(camera.savedCameras.enumerated()), id: \.element.id) { card($1, hero: $0 == 0) }
                 addButton(minHeight: 60)
             }
         }
@@ -297,19 +285,17 @@ struct ConnectView: View {
         Button {
             showAdd = true
         } label: {
-            Label("Add a camera", systemImage: "plus")
-                .font(.headline)
-                .foregroundStyle(Theme.accent)
-                .frame(maxWidth: .infinity, minHeight: minHeight)
-                .background(RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])))
-                .contentShape(.rect(cornerRadius: 20))
+            Label("Add a camera", systemImage: "plus.circle")
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.secondary)
+                .frame(maxWidth: .infinity, minHeight: Theme.target, alignment: .leading)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .disabled(camera.phase != .disconnected)
     }
 
-    private func card(_ saved: SavedCamera) -> some View {
+    private func card(_ saved: SavedCamera, hero: Bool = false) -> some View {
         let connecting = camera.phase == .connecting && connectingID == saved.id
         let lastUsed = saved.lastUsed.formatted(.relative(presentation: .named))
         return Button {
@@ -317,47 +303,49 @@ struct ConnectView: View {
             Task { await camera.connect(to: saved) }
         } label: {
             HStack(spacing: 14) {
-                Image(systemName: "camera.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Theme.onAccent)
-                    .frame(width: 50, height: 50)
-                    .background(Theme.accent, in: .rect(cornerRadius: 13, style: .continuous))
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: hero ? 8 : 3) {
+                    if hero {
+                        CapsLabel("\(saved.brand.shortTitle) · \(lastUsed)")
+                    }
                     Text(saved.name)
-                        .font(.title3.weight(.heavy))
-                        .foregroundStyle(.white)
+                        .font(.num(hero ? 60 : 28, relativeTo: .largeTitle))
+                        .foregroundStyle(Theme.text)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.5)
                     if connecting {
                         Text(camera.status ?? "Connecting…")
                             .font(.footnote)
                             .foregroundStyle(Theme.accent)
                             .lineLimit(1)
+                    } else if hero {
+                        Text("Tap to connect")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
                     } else {
-                        HStack(spacing: 6) {
-                            CapsLabel(saved.brand.shortTitle)
-                            Text("· \(lastUsed)")
-                                .font(.footnote)
-                                .foregroundStyle(Theme.tertiary)
-                                .lineLimit(1)
-                        }
+                        CapsLabel("\(saved.brand.shortTitle) · \(lastUsed)", color: Theme.tertiary)
                     }
                 }
                 Spacer(minLength: 8)
                 if connecting {
                     ProgressView().tint(Theme.accent)
-                } else if !editingCameras {
+                } else if !editingCameras && !hero {
                     Image(systemName: "chevron.right")
                         .font(.footnote.weight(.bold))
                         .foregroundStyle(Theme.tertiary)
                 }
             }
-            .padding(16)
-            .frame(minHeight: 84)
-            .background(RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(connecting ? Theme.surfaceRaised : Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(connecting ? Theme.accent.opacity(0.6) : Theme.stroke, lineWidth: 1))
+            .padding(hero ? 20 : 0)
+            .padding(.vertical, hero ? 0 : 10)
+            .frame(minHeight: hero ? 120 : 64)
+            .background {
+                if hero {
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(connecting ? Theme.surfaceRaised : Theme.surface)
+                        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .stroke(connecting ? Theme.accent.opacity(0.6) : Theme.stroke, lineWidth: 1))
+                }
+            }
+            .overlay(alignment: .bottom) { if !hero { Hairline() } }
             .contentShape(.rect(cornerRadius: 20))
         }
         .buttonStyle(.plain)
@@ -370,7 +358,7 @@ struct ConnectView: View {
                     Image(systemName: "trash.circle.fill")
                         .font(.system(size: 30))
                         .symbolRenderingMode(.palette)
-                        .foregroundStyle(.white, .red)
+                        .foregroundStyle(Theme.text, Theme.red)
                         .frame(width: Theme.target, height: Theme.target)
                 }
                 .buttonStyle(.plain)
@@ -581,6 +569,7 @@ struct AddCameraSheet: View {
         }
         #endif
         .presentationBackground(Theme.background)
+        .presentationCornerRadius(28)
         .presentationSizing(WorkspaceSheetSizing(page: twoColumns))
         .tint(Theme.accent)
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
@@ -593,11 +582,11 @@ struct AddCameraSheet: View {
             VStack(spacing: 0) {
                 row(nil)
                 ForEach(CameraBrand.allCases) { brand in
-                    Rectangle().fill(Theme.stroke).frame(height: 1).padding(.leading, 16)
+                    Hairline()
                     row(brand)
                 }
             }
-            .surface(.regular, in: .rect(cornerRadius: 20, style: .continuous))
+            .overlay(alignment: .top) { Hairline() }
             .disabled(camera.phase != .disconnected)
         }
     }
@@ -616,7 +605,7 @@ struct AddCameraSheet: View {
                         if brand == nil {
                             Text("Recommended").font(.caption2.weight(.bold)).foregroundStyle(Theme.accent)
                         } else if brand?.isBeta == true {
-                            Text("Beta").font(.caption2.weight(.bold)).foregroundStyle(.orange)
+                            Text("Beta").font(.caption2.weight(.bold)).foregroundStyle(Theme.accent)
                         }
                     }
                     Text(brand?.coverage ?? "Works out which camera it is from its Wi-Fi")
@@ -629,7 +618,6 @@ struct AddCameraSheet: View {
                     .font(.title3)
                     .foregroundStyle(on ? Theme.accent : Theme.tertiary)
             }
-            .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .frame(minHeight: 60)
             .contentShape(.rect)
@@ -644,8 +632,7 @@ struct AddCameraSheet: View {
             CapsLabel("How to connect", color: Theme.accent)
             ConnectView.stepRows(for: selection)
         }
-        .padding(18)
-        .surface(.regular, in: .rect(cornerRadius: 20, style: .continuous))
+        .padding(.vertical, 8)
         .animation(.smooth, value: selection)
     }
 
@@ -917,12 +904,11 @@ private struct StepRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             Text("\(number)")
-                .font(.system(size: 15, weight: .heavy, design: .monospaced))
-                .foregroundStyle(Theme.onAccent)
-                .frame(width: 28, height: 28)
-                .background(Theme.accent, in: .rect(cornerRadius: 7, style: .continuous))
+                .font(.num(26))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 28, alignment: .leading)
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.headline).foregroundStyle(.white)
+                Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
                 Text(detail).font(.subheadline).foregroundStyle(Theme.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
