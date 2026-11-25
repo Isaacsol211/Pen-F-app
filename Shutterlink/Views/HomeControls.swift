@@ -12,10 +12,10 @@ struct StatusPill: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(camera.liveViewRunning ? Color.green : Color.orange)
+                .fill(camera.liveViewRunning ? Theme.green : Theme.accent)
                 .frame(width: 8, height: 8)
             CameraStatusRow()
-                .font(.system(.footnote, design: .monospaced).weight(.semibold))
+                .font(.system(size: 13, weight: .medium))
         }
         .fixedSize()
         .padding(.horizontal, 14)
@@ -35,12 +35,11 @@ struct InfoBar<Trailing: View>: View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(camera.liveViewRunning ? Color.green : Color.orange)
-                    .frame(width: 8, height: 8)
-                Text((camera.cameraName ?? camera.brand.shortTitle).uppercased())
-                    .font(.system(.subheadline, weight: .heavy))
-                    .tracking(1.2)
-                    .foregroundStyle(.white)
+                    .fill(camera.liveViewRunning ? Theme.green : Theme.accent)
+                    .frame(width: 7, height: 7)
+                Text(camera.cameraName ?? camera.brand.shortTitle)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.text)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
@@ -48,7 +47,7 @@ struct InfoBar<Trailing: View>: View {
             .accessibilityLabel("\(camera.cameraName ?? "Camera"), \(camera.liveViewRunning ? "live" : "live view off")")
             Spacer(minLength: 8)
             CameraStatusRow()
-                .font(.system(.footnote, design: .monospaced).weight(.semibold))
+                .font(.system(size: 13))
                 .foregroundStyle(Theme.secondary)
                 .fixedSize()
             trailing
@@ -96,46 +95,55 @@ struct QuickAidStrip: View {
             }
         }
         .padding(.horizontal, 4)
-        .surface(.regular, in: .rect(cornerRadius: 18, style: .continuous))
+        .overlay(alignment: .top) { Hairline() }
+        .overlay(alignment: .bottom) { Hairline() }
         .animation(.snappy, value: tools.map(\.on))
     }
 }
 
 // MARK: - Exposure strip
 
-/// The readouts: one cell per value that matters, a small-caps label over a big monospaced value,
-/// showing what the camera is actually using (in P the shutter and aperture it picked, labelled AUTO).
-/// Tap a cell for its dial.
+/// The row of values under the picture (mode, aperture, shutter, ISO, EV): what the camera is actually
+/// using, in Barlow, the selected one in the accent. Tap one and the dial below becomes its dial.
 struct ExposureStrip: View {
     @Environment(CameraModel.self) private var camera
     @Binding var active: String?
     /// Over the live image (landscape): a little shorter and see-through.
     var compact = false
-    @Namespace private var selection
-    @ScaledMetric(relativeTo: .title3) private var valueSize: CGFloat = 18
+    /// The selected value; one is always selected in the portrait remote.
+    var selected: String?
+    @ScaledMetric(relativeTo: .title3) private var valueSize: CGFloat = 20
 
-    private var items: [String] { Self.items(camera) }
-
-    /// The values that get a cell, here and in the workspace's `ExposureGrid`.
+    /// The values that get a cell here; white balance, drive and quality are the small line (`SettingLine`).
     static func items(_ camera: CameraModel) -> [String] {
-        var names = ["focalvalue", "shutspeedvalue", "isospeedvalue", "expcomp", "wbvalue", "drivemode", "quality"]
+        var names = ["takemode", "focalvalue", "shutspeedvalue", "isospeedvalue", "expcomp"]
         if camera.isMovieMode { names.append("exposemovie") }
         return names.filter { camera.properties[$0] != nil }
     }
 
+    /// What to show as the value of a cell.
+    static func text(_ name: String, camera: CameraModel) -> String {
+        let property = camera.properties[name].map(camera.dialOptions(for:))
+        let raw = camera.stripValue(name, property)
+        switch name {
+        case "focalvalue": return raw.first?.isNumber == true ? "f/" + raw : raw
+        case "isospeedvalue": return raw.first?.isNumber == true ? "ISO " + raw : raw
+        case "takemode": return ModeCarousel.title(property?.value ?? raw)
+        default: return raw
+        }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.element) { index, name in
-                if index > 0 {
-                    Rectangle().fill(Theme.stroke).frame(width: 1, height: 26)
-                }
+            ForEach(ExposureStrip.items(camera), id: \.self) { name in
                 item(name)
             }
         }
-        .padding(4)
-        .surface(compact ? .clear : .regular, in: .rect(cornerRadius: 18, style: .continuous))
-        .animation(.bouncy(duration: 0.35), value: active)
-        .animation(.smooth, value: items)
+        .padding(.horizontal, 8)
+        .background {
+            if compact { Capsule().fill(Color.black.opacity(0.55)) }
+        }
+        .animation(.snappy, value: selected)
         .disabled(camera.isBusyExposing)
         .sensoryFeedback(.selection, trigger: active)
     }
@@ -143,46 +151,57 @@ struct ExposureStrip: View {
     private func item(_ name: String) -> some View {
         let property = camera.properties[name].map(camera.dialOptions(for:))
         let locked = !(property?.settable ?? false)
-        let selected = active == name
-        let auto = ExposureGrid.isAuto(name, locked: locked, mode: camera.properties["takemode"]?.value)
+        let isSelected = (selected ?? active) == name
+        let text = Self.text(name, camera: camera)
         return Button {
-            active = selected ? nil : name
+            active = name
         } label: {
-            VStack(spacing: 3) {
-                // AUTO replaces the label when the camera is choosing this value itself (e.g. shutter in P).
-                CapsLabel(auto ? "Auto" : ExposureGrid.label(name),
-                          color: selected ? Theme.accent : (auto ? Theme.accent.opacity(0.85) : Theme.tertiary))
-                Group {
-                    if name == "drivemode" || name == "quality" {
-                        // Words, not an icon: Single and Anti-shock look the same as symbols.
-                        Text(camera.stripValue(name, property))
-                            .font(.system(size: valueSize * 0.72, weight: .semibold))
-                    } else {
-                        Text(camera.stripValue(name, property))
-                            .font(.system(size: valueSize, weight: .semibold, design: .monospaced))
-                            .contentTransition(.numericText())
-                    }
-                }
-                .foregroundStyle(selected ? Theme.accent : (locked ? Theme.secondary : .white))
+            Text(text)
+                .font(.num(valueSize, weight: isSelected ? .semibold : .medium))
+                .tracking(0.6)
+                .foregroundStyle(isSelected ? Theme.accent : (locked ? Theme.tertiary : Color(hex: 0xC9C5BA)))
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-            }
-            // Room either side so a long value (1/4000) shrinks instead of touching the dividers.
-            .padding(.horizontal, 4)
-            .frame(maxWidth: .infinity, minHeight: compact ? 50 : 58)
-            .background {
-                if selected {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Theme.accent.opacity(0.16))
-                        .matchedGeometryEffect(id: "selection", in: selection)
-                }
-            }
-            .contentShape(.rect)
+                .padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, minHeight: Theme.target)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(SettingSpec.spec(for: name)?.title ?? name): \(camera.stripValue(name, property))\(auto ? ", automatic" : "")")
-        .accessibilityHint("Shows the options")
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityLabel("\(SettingSpec.spec(for: name)?.title ?? name): \(text)")
+        .accessibilityHint("Shows the dial")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// The small line under the picture: white balance, drive and quality. White balance picks its dial;
+/// drive and quality open a sheet of options.
+struct SettingLine: View {
+    @Environment(CameraModel.self) private var camera
+    @Binding var active: String?
+    let openSheet: (String) -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(["wbvalue", "drivemode", "quality"].filter { camera.properties[$0] != nil }, id: \.self) { name in
+                let property = camera.properties[name].map(camera.dialOptions(for:))
+                let on = active == name
+                Button {
+                    if name == "wbvalue" { active = name } else { openSheet(name) }
+                } label: {
+                    Text((name == "wbvalue" ? "WB " : "") + camera.stripValue(name, property))
+                        .font(.system(size: 13, weight: on ? .semibold : .regular))
+                        .foregroundStyle(on ? Theme.accent : Theme.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: Theme.target)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(SettingSpec.spec(for: name)?.title ?? name): \(camera.stripValue(name, property))")
+            }
+        }
+        .disabled(camera.isBusyExposing)
     }
 }
 
@@ -207,7 +226,7 @@ struct ModeCarousel: View {
                     layout {
                         ForEach(options, id: \.self) { mode in
                             let isCurrent = mode == (centered ?? current)
-                            Text(title(mode))
+                            Text(Self.title(mode))
                                 .font(.system(size: 15, weight: .heavy))
                                 .tracking(1.6)
                                 .foregroundStyle(isCurrent ? Theme.accent : Theme.tertiary)
@@ -268,7 +287,7 @@ struct ModeCarousel: View {
         .sensoryFeedback(.impact(weight: .heavy, intensity: 1.0), trigger: centered)
         .accessibilityElement()
         .accessibilityLabel("Mode")
-        .accessibilityValue(title(current))
+        .accessibilityValue(Self.title(current))
         .accessibilityAdjustableAction { direction in
             guard let i = options.firstIndex(of: current) else { return }
             let next = direction == .increment ? i + 1 : i - 1
@@ -276,7 +295,7 @@ struct ModeCarousel: View {
         }
     }
 
-    private func title(_ mode: String) -> String {
+    static func title(_ mode: String) -> String {
         switch mode.lowercased() {
         case "iauto": "AUTO"
         case "movie": "VIDEO"
@@ -293,7 +312,7 @@ struct ModeCarousel: View {
 
 // MARK: - Tools
 
-/// Round button next to the shutter that opens the tools tray (and shows interval progress).
+/// Round button next to the shutter that opens the tools (and shows interval progress).
 struct ToolsButton: View {
     @Environment(CameraModel.self) private var camera
     @Binding var open: Bool
@@ -305,20 +324,22 @@ struct ToolsButton: View {
             ZStack {
                 if camera.interval.running {
                     Text(camera.interval.total == 0 ? "\(camera.interval.done)" : "\(camera.interval.done)/\(camera.interval.total)")
-                        .font(.caption2.monospacedDigit().weight(.bold))
+                        .font(.num(16))
                         .foregroundStyle(Theme.accent)
                         .contentTransition(.numericText(value: Double(camera.interval.done)))
                 } else {
-                    Image(systemName: open ? "xmark" : "square.grid.2x2")
-                        .font(.system(size: 20, weight: .semibold))
+                    Image(systemName: open ? "xmark" : "slider.horizontal.3")
+                        .font(.system(size: 19, weight: .regular))
+                        .foregroundStyle(Theme.text)
                         .contentTransition(.symbolEffect(.replace))
                 }
             }
+            .frame(width: 48, height: 48)
+            .overlay(Circle().stroke(camera.interval.running ? Theme.accent : Theme.text.opacity(0.4), lineWidth: 1))
             .frame(width: 58, height: 58)
             .contentShape(.circle)
         }
         .buttonStyle(.plain)
-        .surface(open ? .regular.tint(Theme.accent.opacity(0.22)) : .regular, in: .circle)
         .accessibilityLabel(open ? "Close tools" : "Tools")
     }
 }
@@ -333,8 +354,6 @@ struct ToolsTray: View {
             section("Shooting", tools.filter(\.opens))
             section("Switches", tools.filter { !$0.opens })
         }
-        .padding(14)
-        .surface(.regular, in: .rect(cornerRadius: 24, style: .continuous))
     }
 
     @ViewBuilder private func section(_ title: String, _ items: [ToolItem]) -> some View {
@@ -345,5 +364,38 @@ struct ToolsTray: View {
                 ForEach(items) { ToolButton(item: $0) }
             }
         }
+    }
+}
+
+/// The Tools sheet: the live view stays visible above it.
+struct ToolsSheet: View {
+    @Environment(CameraModel.self) private var camera
+    let tools: [ToolItem]
+    @Binding var isOpen: Bool
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("Tools").font(.num(26))
+                    Spacer()
+                    Button { isOpen = false } label: {
+                        Image(systemName: "xmark").font(.footnote.weight(.bold)).foregroundStyle(Theme.text)
+                            .frame(width: Theme.target, height: Theme.target)
+                    }
+                    .accessibilityLabel("Close tools")
+                }
+                ToolsTray(tools: tools)
+                if camera.interval.running {
+                    Text("The interval timer is running: the Tools button shows \(camera.interval.done)\(camera.interval.total > 0 ? "/\(camera.interval.total)" : "").")
+                        .font(.footnote).foregroundStyle(Theme.secondary)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+        }
+        .scrollIndicators(.hidden)
+        .background(Theme.background)
     }
 }

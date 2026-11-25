@@ -27,6 +27,9 @@ struct RemoteView: View {
     @AppStorage("ui.nightMode") private var nightMode = false
     @State private var showLoupe = false
     @State private var pocketMode = false
+    /// Drive or Quality, whose options open in a sheet from the small line under the picture.
+    @State private var settingSheet: String?
+    @State private var showMore = false
 
     var body: some View {
         GeometryReader { geo in
@@ -133,52 +136,55 @@ struct RemoteView: View {
         #endif
     }
 
-    /// Portrait, like the iPhone Camera app: status on top, a clean viewfinder, and everything you
-    /// touch in one band at the bottom (values → modes → shutter).
+    /// Portrait: the whole live view near the top over a blurred copy of itself, a small line (white
+    /// balance, drive, quality), the row of values, one big readout with a curved dial, then the shutter row.
     private func portraitLayout(height: CGFloat) -> some View {
-        // The quick-aid strip needs a tall screen; the Duo's outer screen keeps the aids in the tray.
-        let showAids = height >= 740
-        return VStack(spacing: 10) {
-            InfoBar { menuButton }
-                .overlay(alignment: .bottom) { Rectangle().fill(Theme.stroke).frame(height: 1) }
-            // Viewfinder and readouts are one block, centred in the spare height like a camera's
-            // rear screen (on short screens such as the Duo's outer one the spacers collapse).
-            Spacer(minLength: 0)
-            liveView(cornerRadius: 0)
-                .aspectRatio(4.0 / 3.0, contentMode: .fit)
-                .overlay(alignment: .top) { ErrorBanner().padding(.top, 8) }
-            VStack(spacing: 10) {
-                optionPanel
-                ExposureStrip(active: $activeSetting)
-                // While a setting's panel is open (Drive, ISO…) it gets the aids' room; they come back
-                // when it closes.
-                if showAids && activeSetting == nil {
-                    QuickAidStrip(tools: quickAids)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
-            .animation(.snappy, value: activeSetting == nil)
-            // The tools float over the picture rather than squeezing it.
-            .overlay(alignment: .bottom) {
-                if toolsOpen {
-                    ToolsTray(tools: tools)
-                        .transition(.move(edge: .bottom).combined(with: .opacity).combined(with: .scale(scale: 0.95)))
-                }
-            }
-            .padding(.horizontal, 12)
-            // On an iPad the picture can use the full width; the controls stay a hand's width.
-            .frame(maxWidth: Self.controlsMaxWidth)
-            .zIndex(1)
-            Spacer(minLength: 0)
-            // LUMIX bodies have a physical mode dial the app can't read or turn.
-            if camera.properties["takemode"] != nil {
-                ModeCarousel()
-                    .padding(.vertical, 2)
+        let names = ExposureStrip.items(camera)
+        let selected = names.contains(activeSetting ?? "") || ["wbvalue"].contains(activeSetting ?? "")
+            ? activeSetting! : (names.contains("shutspeedvalue") ? "shutspeedvalue" : names.first ?? "")
+        let dialBinding = Binding<String?>(get: { selected }, set: { activeSetting = $0 })
+        return ZStack {
+            LiveBackdrop()
+            VStack(spacing: 0) {
+                InfoBar { menuButton }
+                liveView(cornerRadius: 0)
+                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
+                    .overlay(alignment: .top) { ErrorBanner().padding(.top, 8) }
+                if camera.properties.isEmpty {
+                    Text("Reading camera settings…")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                } else {
+                    VStack(spacing: 0) {
+                        SettingLine(active: dialBinding) { settingSheet = $0 }
+                        ExposureStrip(active: dialBinding, selected: selected)
+                            .padding(.horizontal, 12)
+                        Spacer(minLength: 0)
+                        if let spec = SettingSpec.spec(for: selected), camera.properties[selected] != nil {
+                            OptionPanel(spec: spec) { activeSetting = nil }
+                                .id(selected)
+                        }
+                        Spacer(minLength: 0)
+                    }
                     .frame(maxWidth: Self.controlsMaxWidth)
+                }
+                shutterRow
+                    .frame(maxWidth: Self.controlsMaxWidth)
+                    .padding(.bottom, 4)
             }
-            shutterRow
-                .frame(maxWidth: Self.controlsMaxWidth)
-                .padding(.bottom, 4)
+        }
+        .sheet(item: Binding(get: { settingSheet.map(SettingSheetID.init) }, set: { settingSheet = $0?.id })) { sheet in
+            if let spec = SettingSpec.spec(for: sheet.id) {
+                SettingSheet(spec: spec)
+                    .presentationDetents([.height(360), .large])
+                    .dSheet()
+            }
+        }
+        .sheet(isPresented: $toolsOpen) {
+            ToolsSheet(tools: tools, isOpen: $toolsOpen)
+                .presentationDetents([.large])
+                .dSheet()
         }
     }
 
@@ -513,77 +519,36 @@ struct RemoteView: View {
     }
 
     private var menuButton: some View {
-        Menu {
-            Section(camera.cameraName ?? "Camera") {
-                if !camera.capabilities.liveViewSizes.isEmpty {
-                    Picker(selection: Binding(get: { camera.liveViewQuality },
-                                              set: { q in Task { await camera.changeLiveViewQuality(q) } })) {
-                        ForEach(camera.capabilities.liveViewSizes, id: \.self) { Text(CameraModel.liveViewLabel($0)).tag($0) }
-                    } label: {
-                        Label("Live view size", systemImage: "rectangle.dashed")
-                    }
-                    .pickerStyle(.menu)
-                }
-                Button { Task { await camera.restartLiveView() } } label: {
-                    Label("Restart live view", systemImage: "arrow.clockwise")
-                }
-                Toggle(isOn: Binding(get: { camera.sceneAssistantOn }, set: { camera.sceneAssistantOn = $0 })) {
-                    Label("Scene suggestions", systemImage: "sparkle.magnifyingglass")
-                }
-                Toggle(isOn: Binding(get: { camera.autoSaveNewPhotos }, set: { camera.autoSaveNewPhotos = $0 })) {
-                    Label("Save new photos to Photos", systemImage: "square.and.arrow.down.on.square")
-                }
-                Button {
-                    proPrompt = ProPrompt(feature: nil)
-                } label: {
-                    Label {
-                        Text("Shutterlink Pro")
-                        Text(ShutterlinkPro.shared.statusText)
-                    } icon: {
-                        Image(systemName: "star.circle")
-                    }
-                }
-            }
-            Section {
-                if camera.capabilities.highResShot {
-                    Button { open(.highRes) } label: {
-                        Label("High Res Shot helper", systemImage: "square.grid.3x3.square")
-                    }
-                }
-                if camera.capabilities.clockSync {
-                    Button {
-                        Task { if await camera.syncClock() { camera.showToast("Camera clock set to this \(Platform.device)") } }
-                    } label: {
-                        Label("Sync camera clock", systemImage: "clock.arrow.2.circlepath")
-                    }
-                }
-                Button { showAllSettings = true } label: {
-                    Label("All camera settings", systemImage: "list.bullet")
-                }
-                Button { showLog = true } label: {
-                    Label("Request log", systemImage: "list.bullet.rectangle")
-                }
-            }
-            Section {
-                Button { confirmDisconnect = true } label: {
-                    Label("Disconnect", systemImage: "wifi.slash")
-                }
-                if camera.capabilities.powerOff {
-                    Button(role: .destructive) { confirmPowerOff = true } label: {
-                        Label("Turn camera off", systemImage: "power")
-                    }
-                }
-            }
-        } label: {
+        Button { showMore = true } label: {
             Image(systemName: "ellipsis")
                 .font(.body.weight(.bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.text)
                 .frame(width: Theme.target, height: Theme.target)
+                .contentShape(.circle)
         }
-        .buttonStyle(.surfaceCircle)
-        .tint(.white)
+        .buttonStyle(.plain)
         .disabled(camera.isBusyExposing)
         .accessibilityLabel("More")
+        .sheet(isPresented: $showMore) {
+            MoreSheet(
+                openPro: { showMore = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { proPrompt = ProPrompt(feature: nil) } },
+                openHighRes: { showMore = false; open(.highRes) },
+                allSettings: { showMore = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showAllSettings = true } },
+                log: { showMore = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showLog = true } },
+                disconnect: { showMore = false; confirmDisconnect = true },
+                powerOff: { showMore = false; confirmPowerOff = true })
+            .presentationDetents([.large])
+            .dSheet()
+        }
+    }
+
+    /// Runs `next` once the Tools sheet has gone: a sheet can't come up while another is leaving.
+    private func afterSheet(_ next: @escaping () -> Void) {
+        if isWorkspace {
+            next()
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: next)
+        }
     }
 
     /// Runs a Pro tool's action when Pro is unlocked; otherwise opens the Pro screen for it.
@@ -593,7 +558,7 @@ struct RemoteView: View {
                 action()
             } else {
                 withAnimation(.snappy) { toolsOpen = false }
-                proPrompt = ProPrompt(feature: feature)
+                afterSheet { proPrompt = ProPrompt(feature: feature) }
             }
         }
     }
@@ -602,7 +567,7 @@ struct RemoteView: View {
     private func panelTool(_ panel: SidePanel, id: String, title: String, feature: String,
                            running: Bool = false) -> ToolItem {
         ToolItem(id: id, icon: panel.icon, title: title, on: running || sidePanel == panel, opens: true,
-                 locked: !ShutterlinkPro.shared.isUnlocked, action: pro(feature) { toolsOpen = false; toggle(panel) })
+                 locked: !ShutterlinkPro.shared.isUnlocked, action: pro(feature) { toolsOpen = false; afterSheet { toggle(panel) } })
     }
 
     private var tools: [ToolItem] {
@@ -616,7 +581,7 @@ struct RemoteView: View {
                 if camera.isPresetOn(PresetRecipe.astro.id) {
                     Task { await camera.undoPreset() }
                 } else {
-                    showAstro = true
+                    afterSheet { showAstro = true }
                 }
             }),
             panelTool(.interval, id: "interval", title: "Interval", feature: "The interval timer",
@@ -635,7 +600,7 @@ struct RemoteView: View {
             panelTool(.nd, id: "nd", title: "ND filter", feature: "The ND filter calculator"),
             panelTool(.motion, id: "motion", title: "Motion", feature: "The motion trigger", running: camera.motion.armed),
             ToolItem(id: "pocket", icon: "moon.zzz", title: "Pocket", on: false, opens: true) {
-                toolsOpen = false; pocketMode = true
+                toolsOpen = false; afterSheet { pocketMode = true }
             },
             ToolItem(id: "geotag", icon: camera.geotagging ? "location.fill" : "location", title: "Geotag",
                      on: camera.geotagging) {
@@ -696,6 +661,79 @@ struct RemoteView: View {
     }
 }
 
+/// An identifiable setting name, for the Drive / Quality sheet.
+private struct SettingSheetID: Identifiable { let id: String }
+
+/// The live frame, blurred and dimmed to fill the screen behind the remote. Refreshed a couple of
+/// times a second: it is only a colour wash, so it needn't follow every frame.
+struct LiveBackdrop: View {
+    @Environment(CameraModel.self) private var camera
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            Theme.background
+            if let image {
+                // The overlay keeps the filled image from widening the screen's layout.
+                Color.clear
+                    .overlay {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .blur(radius: 36)
+                            .opacity(0.8)
+                    }
+                    .clipped()
+            }
+            LinearGradient(colors: [Theme.background.opacity(0), Theme.background.opacity(0.96)],
+                           startPoint: .init(x: 0.5, y: 0.35), endPoint: .init(x: 0.5, y: 0.75))
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .task {
+            while !Task.isCancelled {
+                if let frame = camera.liveFrame { withAnimation(.linear(duration: 0.5)) { image = frame } }
+                try? await Task.sleep(for: .milliseconds(600))
+            }
+        }
+    }
+}
+
+/// Drive or Quality: the options in a sheet, the live view still above it.
+struct SettingSheet: View {
+    @Environment(CameraModel.self) private var camera
+    @Environment(\.dismiss) private var dismiss
+    let spec: SettingSpec
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(spec.title).font(.num(26))
+                Spacer()
+                Button("Done") { dismiss() }
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.text)
+                    .frame(minHeight: Theme.target)
+            }
+            if let raw = camera.properties[spec.name] {
+                let property = camera.dialOptions(for: raw)
+                if property.settable {
+                    OptionGrid(property: property) { value in
+                        Task { await camera.setProperty(spec.name, to: value) }
+                    }
+                } else {
+                    Text("Set this on the camera: this body doesn't let the phone change it right now.")
+                        .font(.subheadline).foregroundStyle(Theme.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .background(Theme.background)
+    }
+}
+
 // MARK: - Tools
 
 struct ToolItem: Identifiable {
@@ -718,7 +756,7 @@ struct ToolButton: View {
         Button(action: item.action) {
             VStack(spacing: 6) {
                 Image(systemName: item.icon)
-                    .font(.system(size: 21, weight: .semibold))
+                    .font(.system(size: 21, weight: .regular))
                     .frame(height: 24)
                     .symbolEffect(.bounce, value: item.on)
                 Text(item.title)
@@ -726,10 +764,10 @@ struct ToolButton: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            .foregroundStyle(item.on ? Theme.accent : Color.white)
-            .frame(maxWidth: .infinity, minHeight: 66)
-            .background(shape.fill(item.on ? Theme.accent.opacity(0.14) : Theme.surfaceRaised))
-            .overlay(shape.stroke(item.on ? Theme.accent.opacity(0.85) : Theme.stroke, lineWidth: item.on ? 1.5 : 1))
+            .foregroundStyle(item.on ? Theme.onAccent : Theme.text)
+            .frame(maxWidth: .infinity, minHeight: 72)
+            .background(shape.fill(item.on ? Theme.accent : Color.clear))
+            .overlay(shape.stroke(item.on ? Color.clear : Theme.stroke, lineWidth: 1))
             // Tools that open their own screen say so; the rest are switches.
             .overlay(alignment: .topTrailing) {
                 if item.locked {
@@ -740,7 +778,7 @@ struct ToolButton: View {
                 } else if item.opens {
                     Image(systemName: "arrow.up.right")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(item.on ? Theme.accent : Theme.tertiary)
+                        .foregroundStyle(item.on ? Theme.onAccent : Theme.tertiary)
                         .padding(7)
                 }
             }
@@ -767,21 +805,21 @@ struct LastShotButton: View {
                     Image(uiImage: shot)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: 52, height: 52)
-                        .clipShape(.rect(cornerRadius: 14, style: .continuous))
+                        .frame(width: 48, height: 48)
+                        .clipShape(.rect(cornerRadius: 12, style: .continuous))
                         .id(camera.shotCounter)
                         .transition(.scale(scale: 0.4).combined(with: .opacity))
                 } else {
                     Image(systemName: "photo.on.rectangle.angled")
                         .font(.title3)
-                        .frame(width: 52, height: 52)
+                        .foregroundStyle(Theme.text)
+                        .frame(width: 48, height: 48)
                 }
             }
-            .padding(3)
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Theme.text.opacity(0.4), lineWidth: 1))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .surface(.regular, in: .rect(cornerRadius: 17, style: .continuous))
         .animation(.bouncy(duration: 0.45), value: camera.shotCounter)
         .disabled(camera.isBusyExposing || camera.interval.running || !camera.capabilities.cardBrowser)
         .accessibilityLabel(camera.lastShot == nil ? "Card" : "Last photo. Opens the card.")
@@ -823,6 +861,7 @@ struct ToastView: View {
         if let toast = camera.toast {
             Label(toast, systemImage: "checkmark.circle.fill")
                 .font(.subheadline.weight(.medium))
+                .foregroundStyle(Theme.text)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .surface(.regular, in: .capsule)
@@ -837,7 +876,7 @@ struct NightVision: ViewModifier {
 
     func body(content: Content) -> some View {
         if enabled {
-            content.colorMultiply(Color(red: 1, green: 0.22, blue: 0.18))
+            content.colorMultiply(Theme.red)
         } else {
             content
         }
@@ -852,7 +891,7 @@ struct ErrorBanner: View {
     var body: some View {
         VStack(spacing: 6) {
             if let error = camera.lastError {
-                banner(error, icon: "exclamationmark.triangle.fill", color: .yellow, tint: .red.opacity(0.35)) {
+                banner(error, icon: "exclamationmark.triangle.fill", color: Theme.accent, tint: Theme.red.opacity(0.3)) {
                     camera.lastError = nil
                 }
             } else if let note = camera.cameraNote {
@@ -873,7 +912,7 @@ struct ErrorBanner: View {
                         .padding(.vertical, 7)
                 }
                 .buttonStyle(.plain)
-                .surface(.regular.tint(.green.opacity(0.35)), in: .capsule)
+                .surface(.regular.tint(Theme.green.opacity(0.25)), in: .capsule)
                 .accessibilityHint("Puts back the settings from before \(on.title)")
                 .transition(.scale.combined(with: .opacity))
             }
@@ -924,7 +963,7 @@ struct ShutterButton: View {
                     .trim(from: 0, to: progress)
                     .stroke(Theme.accent, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .frame(width: 102, height: 102)
+                    .frame(width: 90, height: 90)
                     .animation(.smooth, value: progress)
             }
             if let started = camera.exposureStartedAt {
@@ -938,11 +977,11 @@ struct ShutterButton: View {
                     } else {
                         Circle()
                             .trim(from: 0, to: 0.22)
-                            .stroke(Color.red, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                            .stroke(Theme.red, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                             .rotationEffect(.degrees(elapsed * 140))
                     }
                 }
-                .frame(width: 102, height: 102)
+                .frame(width: 90, height: 90)
                 .transition(.opacity)
             }
             Group {
@@ -951,37 +990,36 @@ struct ShutterButton: View {
                     TimelineView(.periodic(from: .now, by: 0.25)) { context in
                         let left = max(0, Int((duration - context.date.timeIntervalSince(started)).rounded(.up)))
                         Text(left >= 60 ? String(format: "%d:%02d", left / 60, left % 60) : (left > 0 ? "\(left)" : "NR"))
-                            .font(.system(size: left >= 600 ? 18 : (left >= 60 ? 22 : 28), weight: .semibold, design: .rounded).monospacedDigit())
+                                    .font(.num(left >= 600 ? 22 : (left >= 60 ? 26 : 34)))
                             .foregroundStyle(Theme.accent)
                             .contentTransition(.numericText(countsDown: true))
                             .animation(.snappy, value: left)
                     }
-                    .frame(width: 68, height: 68)
+                    .frame(width: 64, height: 64)
                     .accessibilityLabel("Exposing")
                 } else if (camera.isShooting && camera.isOpenEndedShutter) || camera.isRecordingMovie {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.red)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Theme.red)
                         .frame(width: pressed ? 26 : 30, height: pressed ? 26 : 30)
                 } else {
                     Circle()
-                        .fill(movie ? Color.red : (camera.isShooting ? Theme.accent : Color.white))
-                        .frame(width: pressed ? 58 : 68, height: pressed ? 58 : 68)
-                        .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+                        .fill(movie ? Theme.red : (camera.isShooting ? Theme.accent : Theme.text))
+                        .frame(width: pressed ? 50 : 58, height: pressed ? 50 : 58)
                 }
             }
-            .frame(width: 90, height: 90)
-            .overlay(Circle().stroke(Color.white.opacity(0.9), lineWidth: 4))
+            .frame(width: 74, height: 74)
+            .overlay(Circle().stroke(Theme.text, lineWidth: 3))
             if let started = camera.isRecordingMovie ? camera.movieStartedAt
                 : (camera.isOpenEndedShutter && camera.isShooting ? camera.exposureStartedAt : nil) {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Text(Duration.seconds(context.date.timeIntervalSince(started)).formatted(.time(pattern: .minuteSecond)))
                         .font(.caption2.monospacedDigit().weight(.bold))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Theme.red)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .surface(.regular, in: .capsule)
                 }
-                .offset(y: -62)
+                .offset(y: -58)
             } else if camera.bracket.running {
                 Button { camera.cancelBracket() } label: {
                     HStack(spacing: 4) {
@@ -996,7 +1034,7 @@ struct ShutterButton: View {
                 }
                 .buttonStyle(.plain)
                 .fixedSize()
-                .offset(y: -62)
+                .offset(y: -58)
                 .accessibilityLabel("Cancel bracketing")
             }
         }
@@ -1058,5 +1096,85 @@ private struct VerticalBarEdgeReader<Content: View>: View {
         var content: (HorizontalEdge?) -> Content
 
         var body: some View { content(edge) }
+    }
+}
+
+/// The ⋯ menu as a sheet: the camera's name, then rows.
+private struct MoreSheet: View {
+    @Environment(CameraModel.self) private var camera
+    let openPro: () -> Void
+    let openHighRes: () -> Void
+    let allSettings: () -> Void
+    let log: () -> Void
+    let disconnect: () -> Void
+    let powerOff: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                Text(camera.cameraName ?? "Camera")
+                    .font(.num(28))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 10)
+                    .hairRow()
+                if !camera.capabilities.liveViewSizes.isEmpty {
+                    Menu {
+                        Picker("Live view size", selection: Binding(get: { camera.liveViewQuality },
+                                                                    set: { q in Task { await camera.changeLiveViewQuality(q) } })) {
+                            ForEach(camera.capabilities.liveViewSizes, id: \.self) { Text(CameraModel.liveViewLabel($0)).tag($0) }
+                        }
+                    } label: {
+                        row("Live view size", value: CameraModel.liveViewLabel(camera.liveViewQuality), chevron: true)
+                    }
+                }
+                Button { Task { await camera.restartLiveView() } } label: { row("Restart live view") }
+                toggle("Scene suggestions", isOn: Binding(get: { camera.sceneAssistantOn }, set: { camera.sceneAssistantOn = $0 }))
+                toggle("Save new photos to Photos", isOn: Binding(get: { camera.autoSaveNewPhotos }, set: { camera.autoSaveNewPhotos = $0 }))
+                Button(action: openPro) {
+                    row("Shutterlink Pro", value: ShutterlinkPro.shared.statusText, valueColor: Theme.accent, chevron: true)
+                }
+                Spacer().frame(height: 14)
+                if camera.capabilities.highResShot {
+                    Button(action: openHighRes) { row("High Res Shot helper", chevron: true) }
+                }
+                if camera.capabilities.clockSync {
+                    Button {
+                        Task { if await camera.syncClock() { camera.showToast("Camera clock set to this \(Platform.device)") } }
+                    } label: { row("Sync camera clock") }
+                }
+                Button(action: allSettings) { row("All camera settings", chevron: true) }
+                Button(action: log) { row("Request log", chevron: true) }
+                Spacer().frame(height: 14)
+                Button(action: disconnect) { row("Disconnect") }
+                if camera.capabilities.powerOff {
+                    Button(action: powerOff) { row("Turn camera off", color: Theme.red) }
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+        }
+        .scrollIndicators(.hidden)
+        .background(Theme.background)
+    }
+
+    private func row(_ title: String, value: String? = nil, valueColor: Color = Theme.secondary,
+                     color: Color = Theme.text, chevron: Bool = false) -> some View {
+        HStack(spacing: 8) {
+            Text(title).font(.system(size: 16, weight: .medium)).foregroundStyle(color)
+            Spacer(minLength: 8)
+            if let value { Text(value).font(.system(size: 15)).foregroundStyle(valueColor).lineLimit(1) }
+            if chevron { Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.tertiary) }
+        }
+        .frame(minHeight: 52)
+        .contentShape(.rect)
+        .hairRow()
+    }
+
+    private func toggle(_ title: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) { Text(title).font(.system(size: 16, weight: .medium)) }
+            .tint(Theme.accent)
+            .frame(minHeight: 52)
+            .hairRow()
     }
 }

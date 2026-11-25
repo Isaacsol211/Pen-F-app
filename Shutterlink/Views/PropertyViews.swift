@@ -1,138 +1,47 @@
 import SwiftUI
 
-/// iPhone Camera–style exposure ruler: fine ticks for every step, taller labelled ticks on full
-/// stops, a fixed centre marker, the live value above, and a haptic tick for every step crossed
-/// (a firmer one on full stops). The value is sent to the camera when scrolling stops.
+/// One setting's dial: the curved ruler across the bottom of the remote. The value is sent to the
+/// camera when you let go.
 struct ValueDial: View {
     let property: CameraProperty
+    var readoutLabel: String?
     let onCommit: (String) -> Void
 
-    @State private var centered: String?
-    @State private var committed: String
+    @State private var selection: String
 
-    init(property: CameraProperty, onCommit: @escaping (String) -> Void) {
+    init(property: CameraProperty, readoutLabel: String? = nil, onCommit: @escaping (String) -> Void) {
         self.property = property
+        self.readoutLabel = readoutLabel
         self.onCommit = onCommit
-        _centered = State(initialValue: property.value)
-        _committed = State(initialValue: property.value)
+        _selection = State(initialValue: property.value)
     }
-
-    private var usesIcons: Bool { property.name == "wbvalue" }
-    private var spacing: CGFloat { usesIcons ? 46 : (property.name == "shutspeedvalue" ? 13 : 11) }
-    private var current: String { centered ?? committed }
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 6) {
-                Text(PropertyFormat.title(for: property.name).uppercased())
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(1)
-                    .foregroundStyle(.secondary)
-                Text(PropertyFormat.display(property.name, current))
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Theme.accent)
-                    .contentTransition(.numericText())
-                    .animation(.snappy(duration: 0.15), value: current)
+        VStack(spacing: 6) {
+            if let readoutLabel {
+                DialReadout(label: readoutLabel, value: Self.readoutText(property.name, selection))
             }
-            GeometryReader { geo in
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 0) {
-                            ForEach(property.options, id: \.self) { option in
-                                tick(option)
-                                    .frame(width: spacing)
-                                    .contentShape(.rect)
-                                    .id(option)
-                                    .onTapGesture { select(option, proxy: proxy) }
-                            }
-                        }
-                        .scrollTargetLayout()
-                    }
-                    .contentMargins(.horizontal, max(0, (geo.size.width - spacing) / 2), for: .scrollContent)
-                    // Snap to each tick; .never lets a fling run through many steps.
-                    .scrollTargetBehavior(.viewAligned(limitBehavior: .never))
-                    .scrollPosition(id: $centered, anchor: .center)
-                    .onScrollPhaseChange { _, phase in
-                        if phase == .idle, let centered { commit(centered) }
-                    }
-                    .task {
-                        // Start centred on the current value (the initial scroll position isn't reliable).
-                        try? await Task.sleep(for: .milliseconds(20))
-                        proxy.scrollTo(committed, anchor: .center)
-                    }
-                    .onChange(of: property.value) { _, newValue in
-                        // The camera may adjust or reject a value (or a preset changed it): follow it.
-                        committed = newValue
-                        if centered != newValue {
-                            withAnimation(.snappy) { proxy.scrollTo(newValue, anchor: .center) }
-                            centered = newValue
-                        }
-                    }
-                    .overlay(alignment: .top) {
-                        // Centre marker.
-                        Capsule()
-                            .fill(Theme.accent)
-                            .frame(width: 2, height: usesIcons ? 20 : 22)
-                            .offset(y: -3)
-                            .allowsHitTesting(false)
-                    }
-                    .mask {
-                        LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.22),
-                                               .init(color: .black, location: 0.78), .init(color: .clear, location: 1)],
-                                       startPoint: .leading, endPoint: .trailing)
-                    }
-                    .accessibilityElement()
-                    .accessibilityLabel(PropertyFormat.title(for: property.name))
-                    .accessibilityValue(PropertyFormat.display(property.name, current))
-                    .accessibilityAdjustableAction { direction in
-                        guard let index = property.options.firstIndex(of: current) else { return }
-                        let next = direction == .increment ? index + 1 : index - 1
-                        guard property.options.indices.contains(next) else { return }
-                        select(property.options[next], proxy: proxy)
-                    }
-                }
-            }
-            .frame(height: usesIcons ? 40 : 30)
+            dial
         }
-        .padding(.vertical, 4)
-        // A light click per step and a solid thunk on full stops, like a detented dial.
-        .sensoryFeedback(trigger: centered) { _, new in
-            guard let new else { return nil }
-            return Self.isMajor(property.name, new) ? .impact(weight: .heavy, intensity: 1.0) : .selection
-        }
+        // The camera may adjust or reject a value (or a preset changed it): follow it.
+        .onChange(of: property.value) { _, new in selection = new }
     }
 
-    @ViewBuilder private func tick(_ option: String) -> some View {
-        let major = Self.isMajor(property.name, option)
-        let selected = option == current
-        VStack(spacing: 4) {
-            Capsule()
-                .fill(selected ? Theme.accent : Color.white.opacity(major ? 0.85 : 0.4))
-                .frame(width: major ? 1.5 : 1, height: usesIcons ? 12 : (major ? 14 : 8))
-            if usesIcons {
-                Image(systemName: SettingSpec.optionIcon(property.name, option) ?? "circle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(selected ? Theme.accent : Color.white.opacity(0.7))
-            } else if major {
-                Text(Self.shortLabel(property.name, option))
-                    .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundStyle(selected ? Theme.accent : Color.white.opacity(0.6))
-                    .fixedSize()
-            }
+    private var dial: some View {
+        CurvedDial(options: property.options,
+                   label: { Self.shortLabel(property.name, $0) },
+                   isMajor: { Self.isMajor(property.name, $0) },
+                   selection: $selection,
+                   onCommit: { if $0 != property.value { onCommit($0) } })
+    }
+
+    /// The selected value as the big readout shows it.
+    static func readoutText(_ name: String, _ value: String) -> String {
+        switch name {
+        case "focalvalue": return "f/" + shortLabel(name, value)
+        case "takemode": return ModeCarousel.title(value)
+        default: return PropertyFormat.display(name, value)
         }
-        .frame(height: usesIcons ? 40 : 30, alignment: .top)
-    }
-
-    private func select(_ option: String, proxy: ScrollViewProxy) {
-        withAnimation(.snappy) { proxy.scrollTo(option, anchor: .center) }
-        centered = option
-        commit(option)
-    }
-
-    private func commit(_ value: String) {
-        guard value != committed else { return }
-        committed = value
-        onCommit(value)
     }
 
     /// Full stops get a tall, labelled tick; third stops a short one.
@@ -160,6 +69,7 @@ struct ValueDial: View {
 
     static func shortLabel(_ name: String, _ value: String) -> String {
         switch name {
+        case "takemode": return ModeCarousel.title(value)
         case "focalvalue": return value.hasSuffix(".0") ? String(value.dropLast(2)) : value
         case "expcomp":
             guard let ev = Double(value) else { return value }

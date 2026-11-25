@@ -10,7 +10,7 @@ struct SettingSpec {
 
     /// Everything the PEN-F lets an app change over Wi-Fi, in shooting order.
     static let all: [SettingSpec] = [
-        SettingSpec(name: "takemode", title: "Mode", icon: "camera", style: .grid),
+        SettingSpec(name: "takemode", title: "Mode", icon: "camera", style: .dial),
         SettingSpec(name: "focalvalue", title: "Aperture", icon: "camera.aperture", style: .dial),
         SettingSpec(name: "shutspeedvalue", title: "Shutter", icon: "camera.shutter.button", style: .dial),
         SettingSpec(name: "isospeedvalue", title: "ISO", icon: "sun.max", style: .dial),
@@ -63,30 +63,34 @@ struct OptionPanel: View {
     var body: some View {
         if let raw = camera.properties[spec.name] {
             let property = camera.dialOptions(for: raw)
-            // Rulers carry their own title and live value; other styles get a header.
-            let ruler = property.settable && spec.style == .dial
-            VStack(alignment: .leading, spacing: 10) {
-                if !ruler {
-                HStack(spacing: 8) {
-                    Image(systemName: spec.icon).foregroundStyle(Theme.accent)
-                    CapsLabel(spec.title, color: Theme.accent)
-                    Spacer()
-                    Text(PropertyFormat.display(spec.name, property.value))
-                        .font(.subheadline.monospaced().weight(.semibold))
-                        .contentTransition(.numericText())
-                    Button(action: onClose) {
-                        Image(systemName: "xmark").font(.footnote.weight(.bold))
+            let isDial = spec.style == .dial
+            let auto = ExposureGrid.isAuto(spec.name, locked: !property.settable, mode: camera.properties["takemode"]?.value)
+            let label = ExposureGrid.label(spec.name == "takemode" ? "mode" : spec.name)
+            VStack(alignment: .center, spacing: 10) {
+                if !isDial {
+                    HStack(spacing: 8) {
+                        Text(spec.title).font(.num(26))
+                        Spacer()
+                        Text(PropertyFormat.display(spec.name, property.value))
+                            .font(.num(22, weight: .medium))
+                            .foregroundStyle(Theme.accent)
+                            .contentTransition(.numericText())
+                        Button(action: onClose) {
+                            Image(systemName: "xmark").font(.footnote.weight(.bold))
+                        }
+                        .buttonStyle(.surfaceCircle)
+                        .accessibilityLabel("Close \(spec.title)")
                     }
-                    .buttonStyle(.surfaceCircle)
-                    .accessibilityLabel("Close \(spec.title)")
-                }
                 }
                 if !property.settable {
+                    DialReadout(label: label + (auto ? " · Auto" : ""),
+                                value: ExposureStrip.text(spec.name, camera: camera)
+                                    .replacingOccurrences(of: "ISO ", with: ""), locked: true)
                     lockedExplanation
                 } else if spec.name == "shutspeedvalue" {
                     ShutterOptions(property: property)
-                } else if spec.style == .dial {
-                    ValueDial(property: property) { value in
+                } else if isDial {
+                    ValueDial(property: property, readoutLabel: label) { value in
                         Task { await camera.setProperty(spec.name, to: value) }
                     }
                     .id(spec.name)
@@ -96,8 +100,8 @@ struct OptionPanel: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, ruler ? 8 : 14)
+            .padding(.horizontal, isDial ? 0 : 14)
+            .padding(.vertical, isDial ? 0 : 14)
             .animation(.snappy, value: property.value)
         }
     }
@@ -119,10 +123,11 @@ struct OptionPanel: View {
         } else {
             "The camera sets this itself in \(PropertyFormat.display("takemode", mode)) mode."
         }
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .center, spacing: 8) {
             Text(why)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.text)
+                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             if let unlock, camera.properties["takemode"]?.options.contains(unlock.mode) == true {
                 Button(unlock.label, systemImage: "lock.open") {
@@ -160,12 +165,12 @@ struct OptionGrid: View {
                                 .minimumScaleFactor(0.7)
                                 .multilineTextAlignment(.center)
                         }
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                        .foregroundStyle(selected ? Color.black : Color.white)
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .foregroundStyle(selected ? Theme.onAccent : Theme.text)
                     }
                     .buttonStyle(.plain)
-                    .surface(selected ? .regular.tint(Theme.accent) : .regular,
-                                 in: .rect(cornerRadius: 14, style: .continuous))
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(selected ? Theme.accent : Color.clear))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(selected ? Color.clear : Theme.stroke, lineWidth: 1))
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
@@ -204,11 +209,11 @@ struct ShutterOptions: View {
                         } label: {
                             Text(choice == "timed" ? "Timed" : PropertyFormat.display("shutspeedvalue", choice))
                                 .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(on ? Color.black : Color.white.opacity(0.8))
-                                .padding(.horizontal, 10)
-                                .frame(height: 24)
-                                .background(on ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.1)),
-                                            in: .capsule)
+                                .foregroundStyle(on ? Theme.onAccent : Theme.secondary)
+                                .padding(.horizontal, 12)
+                                .frame(height: 30)
+                                .background(on ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.clear), in: .capsule)
+                                .overlay(Capsule().stroke(on ? Color.clear : Theme.outline, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
@@ -217,7 +222,7 @@ struct ShutterOptions: View {
                 .sensoryFeedback(.selection, trigger: current)
             }
             if current == "timed" {
-                ValueDial(property: timed) { value in
+                ValueDial(property: timed, readoutLabel: "Shutter") { value in
                     lastTimed = value
                     Task { await camera.setProperty("shutspeedvalue", to: value) }
                 }

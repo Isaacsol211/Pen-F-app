@@ -11,6 +11,13 @@ import UIKit
 enum DriverSelfTest {
     static func runIfRequested(_ camera: CameraModel) {
         let args = ProcessInfo.processInfo.arguments
+        // `-mockConnect <brand> <127.0.0.1:port>` just connects to a mock and stays, for looking at the UI.
+        if let j = args.firstIndex(of: "-mockConnect"), j + 2 < args.count, args[j + 2].hasPrefix("127.") {
+            camera.setBrand(CameraBrand(rawValue: args[j + 1]))
+            camera.host = args[j + 2]
+            Task { await camera.connect() }
+            return
+        }
         guard let i = args.firstIndex(of: "-selfTest"), i + 2 < args.count else { return }
         let brand = args[i + 1], host = args[i + 2]
         guard host.hasPrefix("127.") || host.hasPrefix("localhost") else {

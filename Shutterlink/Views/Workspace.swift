@@ -39,7 +39,11 @@ struct ExposureGrid: View {
     @Binding var active: String?
     @ScaledMetric(relativeTo: .title2) private var valueSize: CGFloat = 23
 
-    private var items: [String] { ExposureStrip.items(camera) }
+    private var items: [String] {
+        var names = ["focalvalue", "shutspeedvalue", "isospeedvalue", "expcomp", "wbvalue", "drivemode", "quality"]
+        if camera.isMovieMode { names.append("exposemovie") }
+        return names.filter { camera.properties[$0] != nil }
+    }
 
     var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
