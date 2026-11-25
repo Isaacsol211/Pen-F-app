@@ -13,7 +13,7 @@ struct LogView: View {
                     LabeledContent("Model", value: camera.cameraName ?? "–")
                     LabeledContent("Support", value: camera.profile?.support.rawValue ?? "Not in Shutterlink's model table")
                     ForEach(camera.profile?.notes ?? [], id: \.self) { note in
-                        Text(note).font(.footnote).foregroundStyle(.secondary)
+                        Text(note).font(.footnote).foregroundStyle(Theme.secondary)
                     }
                     LabeledContent("Connect mode", value: camera.connectMode ?? "–")
                     LabeledContent("Protocol version", value: camera.commands.version ?? "–")
@@ -27,7 +27,7 @@ struct LogView: View {
                 }
                 Section("Requests (newest first)") {
                     if camera.log.isEmpty {
-                        Text("Nothing yet.").foregroundStyle(.secondary)
+                        Text("Nothing yet.").foregroundStyle(Theme.secondary)
                     }
                     ForEach(camera.log.reversed()) { entry in
                         LogRow(entry: entry)
@@ -62,9 +62,9 @@ private struct LogRow: View {
                 Text(entry.status.map(String.init) ?? "ERR")
                     .font(.caption.monospaced().weight(.bold))
                     .foregroundStyle(entry.ok ? .green : .red)
-                Text(entry.method).font(.caption.monospaced()).foregroundStyle(.secondary)
+                Text(entry.method).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
                 Spacer()
-                Text("\(entry.millis) ms").font(.caption2.monospaced()).foregroundStyle(.secondary)
+                Text("\(entry.millis) ms").font(.caption2.monospaced()).foregroundStyle(Theme.secondary)
             }
             Text(entry.path)
                 .font(.caption.monospaced())
@@ -72,7 +72,7 @@ private struct LogRow: View {
             if !entry.summary.isEmpty {
                 Text(entry.summary)
                     .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.secondary)
                     .lineLimit(4)
             }
         }

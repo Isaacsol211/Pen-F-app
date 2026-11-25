@@ -235,30 +235,34 @@ struct SidePanelView: View {
         if let onClose {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
-                    Image(systemName: panel.icon).foregroundStyle(Theme.accent)
-                    CapsLabel(panel.title, color: Theme.accent)
+                    Text(panel.title).font(.num(26))
                     Spacer(minLength: 0)
                     Button(action: onClose) {
-                        Image(systemName: "xmark").font(.footnote.weight(.bold))
+                        Image(systemName: "xmark").font(.footnote.weight(.bold)).foregroundStyle(Theme.text)
+                            .frame(width: Theme.target, height: Theme.target)
                     }
-                    .buttonStyle(.surfaceCircle)
                     .accessibilityLabel("Close \(panel.title)")
                 }
                 content
             }
         } else {
-            NavigationStack {
+            VStack(spacing: 0) {
+                HStack {
+                    Text(panel.title).font(.num(26))
+                    Spacer()
+                    Button("Done") { dismiss() }
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.text)
+                        .frame(minHeight: Theme.target)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
                 ScrollView {
-                    content.padding(16)
+                    content.padding(.horizontal, 20).padding(.vertical, 8)
                 }
-                .navigationTitle(panel.title)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done", systemImage: "checkmark") { dismiss() }
-                    }
-                }
+                .scrollIndicators(.hidden)
             }
+            .background(Theme.background)
         }
     }
 

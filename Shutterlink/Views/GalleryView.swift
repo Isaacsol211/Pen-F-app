@@ -188,7 +188,7 @@ struct GalleryView: View {
                   : "No photos in this folder.",
                   systemImage: folder.isForeign ? "camera.badge.ellipsis" : "photo")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.secondary)
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .surface(.regular, in: .rect(cornerRadius: 16, style: .continuous))
@@ -250,7 +250,7 @@ private struct FolderHeader: View {
                 .padding(.vertical, 2)
                 .surface(.regular, in: .capsule)
             if folder.isForeign {
-                Text("other camera").font(.caption).foregroundStyle(.secondary)
+                Text("other camera").font(.caption).foregroundStyle(Theme.secondary)
             }
             Spacer()
         }
@@ -277,7 +277,7 @@ private struct ThumbnailCell: View {
                         Image(systemName: "photo").font(.title3)
                         Text(image.name).font(.system(size: 9).monospaced()).lineLimit(1)
                     }
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.secondary)
                     .padding(4)
                 } else {
                     ProgressView().controlSize(.small)
@@ -365,7 +365,7 @@ private struct PhotoPage: View {
             if let preview {
                 ZoomableImage(image: preview)
             } else if let loadError {
-                Text(loadError).font(.footnote).foregroundStyle(.secondary).padding()
+                Text(loadError).font(.footnote).foregroundStyle(Theme.secondary).padding()
             } else {
                 ProgressView()
             }
@@ -379,7 +379,7 @@ private struct PhotoPage: View {
                              ? "From another camera"
                              : "\(image.date.formatted(date: .abbreviated, time: .shortened)) · \(ByteCountFormatter.string(fromByteCount: Int64(image.size), countStyle: .file))\(image.looksHighRes ? " · High Res" : "")")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Theme.secondary)
                     }
                     Spacer()
                     Button {
@@ -424,7 +424,7 @@ private struct PhotoPage: View {
                     #endif
                 }
                 if let saveMessage {
-                    Text(saveMessage).font(.footnote).foregroundStyle(.secondary).transition(.blurReplace)
+                    Text(saveMessage).font(.footnote).foregroundStyle(Theme.secondary).transition(.blurReplace)
                 }
             }
             .padding(14)

@@ -38,6 +38,8 @@ struct BracketPanel: View {
     }
 
     @ViewBuilder private var setupCards: some View {
+        BigNumber(value: "\(frames) × \(BracketPanel.stepLabel(thirds))",
+                  caption: "\(frames) frames, \(BracketPanel.stepLabel(thirds)) stop\(thirds == 3 ? "" : "s") apart", size: 88)
         card {
             Text("Frames").font(.headline)
             Picker("Frames", selection: $frames) {
@@ -58,7 +60,7 @@ struct BracketPanel: View {
                  ? "Auto varies EV. In M, choose Shutter: the app can't read this camera's mode dial."
                  : "Auto varies the shutter speed in M and exposure compensation in P, A and S.")
                 .font(.footnote)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.secondary)
         }
         card {
             Text("Will shoot").font(.headline)
@@ -68,7 +70,7 @@ struct BracketPanel: View {
                     ForEach(Array(zip(set.offsets, set.values).enumerated()), id: \.offset) { item in
                         let (offset, value) = item.element
                         VStack(spacing: 2) {
-                            Text(CameraModel.offsetLabel(offset)).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                            Text(CameraModel.offsetLabel(offset)).font(.caption2.weight(.semibold)).foregroundStyle(Theme.secondary)
                             Text(PropertyFormat.display(set.property, value)).font(.caption.monospaced().weight(.semibold))
                         }
                         .padding(.horizontal, 8)
@@ -79,13 +81,13 @@ struct BracketPanel: View {
                 if set.clamped {
                     Label("Some frames reach the end of the camera's range and repeat a value.",
                           systemImage: "exclamationmark.triangle")
-                        .font(.footnote).foregroundStyle(.orange)
+                        .font(.footnote).foregroundStyle(Theme.accent)
                 }
                 Text("The setting goes back to \(PropertyFormat.display(set.property, camera.properties[set.property]?.value ?? "")) afterwards.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(Theme.secondary)
             case .failure(let error):
                 Label(error.localizedDescription, systemImage: "exclamationmark.triangle")
-                    .font(.footnote).foregroundStyle(.orange)
+                    .font(.footnote).foregroundStyle(Theme.accent)
             }
         }
         Button {
@@ -100,7 +102,7 @@ struct BracketPanel: View {
         .disabled(!camera.canBracket || (try? camera.bracketSet(plan).get()) == nil)
         if camera.isOpenEndedShutter {
             Text("Bracketing needs a timed shutter speed, not Bulb or Live modes.")
-                .font(.footnote).foregroundStyle(.secondary)
+                .font(.footnote).foregroundStyle(Theme.secondary)
         }
     }
 
@@ -108,6 +110,7 @@ struct BracketPanel: View {
 
     @ViewBuilder private var focusCards: some View {
         if camera.capabilities.focusDrive {
+            BigNumber(value: "\(focusFrames)", caption: "frames, from where you focused towards infinity", size: 104)
             card {
                 Stepper(value: $focusFrames, in: 2...200) {
                     HStack {
@@ -123,16 +126,16 @@ struct BracketPanel: View {
                 .pickerStyle(.segmented)
                 Text("Fine for macro and wide apertures, coarser for landscapes and stopped-down lenses. The stack stops early if the lens reaches infinity.")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.secondary)
             }
             card {
                 Label("Before you start", systemImage: "lightbulb").font(.headline)
                 Text(camera.focusStackSetup)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.secondary)
                 Label("Not yet tried on a real camera of this brand: shoot a short stack first.", systemImage: "flask")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.secondary)
             }
             Button {
                 camera.startFocusStack(frames: focusFrames, step: FocusStepSize(rawValue: focusStepRaw) ?? .fine)
@@ -146,43 +149,30 @@ struct BracketPanel: View {
             .disabled(!camera.canFocusStack)
             if camera.isOpenEndedShutter {
                 Text("Focus stacking needs a timed shutter speed, not Bulb or Live modes.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(Theme.secondary)
             }
         } else {
             card {
                 Label("Use the camera's own focus bracketing", systemImage: "scope").font(.headline)
                 Text(camera.focusStackUnavailable)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.secondary)
             }
         }
     }
 
     private var progressCard: some View {
-        card {
-            HStack(spacing: 18) {
-                ZStack {
-                    Circle().stroke(.white.opacity(0.15), lineWidth: 8)
-                    Circle()
-                        .trim(from: 0, to: camera.bracket.total > 0
-                              ? CGFloat(camera.bracket.done) / CGFloat(camera.bracket.total) : 0)
-                        .stroke(Theme.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .animation(.smooth, value: camera.bracket.done)
-                    Text("\(camera.bracket.done)/\(camera.bracket.total)")
-                        .font(.headline.monospacedDigit())
-                }
-                .frame(width: 84, height: 84)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(camera.bracket.isFocusStack ? "Focus stack" : "Bracketing").font(.headline)
-                    if let label = camera.bracket.label {
-                        Text(label).font(.subheadline.monospaced()).foregroundStyle(.secondary)
-                    }
-                    Button("Cancel", systemImage: "xmark", role: .destructive) { camera.cancelBracket() }
-                        .buttonStyle(.surface)
-                }
+        VStack(spacing: 18) {
+            ProgressRing(text: "\(camera.bracket.done)", sub: "of \(camera.bracket.total)",
+                         fraction: camera.bracket.total > 0 ? Double(camera.bracket.done) / Double(camera.bracket.total) : 0)
+            Text(camera.bracket.isFocusStack ? "Focus stack" : "Bracketing").font(.num(26))
+            if let label = camera.bracket.label {
+                Text(label).font(.subheadline).foregroundStyle(Theme.secondary)
             }
+            Button(role: .destructive) { camera.cancelBracket() } label: { Text("Cancel") }
+                .buttonStyle(.outline)
         }
+        .frame(maxWidth: .infinity)
     }
 
     static func stepLabel(_ thirds: Int) -> String {
@@ -247,7 +237,7 @@ struct BulbTimerControl: View {
             Text("STOP AFTER")
                 .font(.system(size: 10, weight: .semibold))
                 .tracking(1)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(presets, id: \.self) { seconds in
@@ -468,7 +458,7 @@ struct RawImportBar: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("RAW \(min(progress.done + 1, progress.total)) of \(progress.total)").font(.footnote.weight(.semibold))
                         if let current = progress.current {
-                            Text(current).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            Text(current).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
                         }
                     }
                     Spacer(minLength: 0)

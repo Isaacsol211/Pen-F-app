@@ -238,7 +238,7 @@ struct ShutterOptions: View {
                             ? "The exposure stops by itself after \(CameraModel.durationLabel(camera.bulbTimer)), or when you tap the shutter."
                             : "The exposure runs until you tap the shutter again."))
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .transition(.blurReplace)

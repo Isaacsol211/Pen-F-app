@@ -111,14 +111,14 @@ struct PresetsPanel: View {
                 .frame(width: 36, height: 36)
                 .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.accent))
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.headline).foregroundStyle(.white)
+                Text(title).font(.headline).foregroundStyle(Theme.text)
                 Text(subtitle).font(.footnote).foregroundStyle(Theme.secondary).lineLimit(2)
             }
             Spacer(minLength: 0)
             if on {
                 Label("On", systemImage: "checkmark.circle.fill")
                     .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Theme.green)
             }
             Image(systemName: chevron)
                 .font(.footnote.weight(.bold))
@@ -228,6 +228,12 @@ struct NDPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if let seconds, let meter {
+                BigNumber(label: "With the filter on, expose for", value: shutterLabel(seconds: seconds),
+                          caption: "\(shutterLabel(seconds: meter.seconds)) → \(shutterLabel(seconds: seconds))", size: 96, color: Theme.accent)
+            } else {
+                BigNumber(label: "ND filter", value: "\(stops) stops", caption: "Meter without the filter first", size: 88)
+            }
             card {
                 Text("1. Meter without the filter").font(.headline)
                 if let live = camera.meteredExposure {
@@ -256,10 +262,12 @@ struct NDPanel: View {
                                 Text("\(value) stops").font(.caption.weight(.semibold))
                                 Text(name).font(.caption2).foregroundStyle(stops == value ? Theme.onAccent : Theme.secondary)
                             }
-                            .foregroundStyle(stops == value ? Theme.onAccent : .white)
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .foregroundStyle(stops == value ? Theme.onAccent : Theme.text)
+                            .frame(maxWidth: .infinity, minHeight: 48)
                             .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(stops == value ? Theme.accent : Theme.surfaceRaised))
+                                .fill(stops == value ? Theme.accent : Color.clear))
+                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(stops == value ? Color.clear : Theme.outline, lineWidth: 1))
                         }
                         .buttonStyle(.plain)
                     }
@@ -368,7 +376,7 @@ struct MotionPanel: View {
             if camera.isOpenEndedShutter && !camera.motion.armed {
                 Text("The motion trigger needs a timed shutter speed, not Bulb or a Live mode.")
                     .font(.footnote)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.accent)
             }
             if camera.motion.armed || camera.motion.shots > 0 {
                 Text(camera.motion.armed ? "Armed · \(camera.motion.shots) shots so far" : "\(camera.motion.shots) shots")

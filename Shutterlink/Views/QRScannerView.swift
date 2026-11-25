@@ -45,7 +45,7 @@ struct QRScannerSheet: View {
                      ? "Shutterlink can't read this camera's code yet. Close this and type the network name and password shown next to the code."
                      : "Point at the QR code on the camera's screen.")
                     .font(.callout.weight(.medium))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.text)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 18)
                     .padding(.vertical, 12)

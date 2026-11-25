@@ -96,10 +96,10 @@ struct PropertyOptionsList: View {
                 } label: {
                     HStack {
                         let label = PropertyFormat.display(property.name, option)
-                        Text(label).foregroundStyle(.white)
+                        Text(label).foregroundStyle(Theme.text)
                         Spacer()
                         if !label.contains(option) {
-                            Text(option).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            Text(option).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
                         }
                         if option == current.value {
                             Image(systemName: "checkmark").foregroundStyle(Theme.accent)
@@ -161,14 +161,14 @@ struct AllSettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(PropertyFormat.title(for: property.name))
                 Text(property.options.isEmpty ? property.name : "\(property.name) · \(property.options.count) options")
-                    .font(.caption.monospaced()).foregroundStyle(.secondary)
+                    .font(.caption.monospaced()).foregroundStyle(Theme.secondary)
             }
             Spacer()
             Text(PropertyFormat.display(property.name, property.value))
-                .font(.callout).foregroundStyle(.secondary)
+                .font(.callout).foregroundStyle(Theme.secondary)
                 .multilineTextAlignment(.trailing)
             if !property.settable {
-                Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
+                Image(systemName: "lock.fill").font(.caption).foregroundStyle(Theme.secondary)
             }
         }
     }

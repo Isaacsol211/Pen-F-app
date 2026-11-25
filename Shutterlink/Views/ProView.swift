@@ -34,7 +34,7 @@ struct ProView: View {
                         ForEach(Self.features, id: \.title) { item in
                             Label {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.title).font(.headline).foregroundStyle(.white)
+                                    Text(item.title).font(.headline).foregroundStyle(Theme.text)
                                     Text(item.detail).font(.subheadline).foregroundStyle(Theme.secondary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
@@ -88,7 +88,7 @@ struct ProView: View {
             }
             Text(pro.isUnlocked ? "Pro is unlocked" : "The tools that do the work for you")
                 .font(.system(size: 28, weight: .heavy))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             Text(pro.isUnlocked ? pro.statusText : "One purchase for iPhone, iPad and Mac. Yours to keep, no subscription.")
                 .font(.subheadline)

@@ -31,7 +31,7 @@ struct CameraStatusRow: View {
             }
             if info.temperatureWarning {
                 Image(systemName: "thermometer.high")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Theme.accent)
                     .symbolEffect(.pulse)
                     .accessibilityLabel("Camera is hot")
             }
@@ -122,106 +122,103 @@ struct IntervalPanel: View {
     }
 
     @ViewBuilder private var setupCards: some View {
-        card {
-            Text("Presets").font(.headline)
-            HStack(spacing: 8) {
-                preset("Star stack", count: 30, seconds: 22)
-                preset("Time-lapse", count: 240, seconds: 5)
-                preset("Trails", count: 120, seconds: 32)
-            }
+        HStack(spacing: 8) {
+            preset("Star stack", count: 30, seconds: 22)
+            preset("Time-lapse", count: 240, seconds: 5)
+            preset("Trails", count: 120, seconds: 32)
         }
-        card {
+        .padding(.bottom, 6)
+        BigNumber(label: "Every", value: "\(Int(seconds)) s", caption: count == 0 ? "until you stop it" : "for \(count) frames", size: 88)
+        VStack(spacing: 0) {
             Stepper(value: $seconds, in: 1...600, step: seconds < 10 ? 1 : 5) {
                 LabeledContent("Every", value: "\(Int(seconds)) s")
             }
+            .hairRow(minHeight: 56)
             Stepper(value: $count, in: 0...9999, step: count < 20 ? 1 : 10) {
                 LabeledContent("Frames", value: count == 0 ? "Until stopped" : "\(count)")
             }
-            Text(summary).font(.footnote).foregroundStyle(.secondary)
+            .hairRow(minHeight: 56)
+            note(summary)
             if let shutter = PropertyFormat.seconds(fromShutter: camera.properties["shutspeedvalue"]?.value ?? ""),
                shutter + 1 > seconds {
                 Label("The interval is shorter than the exposure (\(Int(shutter)) s). Shots will run back to back.",
                       systemImage: "exclamationmark.triangle")
-                    .font(.footnote).foregroundStyle(.orange)
+                    .font(.footnote).foregroundStyle(Theme.accent)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 12)
+                    .hairRow()
             }
-        }
-        card {
             Toggle(isOn: $ramp) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Follow the light")
-                    Text("Day to night (or night to day)").font(.footnote).foregroundStyle(.secondary)
+                    Text("Day to night (or night to day)").font(.footnote).foregroundStyle(Theme.secondary)
                 }
             }
+            .tint(Theme.accent)
             .disabled(!camera.canRampExposure)
+            .hairRow(minHeight: 62)
             if ramp && camera.canRampExposure {
-                Text("Highest ISO").font(.subheadline)
-                Picker("Highest ISO", selection: $maxISO) {
-                    ForEach([1600, 3200, 6400, 12800], id: \.self) { Text(verbatim: "\($0)").tag($0) }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Highest ISO").font(.subheadline).foregroundStyle(Theme.secondary)
+                    Picker("Highest ISO", selection: $maxISO) {
+                        ForEach([1600, 3200, 6400, 12800], id: \.self) { Text(verbatim: "\($0)").tag($0) }
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
+                .padding(.vertical, 12)
+                .hairRow()
             }
-            Text(camera.canRampExposure
+            note(camera.canRampExposure
                  ? "Keeps live view as bright as when you start: as it gets dark the shutter gets longer (up to what the interval leaves room for), then the ISO goes up, a third of a stop at a time, and back at sunrise. Needs live view to show the exposure (Live View Boost off)."
                  : "Switch the camera to M so the app can change the shutter speed.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
         }
         Button {
             camera.startInterval(plan)
         } label: {
-            Label("Start", systemImage: "timer")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+            Text("Start")
         }
         .buttonStyle(.accent)
         .disabled(camera.mode != .rec || camera.isOpenEndedShutter)
+        .padding(.top, 8)
         if camera.isOpenEndedShutter {
-            Text("Interval shooting needs a timed shutter speed, not Live Composite/Time/Bulb.")
-                .font(.footnote).foregroundStyle(.secondary)
+            note("Interval shooting needs a timed shutter speed, not Live Composite/Time/Bulb.")
         }
     }
 
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote)
+            .foregroundStyle(Theme.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 12)
+            .hairRow()
+    }
+
     private var progressCard: some View {
-        card {
-            HStack(spacing: 18) {
-                ZStack {
-                    Circle().stroke(.white.opacity(0.15), lineWidth: 8)
-                    Circle()
-                        .trim(from: 0, to: camera.interval.total > 0
-                              ? CGFloat(camera.interval.done) / CGFloat(camera.interval.total) : 0)
-                        .stroke(Theme.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .animation(.smooth, value: camera.interval.done)
-                    Text("\(camera.interval.done)")
-                        .font(.title2.monospacedDigit().weight(.semibold))
-                        .contentTransition(.numericText(value: Double(camera.interval.done)))
+        VStack(spacing: 18) {
+            ProgressRing(text: "\(camera.interval.done)",
+                         sub: camera.interval.total == 0 ? "shooting until stopped" : "of \(camera.interval.total)",
+                         fraction: camera.interval.total > 0 ? Double(camera.interval.done) / Double(camera.interval.total) : 0)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                if let next = camera.interval.nextShotAt {
+                    let left = max(0, Int(next.timeIntervalSince(context.date).rounded(.up)))
+                    BigNumber(value: String(format: "%d:%02d", left / 60, left % 60),
+                              caption: "Next shot in \(left) s", size: 72)
+                } else {
+                    BigNumber(value: "…", caption: "Exposing…", size: 72)
                 }
-                .frame(width: 86, height: 86)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(camera.interval.total == 0 ? "Shooting until stopped" : "\(camera.interval.done) of \(camera.interval.total)")
-                        .font(.headline)
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        if let next = camera.interval.nextShotAt {
-                            Text("Next shot in \(max(0, Int(next.timeIntervalSince(context.date).rounded(.up)))) s")
-                        } else {
-                            Text("Exposing…")
-                        }
-                    }
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    if let note = camera.interval.rampNote {
-                        Text(note).font(.footnote).foregroundStyle(Theme.accent)
-                    }
-                }
+            }
+            if let note = camera.interval.rampNote {
+                Text(note).font(.footnote).foregroundStyle(Theme.accent)
             }
             Button(role: .destructive) {
                 camera.stopInterval()
             } label: {
-                Label("Stop", systemImage: "stop.fill").frame(maxWidth: .infinity).padding(.vertical, 6)
+                Text("Stop")
             }
-            .buttonStyle(.surface)
+            .buttonStyle(.outline)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var summary: String {
@@ -232,13 +229,13 @@ struct IntervalPanel: View {
     }
 
     private func preset(_ title: String, count: Int, seconds: Double) -> some View {
-        Button(title) {
+        let on = self.count == count && self.seconds == seconds
+        return Button(title) {
             withAnimation(.snappy) {
                 self.count = count
                 self.seconds = seconds
             }
         }
-        .buttonStyle(.surface)
-        .controlSize(.small)
+        .buttonStyle(ChipStyle(selected: on))
     }
 }

@@ -53,7 +53,7 @@ struct AstroView: View {
                                  ? "300 rule: stars stay round even at 100%."
                                  : "500 rule: longer exposures, slight streaks when zoomed in.")
                                 .font(.footnote)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Theme.secondary)
                         }
                     }
 
@@ -170,7 +170,7 @@ struct AstroView: View {
     private func tip(_ text: String) -> some View {
         Label(text, systemImage: "checkmark.circle")
             .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Theme.secondary)
     }
 }
 
@@ -189,19 +189,19 @@ struct StepResultRow: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                 }
-                Text(caption).font(.caption).foregroundStyle(.secondary)
+                Text(caption).font(.caption).foregroundStyle(Theme.secondary)
             }
         }
     }
 
     @ViewBuilder private var icon: some View {
         switch step.state {
-        case .pending: Image(systemName: "circle").foregroundStyle(.secondary)
+        case .pending: Image(systemName: "circle").foregroundStyle(Theme.secondary)
         case .running: ProgressView().controlSize(.small)
-        case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        case .failed: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+        case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.green)
+        case .failed: Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.red)
         // Not an error: the caption says what to do on the camera instead.
-        case .skipped: Image(systemName: "info.circle").foregroundStyle(.secondary)
+        case .skipped: Image(systemName: "info.circle").foregroundStyle(Theme.secondary)
         }
     }
 

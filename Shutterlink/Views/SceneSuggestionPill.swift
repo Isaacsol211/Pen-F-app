@@ -17,7 +17,7 @@ struct SceneSuggestionPill: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(suggestion.title)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Theme.text)
                 Text(suggestion.detail)
                     .font(.caption)
                     .foregroundStyle(Theme.secondary)

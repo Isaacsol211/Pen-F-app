@@ -85,6 +85,7 @@ struct RemoteView: View {
         .sheet(item: Binding(get: { isWorkspace ? nil : openPanel }, set: { openPanel = $0 })) { panel in
             SidePanelView(panel: panel, openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
                 .presentationDetents([.medium, .large])
+                .dSheet()
                 // Live view stays usable above the motion trigger, so the box can be dragged into place.
                 .presentationBackgroundInteraction(panel == .motion ? .enabled(upThrough: .medium) : .automatic)
         }

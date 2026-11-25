@@ -13,14 +13,14 @@ struct HighResPanel: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("High Res Shot").font(.title3.weight(.semibold))
                     Text("8 sensor-shifted frames → 50 MP JPEG, 80 MP RAW")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                        .font(.subheadline).foregroundStyle(Theme.secondary)
                 }
             }
             card(spacing: 10) {
                 Label("Turn it on at the camera", systemImage: "camera")
                     .font(.headline)
                 Text("Olympus cameras don't accept this setting over Wi-Fi. On the camera, open MENU ▸ Shooting Menu 2 ▸ High Res Shot ▸ On (or press the button you've assigned to it). A 0 s delay is fine when you shoot from the phone.")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                    .font(.subheadline).foregroundStyle(Theme.secondary)
             }
             card(spacing: 10) {
                 Label("Then", systemImage: "list.number").font(.headline)
@@ -33,7 +33,7 @@ struct HighResPanel: View {
                 Label("For the night sky", systemImage: "moon.stars")
                     .font(.headline)
                 Text("Stars move between the 8 frames, so High Res suits landscapes and still subjects, not long star exposures. For astro, use the Astro preset and the interval timer to stack instead.")
-                    .font(.subheadline).foregroundStyle(.secondary)
+                    .font(.subheadline).foregroundStyle(Theme.secondary)
             }
         }
     }
@@ -45,7 +45,7 @@ struct HighResPanel: View {
                 .foregroundStyle(.black)
                 .frame(width: 20, height: 20)
                 .background(Theme.accent, in: Circle())
-            Text(text).font(.subheadline).foregroundStyle(.secondary)
+            Text(text).font(.subheadline).foregroundStyle(Theme.secondary)
         }
     }
 }

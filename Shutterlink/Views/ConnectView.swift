@@ -601,7 +601,7 @@ struct AddCameraSheet: View {
                     HStack(spacing: 8) {
                         Text(brand?.title ?? "Automatic")
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Theme.text)
                         if brand == nil {
                             Text("Recommended").font(.caption2.weight(.bold)).foregroundStyle(Theme.accent)
                         } else if brand?.isBeta == true {
@@ -774,7 +774,7 @@ struct AddCameraSheet: View {
                 }
                 if camera.brand == .olympus && !camera.autoDetectBrand {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("User-Agent").font(.subheadline).foregroundStyle(.secondary)
+                        Text("User-Agent").font(.subheadline).foregroundStyle(Theme.secondary)
                         Picker("User-Agent", selection: $camera.userAgent) {
                             ForEach(CameraModel.userAgents, id: \.self) { Text($0).tag($0) }
                         }
@@ -783,7 +783,7 @@ struct AddCameraSheet: View {
                 }
                 if !camera.autoDetectBrand, !camera.brand.defaultLiveViewSizes.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Live view size").font(.subheadline).foregroundStyle(.secondary)
+                        Text("Live view size").font(.subheadline).foregroundStyle(Theme.secondary)
                         Picker("Live view size", selection: $camera.liveViewQuality) {
                             ForEach(camera.brand.defaultLiveViewSizes, id: \.self) {
                                 Text(CameraModel.liveViewLabel($0)).tag($0)
@@ -797,7 +797,7 @@ struct AddCameraSheet: View {
                      ? "Leave the address empty and the app looks for the camera at each brand's usual address." + simulatorMockHint
                      : "The \(camera.brand.shortTitle) camera is normally at \(camera.brand.defaultHost)." + simulatorMockHint)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.secondary)
                 #if targetEnvironment(macCatalyst)
                 // The Mac joins the camera's network itself: open System Settings ▸ Wi-Fi.
                 Button("Open Wi-Fi Settings", systemImage: "wifi") {
@@ -831,7 +831,7 @@ private struct ConnectErrorBanner: View {
         // Long explanations open on request, so the banner doesn't cover the form.
         let long = text.count > 140
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "wifi.exclamationmark").foregroundStyle(.red)
+            Image(systemName: "wifi.exclamationmark").foregroundStyle(Theme.red)
             VStack(alignment: .leading, spacing: 6) {
                 Text(text).lineLimit(expanded || !long ? nil : 3)
                 if long {
@@ -846,7 +846,7 @@ private struct ConnectErrorBanner: View {
                 .accessibilityLabel("Dismiss")
         }
         .font(.callout)
-        .foregroundStyle(.white)
+        .foregroundStyle(Theme.text)
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.red.opacity(0.18)))
