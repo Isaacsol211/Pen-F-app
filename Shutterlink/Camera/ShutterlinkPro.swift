@@ -53,14 +53,17 @@ final class ShutterlinkPro {
     var inTrial: Bool { (trialEnds ?? .distantPast) > Date() }
     var trialUsed: Bool { trialStarted != nil }
 
-    /// TestFlight before the Pro product exists in App Store Connect. Remembered, because the App
-    /// Store can't be reached while the phone is on a camera's Wi-Fi.
+    /// TestFlight before the Pro product exists in App Store Connect. Where the app came from and what
+    /// the App Store last said are remembered, because the App Store can't be reached while the phone
+    /// is on a camera's Wi-Fi; until it has said there is a Pro product, testers have Pro.
     var testerUnlock: Bool {
-        if environment == .production { return false }
-        guard environment == .sandbox, productsLoaded else { return UserDefaults.standard.bool(forKey: Self.testerKey) }
-        return products[Self.proID] == nil
+        let source = environment ?? UserDefaults.standard.string(forKey: Self.environmentKey).map { AppStore.Environment(rawValue: $0) }
+        guard source == .sandbox else { return false }
+        if productsLoaded { return products[Self.proID] == nil }
+        return UserDefaults.standard.object(forKey: Self.testerKey) as? Bool ?? true
     }
     private static let testerKey = "pro.testerUnlock"
+    private static let environmentKey = "pro.environment"
 
     var isUnlocked: Bool {
         #if DEBUG
@@ -138,6 +141,7 @@ final class ShutterlinkPro {
         if let result = try? await AppTransaction.shared {
             // An unverified one still says where the app came from; early-user status needs a verified one.
             environment = result.unsafePayloadValue.environment
+            UserDefaults.standard.set(environment?.rawValue, forKey: Self.environmentKey)
             if case .verified(let app) = result, !bought { earlyUser = Self.isEarlyUser(app) }
         }
     }
