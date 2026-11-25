@@ -26,5 +26,11 @@
 	<!-- RAW files that Photos won't take are saved to Documents/RAW, shown in Files. -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<!-- Barlow Condensed (OFL) for the numbers. -->
+	<key>UIAppFonts</key>
+	<array>
+		<string>BarlowCondensed-Medium.ttf</string>
+		<string>BarlowCondensed-SemiBold.ttf</string>
+	</array>
 </dict>
 </plist>

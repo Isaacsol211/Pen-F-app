@@ -106,12 +106,10 @@
 				AA0000000000000000000008 /* Sources */,
 				AA0000000000000000000003 /* Frameworks */,
 				AA0000000000000000000009 /* Resources */,
-				AA000000000000000000002A /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				AA000000000000000000002D /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				AA0000000000000000000002 /* Shutterlink */,
@@ -298,7 +296,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_FILE = "Shutterlink-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Shutterlink;
+				INFOPLIST_KEY_CFBundleDisplayName = "Shutterlink D";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Shutterlink talks to your camera over its Wi-Fi to show live view and take pictures.";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Shutterlink scans the QR code on your camera's screen to join the camera's Wi-Fi.";
@@ -314,7 +312,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.apexcommerce.shutterlink;
+				PRODUCT_BUNDLE_IDENTIFIER = com.apexcommerce.shutterlink.d;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
@@ -340,7 +338,7 @@
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_FILE = "Shutterlink-Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = Shutterlink;
+				INFOPLIST_KEY_CFBundleDisplayName = "Shutterlink D";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Shutterlink talks to your camera over its Wi-Fi to show live view and take pictures.";
 				INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Shutterlink scans the QR code on your camera's screen to join the camera's Wi-Fi.";
@@ -356,7 +354,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.apexcommerce.shutterlink;
+				PRODUCT_BUNDLE_IDENTIFIER = com.apexcommerce.shutterlink.d;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTS_MACCATALYST = YES;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
