@@ -25,8 +25,7 @@ struct PresetsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("One tap.\nCamera set.")
-                .font(.num(60, relativeTo: .largeTitle))
-                .lineSpacing(-8)
+                .font(.num(50, relativeTo: .largeTitle))
                 .fixedSize(horizontal: false, vertical: true)
             if let undo = camera.presetUndo {
                 undoCard(undo)
@@ -242,7 +241,7 @@ struct NDPanel: View {
                 Text("1. Meter without the filter").font(.headline)
                 if let live = camera.meteredExposure {
                     Text(describe(live))
-                        .font(.body.monospaced().weight(.semibold))
+                        .font(.num(26, weight: .medium))
                 } else {
                     Text("Waiting for the camera's exposure…").foregroundStyle(Theme.secondary)
                 }

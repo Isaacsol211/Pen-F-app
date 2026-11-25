@@ -96,10 +96,12 @@ struct PropertyOptionsList: View {
                 } label: {
                     HStack {
                         let label = PropertyFormat.display(property.name, option)
-                        Text(label).foregroundStyle(Theme.text)
+                        Text(label)
+                            .font(.num(24, weight: option == current.value ? .semibold : .medium))
+                            .foregroundStyle(option == current.value ? Theme.accent : Theme.text)
                         Spacer()
                         if !label.contains(option) {
-                            Text(option).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
+                            Text(option).font(.caption).foregroundStyle(Theme.secondary)
                         }
                         if option == current.value {
                             Image(systemName: "checkmark").foregroundStyle(Theme.accent)
@@ -107,6 +109,7 @@ struct PropertyOptionsList: View {
                     }
                 }
                 .disabled(!current.settable)
+                .listRowBackground(Color.clear)
                 .id(option)
             }
             .onAppear { proxy.scrollTo(current.value, anchor: .center) }
@@ -142,10 +145,15 @@ struct AllSettingsView: View {
                             row(property)
                         }
                     }
+                    .listRowBackground(Color.clear)
                 } footer: {
                     Text("Everything the camera lets the app read or change over Wi-Fi. Locked rows can't be changed in the current mode.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.secondary)
+                        .textCase(nil)
                 }
             }
+            .listStyle(.plain)
             .listRowBackgroundClear()
             .navigationTitle("Camera settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -163,17 +171,19 @@ struct AllSettingsView: View {
     private func row(_ property: CameraProperty) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(PropertyFormat.title(for: property.name))
+                Text(PropertyFormat.title(for: property.name)).font(.system(size: 16, weight: .medium))
                 Text(property.options.isEmpty ? property.name : "\(property.name) · \(property.options.count) options")
-                    .font(.caption.monospaced()).foregroundStyle(Theme.secondary)
+                    .font(.footnote).foregroundStyle(Theme.secondary)
             }
             Spacer()
             Text(PropertyFormat.display(property.name, property.value))
-                .font(.callout).foregroundStyle(Theme.secondary)
+                .font(.num(22, weight: .medium))
+                .foregroundStyle(property.settable ? Theme.text : Theme.secondary)
                 .multilineTextAlignment(.trailing)
             if !property.settable {
-                Image(systemName: "lock.fill").font(.caption).foregroundStyle(Theme.secondary)
+                Image(systemName: "lock").font(.caption).foregroundStyle(Theme.tertiary)
             }
         }
+        .listRowBackground(Color.clear)
     }
 }

@@ -335,7 +335,7 @@ struct ConnectView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                if hero && !connecting { CameraLineArt().frame(width: 120, height: 84) }
+                if hero && !connecting { CameraLineArt().frame(width: 104, height: 72) }
                 if connecting {
                     ProgressView().tint(Theme.accent)
                 } else if !editingCameras && !hero {
@@ -870,12 +870,11 @@ private struct ConnectBackground: View {
     var body: some View {
         ZStack {
             Theme.background
-            GeometryReader { geo in
-                let side = max(geo.size.width, geo.size.height) * 0.8
-                ApertureMark(showsLink: false, monochrome: Theme.accent.opacity(0.16))
-                    .frame(width: side, height: side)
-                    .position(x: geo.size.width - side * 0.08, y: side * 0.18)
-            }
+            // A dusk glow behind the cameras, like the light in the live view.
+            LinearGradient(stops: [.init(color: Color(hex: 0x3B3566).opacity(0.55), location: 0),
+                                   .init(color: Color(hex: 0x6A4A6E).opacity(0.25), location: 0.35),
+                                   .init(color: Theme.background.opacity(0), location: 0.7)],
+                           startPoint: .top, endPoint: .bottom)
         }
         .ignoresSafeArea()
     }
