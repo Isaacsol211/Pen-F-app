@@ -59,12 +59,16 @@ private struct LogRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text(entry.status.map(String.init) ?? "ERR")
-                    .font(.caption.monospaced().weight(.bold))
-                    .foregroundStyle(entry.ok ? .green : .red)
+                if !entry.note {
+                    Text(entry.status.map(String.init) ?? "ERR")
+                        .font(.caption.monospaced().weight(.bold))
+                        .foregroundStyle(entry.ok ? .green : .red)
+                }
                 Text(entry.method).font(.caption.monospaced()).foregroundStyle(.secondary)
                 Spacer()
-                Text("\(entry.millis) ms").font(.caption2.monospaced()).foregroundStyle(.secondary)
+                if !entry.note {
+                    Text("\(entry.millis) ms").font(.caption2.monospaced()).foregroundStyle(.secondary)
+                }
             }
             Text(entry.path)
                 .font(.caption.monospaced())

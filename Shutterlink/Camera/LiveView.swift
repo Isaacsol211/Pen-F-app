@@ -93,12 +93,15 @@ struct RTPFrameAssembler {
     }
 }
 
-/// Live-view counters, written to the debug console every couple of seconds.
+/// Live-view counters, written to the debug console every couple of seconds and summed into a
+/// plain-language line for the Request log.
 struct LiveViewStats {
     var packets = 0
     var completed = 0
     var dropped = 0
     var skippedByUI = 0
+    /// Frames passed over because a newer one was already waiting behind them.
+    var stale = 0
     var jpegBytes = 0
     var frameSize = CGSize.zero
     var lastExtension: Data?
@@ -107,10 +110,33 @@ struct LiveViewStats {
     func summary(info: LiveInfo) -> String {
         let seconds = max(CACurrentMediaTime() - since, 0.001)
         let avgKB = completed > 0 ? jpegBytes / completed / 1024 : 0
-        return String(format: "LV %.1fs: completed %.1f/s, dropped %.1f/s, skippedByUI %.1f/s, packets %.0f/s, avg %d KB, frame %dx%d, af=%d %@, fields %@",
+        return String(format: "LV %.1fs: completed %.1f/s, dropped %.1f/s, skippedByUI %.1f/s, stale %.1f/s, packets %.0f/s, avg %d KB, frame %dx%d, af=%d %@, fields %@",
                       seconds, Double(completed) / seconds, Double(dropped) / seconds, Double(skippedByUI) / seconds,
-                      Double(packets) / seconds, avgKB, Int(frameSize.width), Int(frameSize.height),
+                      Double(stale) / seconds, Double(packets) / seconds, avgKB, Int(frameSize.width), Int(frameSize.height),
                       info.afState, NSCoder.string(for: info.afRect), Self.decodeFields(lastExtension ?? Data()))
+    }
+
+    mutating func add(_ other: LiveViewStats) {
+        // Time counts from the first frame, not from when the receiver opened.
+        if packets == 0 { since = other.since }
+        packets += other.packets
+        completed += other.completed
+        dropped += other.dropped
+        skippedByUI += other.skippedByUI
+        stale += other.stale
+        jpegBytes += other.jpegBytes
+        if other.frameSize != .zero { frameSize = other.frameSize }
+    }
+
+    /// For the Request log, e.g. "320×240 · 24.1 frames/s from the camera, 23.9/s shown, 0 unreadable,
+    /// 0 stale, 9 KB each (last 15 s)".
+    func plainSummary(until end: CFTimeInterval) -> String {
+        let seconds = max(end - since, 0.001)
+        func rate(_ n: Int) -> String { String(format: "%.1f", Double(n) / seconds) }
+        let size = frameSize == .zero ? "no picture" : "\(Int(frameSize.width))×\(Int(frameSize.height))"
+        let kb = completed > 0 ? jpegBytes / completed / 1024 : 0
+        return "\(size) · \(rate(completed + stale)) frames/s from the camera, \(rate(completed - skippedByUI))/s shown, "
+            + "\(dropped) unreadable, \(stale) stale, \(kb) KB each (last \(Int(seconds.rounded())) s)"
     }
 
     /// "id=[word, word…]" for every metadata field, signed 32-bit words.
@@ -246,6 +272,12 @@ final class LiveViewReceiver: @unchecked Sendable {
     var onFrame: (@MainActor (UIImage?, LiveInfo?, [Float]?, Double?) -> Void)?
     /// Focus-peaking overlays, when peaking is on (nil clears it).
     var onPeaking: (@MainActor (CGImage?) -> Void)?
+    /// A plain-language summary while frames are arriving (after 5 s, then every 15 s), so a copied
+    /// Request log shows how live view ran.
+    var onSummary: (@MainActor (String) -> Void)?
+    private var logWindow = LiveViewStats()
+    private var logWindowEnd = CACurrentMediaTime()
+    private var summariesSent = 0
     private let peaker = FocusPeaker()
     private var peakingOn = false
 
@@ -270,6 +302,16 @@ final class LiveViewReceiver: @unchecked Sendable {
     func start() throws {
         if format == .pushed {
             lock.withLock { running = true }
+            // The UDP thread checks the counters on every pass; pushed frames need a clock of their own
+            // so a pause in frames closes the window instead of stretching it.
+            let timer = DispatchSource.makeTimerSource(queue: pushQueue)
+            timer.schedule(deadline: .now() + 1, repeating: 1)
+            timer.setEventHandler { [weak self] in
+                guard let self, self.isRunning else { return }
+                self.reportStats()
+            }
+            timer.resume()
+            pushTimer = timer
             return
         }
         let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
@@ -308,11 +350,16 @@ final class LiveViewReceiver: @unchecked Sendable {
 
     func stop() {
         lock.withLock { running = false }
+        pushTimer?.cancel()
+        pushTimer = nil
     }
 
     private var isRunning: Bool { lock.withLock { running } }
     /// Pushed frames are decoded one at a time here, like the UDP thread does for its own.
     private let pushQueue = DispatchQueue(label: "live view (pushed)", qos: .userInteractive)
+    private var pushTimer: DispatchSourceTimer?
+
+    deinit { pushTimer?.cancel() }
 
     /// A complete JPEG fetched by the driver (pushed formats). Dropped if the UI is still busy
     /// with the previous frame.
@@ -331,16 +378,55 @@ final class LiveViewReceiver: @unchecked Sendable {
 
     private var stats = LiveViewStats()
 
+    /// Every 2 s: the detailed line to the debug console, and the totals towards the Request log line.
+    private func reportStats() {
+        let now = CACurrentMediaTime()
+        guard now - stats.since >= 2 else { return }
+        let idle = stats.packets == 0
+        if !idle {
+            debugLog(stats.summary(info: info))
+            logWindow.add(stats)
+            logWindowEnd = now
+        }
+        stats = LiveViewStats()
+        if logWindow.packets == 0 {
+            logWindow = LiveViewStats()
+        } else if idle || now - logWindow.since >= (summariesSent == 0 ? 5 : 15) {
+            // Also when frames stop (live view paused, gallery open), so the rates only cover streaming.
+            // A frame or two on their own (a single preview fetch) isn't live view: no line for those.
+            let window = logWindow
+            logWindow = LiveViewStats()
+            guard window.completed + window.stale >= 5 else { return }
+            let line = window.plainSummary(until: logWindowEnd)
+            debugLog("LIVE \(line)")
+            summariesSent += 1
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.onSummary?(line) }
+            }
+        }
+    }
+
     private func run() {
         let fd = self.fd
         var buffer = [UInt8](repeating: 0, count: 65_536)
+        var newer = [UInt8](repeating: 0, count: 65_536)
         var assembler = RTPFrameAssembler()
         while isRunning {
             // Each frame's decoded image is autoreleased. Without a pool per pass this thread, which
             // runs as long as live view does, keeps every frame: gigabytes after a few minutes.
             autoreleasepool {
-                let count = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, 0) }
+                var count = buffer.withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, 0) }
                 if count > 0, format == .jpegPerDatagram {
+                    // One frame per datagram: if more are already waiting, this one is old news. Show the
+                    // newest so the picture never falls behind the camera (slow bodies, busy moments).
+                    while true {
+                        let next = newer.withUnsafeMutableBytes { recv(fd, $0.baseAddress, $0.count, MSG_DONTWAIT) }
+                        guard next > 0 else { break }
+                        swap(&buffer, &newer)
+                        count = next
+                        stats.packets += 1
+                        stats.stale += 1
+                    }
                     stats.packets += 1
                     if let jpeg = buffer.withUnsafeBufferPointer({ jpegInDatagram(UnsafeBufferPointer(rebasing: $0[0..<count])) }) {
                         stats.completed += 1
@@ -369,10 +455,7 @@ final class LiveViewReceiver: @unchecked Sendable {
                         break
                     }
                 }
-                if CACurrentMediaTime() - stats.since >= 2 {
-                    if stats.packets > 0 { debugLog(stats.summary(info: info)) }
-                    stats = LiveViewStats()
-                }
+                reportStats()
             }
         }
         close(fd)

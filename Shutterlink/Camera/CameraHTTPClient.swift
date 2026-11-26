@@ -48,12 +48,19 @@ struct LogEntry: Identifiable, Sendable {
     let status: Int?
     let millis: Int
     let summary: String
+    /// A line from the app itself (e.g. live view's frame rate), not a request.
+    var note = false
 
     var ok: Bool { (200...204).contains(status ?? 0) }
 
     var line: String {
         let time = date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute().second())
+        if note { return "\(time) \(method) \(path)" }
         return "\(time) \(method) \(path) → \(status.map(String.init) ?? "ERR") (\(millis) ms) \(summary)"
+    }
+
+    static func note(_ kind: String, _ text: String) -> LogEntry {
+        LogEntry(date: Date(), method: kind, path: text, status: 200, millis: 0, summary: "", note: true)
     }
 }
 
