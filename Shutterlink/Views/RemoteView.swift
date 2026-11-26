@@ -228,66 +228,63 @@ struct RemoteView: View {
     /// under the thumb. The readouts go under the picture when there's room for them (the Duo's
     /// inner screen), and float over its bottom edge when there isn't (a phone on its side).
     private func landscapeLayout(railOnLeading: Bool, size: CGSize) -> some View {
-        let imageWidth = max(0, size.width - 128 - 10 - 12)
-        let imageHeight = min(size.height - 8, imageWidth * 3 / 4)
-        let readoutsBelow = size.height - 8 - imageHeight >= 74
-        return HStack(spacing: 10) {
+        // 227: the picture fills everything beside a black rail; the status sits on it top left, the
+        // values along a dark band at its bottom.
+        HStack(spacing: 0) {
             if railOnLeading { landscapeRail }
-            VStack(spacing: 8) {
-                liveView(cornerRadius: 18, hudTopInset: 46)
-                    .aspectRatio(4.0 / 3.0, contentMode: .fit)
-                    .overlay(alignment: .top) {
-                        VStack(spacing: 8) {
-                            HStack {
-                                StatusPill()
-                                Spacer(minLength: 0)
-                            }
-                            ErrorBanner()
-                        }
-                        .padding(10)
+            ZStack {
+                // In an overlay so the filled picture can't make the screen's layout bigger.
+                Color.clear
+                    .overlay { liveView(cornerRadius: 0, hudTopInset: 50).aspectRatio(4.0 / 3.0, contentMode: .fill) }
+                    .clipped()
+                    .ignoresSafeArea()
+                VStack(spacing: 8) {
+                    HStack {
+                        StatusPill(showsName: true)
+                        Spacer(minLength: 0)
                     }
-                    .overlay(alignment: .bottom) {
-                        if !readoutsBelow { landscapeControls(overImage: true).padding(10) }
-                    }
-                if readoutsBelow {
-                    landscapeControls(overImage: false)
+                    ErrorBanner()
+                    Spacer(minLength: 0)
+                    if !showLoupe { landscapeControls(overImage: true) }
                 }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: readoutsBelow ? .top : .center)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             if !railOnLeading { landscapeRail }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
     }
 
     private func landscapeControls(overImage: Bool) -> some View {
-        VStack(spacing: 8) {
-            // The loupe has its own controls at the bottom of the viewfinder.
-            if !showLoupe || !overImage {
-                optionPanel.frame(maxWidth: 480)
-                ExposureStrip(active: $activeSetting, compact: overImage)
-                    .frame(maxWidth: 620)
-                    .transition(.opacity)
-            }
+        VStack(spacing: 4) {
+            optionPanel.frame(maxWidth: 480)
+                .padding(.vertical, 6)
+                .background {
+                    if activeSetting != nil {
+                        RoundedRectangle(cornerRadius: 24, style: .continuous).fill(LiveBackdrop.wash.opacity(0.8))
+                    }
+                }
+            LandscapeValues(active: $activeSetting)
         }
         .frame(maxWidth: .infinity)
-        // The tools float over the picture rather than squeezing it.
-        .overlay(alignment: .bottom) {
-            if toolsOpen {
-                ToolsTray(tools: tools, columns: 6).frame(maxWidth: 620)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+        .background(alignment: .bottom) {
+            LinearGradient(colors: [LiveBackdrop.wash.opacity(0), LiveBackdrop.wash.opacity(0.85)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 110)
+                .padding(.horizontal, -16)
+                .ignoresSafeArea(edges: .bottom)
+                .allowsHitTesting(false)
         }
     }
 
     private var landscapeRail: some View {
-        VStack(spacing: 12) {
+        // 227: a black rail: ⋯ at the top, the mode dial over the shutter, last shot and Tools below.
+        VStack(spacing: 10) {
             menuButton
             Spacer(minLength: 0)
-            // The mode dial sits right above the shutter, both under the thumb.
             if camera.properties["takemode"] != nil {
                 ModeCarousel(axis: .vertical)
-                    .frame(maxHeight: 140)
+                    .frame(maxHeight: 110)
             }
             ShutterButton()
             Spacer(minLength: 0)
@@ -299,6 +296,7 @@ struct RemoteView: View {
         }
         .frame(width: 128)
         .padding(.vertical, 6)
+        .background(Theme.background.ignoresSafeArea())
     }
 
     // MARK: - Workspace layouts (large canvases)
@@ -715,6 +713,60 @@ struct RemoteView: View {
                 .frame(width: 84)
         }
         .padding(.horizontal, 24)
+    }
+}
+
+/// The values along the bottom of the landscape picture (227): the selected one larger with its
+/// label over it, the others in Barlow, white balance and drive at the end. Tap one for its dial.
+struct LandscapeValues: View {
+    @Environment(CameraModel.self) private var camera
+    @Binding var active: String?
+
+    var body: some View {
+        let names = ExposureStrip.items(camera).filter { $0 != "takemode" }
+        let selected = active ?? (names.contains("shutspeedvalue") ? "shutspeedvalue" : names.first)
+        HStack(alignment: .lastTextBaseline, spacing: 26) {
+            ForEach(names, id: \.self) { name in
+                let on = name == selected
+                Button {
+                    withAnimation(.snappy) { active = active == name ? nil : name }
+                } label: {
+                    VStack(spacing: 2) {
+                        if on {
+                            Text((SettingSpec.spec(for: name)?.title ?? name).uppercased())
+                                .font(.system(size: 11, weight: .medium)).tracking(1.5)
+                                .foregroundStyle(Theme.accent)
+                        }
+                        Text(ExposureStrip.text(name, camera: camera))
+                            .font(.num(on ? 40 : 22, weight: on ? .semibold : .medium))
+                            .foregroundStyle(on ? Theme.text : Color(hex: 0xC9C5BA))
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                    .frame(minHeight: Theme.target, alignment: .bottom)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(SettingSpec.spec(for: name)?.title ?? name): \(ExposureStrip.text(name, camera: camera))")
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+            let extras = ["wbvalue", "drivemode"].compactMap { name in
+                camera.properties[name].map { camera.stripValue(name, camera.dialOptions(for: $0)) }
+            }
+            if !extras.isEmpty {
+                Text(extras.joined(separator: " · "))
+                    .font(.num(18, weight: .medium))
+                    .foregroundStyle(Color(hex: 0xC9C5BA))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .padding(.bottom, 6)
+        .padding(.leading, 22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.snappy, value: selected)
+        .disabled(camera.isBusyExposing)
+        .sensoryFeedback(.selection, trigger: active)
     }
 }
 

@@ -8,14 +8,19 @@ import SwiftUI
 /// Live dot, battery and shots left: the only always-on status.
 struct StatusPill: View {
     @Environment(CameraModel.self) private var camera
+    /// The camera's name before the status (227).
+    var showsName = false
 
     var body: some View {
         HStack(spacing: 8) {
             Circle()
                 .fill(camera.liveViewRunning ? Theme.green : Theme.accent)
-                .frame(width: 8, height: 8)
+                .frame(width: 7, height: 7)
+            if showsName {
+                Text(camera.cameraName ?? camera.brand.shortTitle)
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+            }
             CameraStatusRow()
-                .font(.system(size: 13, weight: .medium))
         }
         .fixedSize()
         .padding(.horizontal, 14)
