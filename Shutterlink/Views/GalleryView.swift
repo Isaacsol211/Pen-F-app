@@ -34,7 +34,8 @@ struct GalleryView: View {
                         split(landscape: landscape, size: geo.size)
                     } else {
                         browser(workspace: false)
-                            .safeAreaBar(edge: .bottom) { bottomBar }
+                            // A flat black bar, as designed, not system glass.
+                            .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
                     }
                 }
                 .navigationTitle(camera.images.isEmpty ? "On the card" : "On the card · \(camera.images.count)")
@@ -52,9 +53,11 @@ struct GalleryView: View {
                     }.sharedBackgroundVisibility(.hidden)
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Reload") { Task { await camera.openGallery() } }
+                            .foregroundStyle(Theme.secondary)
                             .disabled(camera.galleryLoading)
                     }.sharedBackgroundVisibility(.hidden)
                 }
+                .tint(Theme.text)
                 .animation(.smooth, value: camera.rawImport)
                 .task { await camera.openGallery() }
             }
@@ -149,13 +152,15 @@ struct GalleryView: View {
         VStack(spacing: 8) {
             RawImportBar()
             if !camera.images.isEmpty {
-                HStack(spacing: 10) {
-                    Picker("Show", selection: $starredOnly) {
-                        Text("All").tag(false)
-                        Text(starredCount > 0 ? "Starred · \(starredCount)" : "Starred").tag(true)
+                HStack(spacing: 8) {
+                    ForEach([false, true], id: \.self) { starred in
+                        Button(starred ? (starredCount > 0 ? "Starred · \(starredCount)" : "Starred") : "All") {
+                            withAnimation(.snappy) { starredOnly = starred }
+                        }
+                        .buttonStyle(ChipStyle(selected: starredOnly == starred))
+                        .accessibilityAddTraits(starredOnly == starred ? .isSelected : [])
                     }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 230)
+                    .sensoryFeedback(.selection, trigger: starredOnly)
                     Spacer(minLength: 0)
                     Button {
                         // On a Mac the RAWs go to a folder you pick (for Lightroom, Capture One…);
@@ -165,6 +170,7 @@ struct GalleryView: View {
                         Label(Platform.isMac ? "RAWs…" : "RAWs", systemImage: "arrow.down.circle")
                     }
                     .buttonStyle(.accent)
+                    .fixedSize()
                     .disabled(starredCount == 0 || importing)
                     .accessibilityLabel(Platform.isMac ? "Save the RAW files of starred photos to a folder"
                                                        : "Download the RAW files of starred photos")
@@ -173,10 +179,13 @@ struct GalleryView: View {
                         if case .success(let folder) = result { camera.downloadStarredRAWs(to: folder) }
                     }
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
                 .padding(.bottom, 4)
             }
         }
+        .background(Theme.background.ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) { Rectangle().fill(Theme.stroke).frame(height: 1) }
     }
 
     /// `selects`: a tap shows the photo in the preview pane (the workspace split) instead of opening it.

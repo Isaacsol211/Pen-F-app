@@ -64,7 +64,7 @@ struct ProView: View {
                 .padding(20)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { actions }
-            .background(Theme.background)
+            .background { AmbientBackground() }
             .navigationTitle("Shutterlink Pro")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
@@ -173,7 +173,7 @@ struct ProView: View {
         .padding(.bottom, 8)
         .frame(maxWidth: 600)
         .frame(maxWidth: .infinity)
-        .background(Theme.background)
+        .background(LiveBackdrop.wash.opacity(0.94).ignoresSafeArea())
         .animation(.smooth, value: pro.message)
     }
 }

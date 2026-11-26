@@ -262,7 +262,8 @@ struct SidePanelView: View {
                 }
                 .scrollIndicators(.hidden)
             }
-            .background(Theme.background)
+            // Presets sit on the blurred live view, as designed; the other panels on black.
+            .background { if panel == .presets { Color.clear } else { Theme.background } }
         }
     }
 

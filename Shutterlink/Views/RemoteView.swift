@@ -88,7 +88,7 @@ struct RemoteView: View {
         .sheet(item: Binding(get: { isWorkspace ? nil : openPanel }, set: { openPanel = $0 })) { panel in
             SidePanelView(panel: panel, openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
                 .presentationDetents(panel == .motion ? [.medium, .large] : [.large])
-                .dSheet()
+                .dSheet(ambient: panel == .presets)
                 // Live view stays usable above the motion trigger, so the box can be dragged into place.
                 .presentationBackgroundInteraction(panel == .motion ? .enabled(upThrough: .medium) : .automatic)
         }
@@ -165,7 +165,11 @@ struct RemoteView: View {
                         ExposureStrip(active: dialBinding, selected: selected)
                             .padding(.horizontal, 12)
                         Spacer(minLength: 0)
-                        if let spec = SettingSpec.spec(for: selected), camera.properties[selected] != nil {
+                        if camera.isBusyExposing && !camera.isRecordingMovie {
+                            // A long or open exposure: one big running time in place of the dial.
+                            ExposingReadout()
+                                .transition(.blurReplace)
+                        } else if let spec = SettingSpec.spec(for: selected), camera.properties[selected] != nil {
                             OptionPanel(spec: spec) { activeSetting = nil }
                                 .id(selected)
                         }
@@ -672,13 +676,63 @@ struct RemoteView: View {
     }
 }
 
+/// While a long (timed) or open-ended exposure runs: what is happening, in the accent (red for an
+/// open-ended one), over the running time at 100 pt (designs 216, 217).
+struct ExposingReadout: View {
+    @Environment(CameraModel.self) private var camera
+
+    var body: some View {
+        let open = camera.isOpenEndedShutter
+        let started = camera.exposureStartedAt ?? camera.movieStartedAt
+        let shutter = camera.properties["shutspeedvalue"]?.value ?? ""
+        VStack(spacing: 4) {
+            CapsLabel(open ? PropertyFormat.display("shutspeedvalue", shutter) : "Exposing",
+                      color: open ? Theme.red : Theme.accent)
+            TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                let elapsed = started.map { max(0, context.date.timeIntervalSince($0)) } ?? 0
+                let shown = camera.exposureDuration.map { max(0, $0 - elapsed) } ?? elapsed
+                Text(Duration.seconds(shown.rounded(.down)).formatted(.time(pattern: .minuteSecond)))
+                    .font(.num(100))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.text)
+                    .contentTransition(.numericText(countsDown: camera.exposureDuration != nil))
+                    .animation(.snappy, value: Int(shown))
+                    .fixedSize()
+                    .frame(height: 100)
+            }
+            Group {
+                if let duration = camera.exposureDuration {
+                    Text("of \(CameraModel.durationLabel(duration))")
+                } else if camera.bulbTimer > 0 {
+                    Text("The exposure stops by itself after \(CameraModel.durationLabel(camera.bulbTimer)), or when you tap the shutter.")
+                } else {
+                    Text("The exposure runs until you tap the shutter again.")
+                }
+            }
+            .font(.footnote)
+            .foregroundStyle(Theme.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 24)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// An identifiable setting name, for the Drive / Quality sheet.
 private struct SettingSheetID: Identifiable { let id: String }
 
 /// The live frame, blurred and dimmed to fill the screen behind the remote. Refreshed a couple of
 /// times a second: it is only a colour wash, so it needn't follow every frame.
 struct LiveBackdrop: View {
+    enum Style {
+        /// Behind the remote: the colour strongest around the values, dark under the dial and shutter.
+        case remote
+        /// Behind a sheet or a full-screen page (tools, presets, settings): dimmer, so rows stay readable.
+        case page
+    }
     @Environment(CameraModel.self) private var camera
+    var style: Style = .remote
     @State private var image: UIImage?
 
     var body: some View {
@@ -691,23 +745,44 @@ struct LiveBackdrop: View {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFill()
-                            .blur(radius: 36)
-                            .opacity(0.8)
+                            // A touch more colour than the frame: the wash should glow, not look muddy.
+                            .saturation(1.35)
+                            .brightness(0.04)
+                            .scaleEffect(1.2)
+                            .blur(radius: 36, opaque: true)
+                            .opacity(style == .remote ? 0.9 : 0.7)
                     }
                     .clipped()
             }
-            LinearGradient(colors: [Theme.background.opacity(0), Theme.background.opacity(0.96)],
-                           startPoint: .init(x: 0.5, y: 0.35), endPoint: .init(x: 0.5, y: 0.75))
+            // As in the design (D-SPEC, remote): clear down to just under the picture, near-black from
+            // the dial down.
+            switch style {
+            case .remote:
+                LinearGradient(stops: [.init(color: Self.wash.opacity(0), location: 0.44),
+                                       .init(color: Self.wash.opacity(0.96), location: 0.81)],
+                               startPoint: .top, endPoint: .bottom)
+            case .page:
+                LinearGradient(stops: [.init(color: Self.wash.opacity(0.25), location: 0),
+                                       .init(color: Self.wash.opacity(0.55), location: 0.45),
+                                       .init(color: Self.wash.opacity(0.94), location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+            }
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
         .task {
             while !Task.isCancelled {
-                if let frame = camera.liveFrame { withAnimation(.linear(duration: 0.5)) { image = frame } }
+                if let frame = camera.liveFrame {
+                    if image == nil { image = frame } else { withAnimation(.linear(duration: 0.5)) { image = frame } }
+                }
                 try? await Task.sleep(for: .milliseconds(600))
             }
         }
     }
+
+    /// The design's dark wash, a hair warmer than the background.
+    static let wash = Color(red: 6 / 255, green: 6 / 255, blue: 8 / 255)
 }
 
 /// Drive or Quality: the options in a sheet, the live view still above it.
@@ -763,44 +838,58 @@ struct ToolButton: View {
     let item: ToolItem
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
         Button(action: item.action) {
             VStack(spacing: 6) {
-                Image(systemName: item.icon)
-                    .font(.system(size: 21, weight: .regular))
-                    .frame(height: 24)
-                    .symbolEffect(.bounce, value: item.on)
+                glyph
+                    .frame(width: 26, height: 26)
+                    .scaleEffect(item.on ? 1.08 : 1)
                 Text(item.title)
                     .font(.system(size: 12, weight: .semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
             .foregroundStyle(item.on ? Theme.onAccent : Theme.text)
-            .frame(maxWidth: .infinity, minHeight: 72)
-            .background(shape.fill(item.on ? Theme.accent : Color.clear))
-            .overlay(shape.stroke(item.on ? Color.clear : Theme.stroke, lineWidth: 1))
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 78)
+            .background(shape.fill(item.on ? Theme.accent : Theme.surface.opacity(0.9)))
+            .overlay(shape.stroke(item.on ? Color.clear : Theme.outline, lineWidth: 1))
             // Tools that open their own screen say so; the rest are switches.
             .overlay(alignment: .topTrailing) {
                 if item.locked {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 9, weight: .bold))
+                    Image(systemName: "lock")
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Theme.accent)
                         .padding(7)
                 } else if item.opens {
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(item.on ? Theme.onAccent : Theme.tertiary)
-                        .padding(7)
+                    Text("↗")
+                        .font(.system(size: 12))
+                        .foregroundStyle(item.on ? Theme.onAccent : Theme.secondary)
+                        .padding(.trailing, 8)
+                        .padding(.top, 4)
                 }
             }
             .contentShape(shape)
         }
         .buttonStyle(.plain)
+        .animation(.snappy(duration: 0.25), value: item.on)
         .sensoryFeedback(.selection, trigger: item.on)
         .accessibilityLabel(item.title)
         .accessibilityValue(item.opens ? "" : (item.on ? "On" : "Off"))
         .accessibilityHint(item.locked ? "Part of Shutterlink Pro" : (item.opens ? "Opens \(item.title)" : ""))
     }
+
+    /// The design's drawn line icon for the tool (Assets ▸ Tools), or its SF Symbol where there's none.
+    @ViewBuilder private var glyph: some View {
+        if Self.drawn.contains(item.id) {
+            Image("Tools/\(item.id)").resizable().scaledToFit()
+        } else {
+            Image(systemName: item.icon).font(.system(size: 21, weight: .regular))
+        }
+    }
+
+    private static let drawn: Set<String> = ["presets", "astro", "interval", "bracket", "nd", "motion", "highres", "pocket",
+                                             "video", "loupe", "night", "histogram", "grid", "peaking", "geotag", "tap"]
 }
 
 /// The latest capture as a thumbnail (opens the card browser); a card icon before the first shot.

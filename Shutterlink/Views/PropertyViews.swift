@@ -184,7 +184,7 @@ struct PropertyOptionsList: View {
                 .foregroundStyle(Theme.tertiary)
                 .padding(.bottom, 16)
         }
-        .background(Theme.background)
+        .background { AmbientBackground() }
         .navigationTitle(PropertyFormat.title(for: property.name))
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -222,7 +222,8 @@ struct AllSettingsView: View {
                 }
             }
             .listStyle(.plain)
-            .listRowBackgroundClear()
+            .listRowBackgroundClear(ambient: true)
+            .tint(Theme.text)
             .navigationTitle("Camera settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

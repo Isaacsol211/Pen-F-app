@@ -179,11 +179,36 @@ extension View {
             .overlay(alignment: .bottom) { Rectangle().fill(Theme.stroke).frame(height: 1) }
     }
 
-    /// The sheet look: rounded top, near-black, a strong hairline edge, a grabber.
-    func dSheet() -> some View {
-        presentationDragIndicator(.visible)
+    /// The sheet look: rounded top, near-black, a grabber. `ambient` puts the blurred live view behind
+    /// it (as the design's full-height pages have), instead of flat black.
+    func dSheet(ambient: Bool = false) -> some View {
+        modifier(DSheet(ambient: ambient))
+    }
+}
+
+/// The blurred live view behind a page when a camera is connected; plain black otherwise (Connect, Pro
+/// from the connect screen).
+struct AmbientBackground: View {
+    @Environment(CameraModel.self) private var camera: CameraModel?
+
+    var body: some View {
+        if camera != nil {
+            LiveBackdrop(style: .page)
+        } else {
+            Theme.background.ignoresSafeArea()
+        }
+    }
+}
+
+private struct DSheet: ViewModifier {
+    let ambient: Bool
+    func body(content: Content) -> some View {
+        content
+            .presentationDragIndicator(.visible)
             .presentationCornerRadius(28)
-            .presentationBackground(Theme.background)
+            .presentationBackground {
+                if ambient { AmbientBackground() } else { Theme.background }
+            }
     }
 }
 
@@ -395,8 +420,12 @@ struct DialReadout: View {
                 .contentTransition(.numericText())
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)
+                // Full size always (design: 68 pt); only a very long value narrows it.
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(height: 70)
         }
         .frame(maxWidth: .infinity)
+        .layoutPriority(1)
         .accessibilityElement(children: .combine)
     }
 }
@@ -412,9 +441,9 @@ extension EnvironmentValues {
 
 extension View {
     /// Lists in the app: no grouped grey, rows on the app background with hairline separators.
-    func listRowBackgroundClear() -> some View {
+    func listRowBackgroundClear(ambient: Bool = false) -> some View {
         scrollContentBackground(.hidden)
-            .background(Theme.background)
+            .background { if ambient { AmbientBackground() } else { Theme.background.ignoresSafeArea() } }
             .listRowSeparatorTint(Theme.stroke)
     }
 }

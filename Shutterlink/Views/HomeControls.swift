@@ -134,10 +134,11 @@ struct ExposureStrip: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(ExposureStrip.items(camera), id: \.self) { name in
-                item(name)
-            }
+        // Centred with even gaps, as designed, rather than spread across the width; it only narrows
+        // (via the cells' scale factor) when the values don't fit.
+        ViewThatFits(in: .horizontal) {
+            row(spacing: 22, flexible: false)
+            row(spacing: 0, flexible: true)
         }
         .padding(.horizontal, 8)
         .background {
@@ -148,7 +149,15 @@ struct ExposureStrip: View {
         .sensoryFeedback(.selection, trigger: active)
     }
 
-    private func item(_ name: String) -> some View {
+    private func row(spacing: CGFloat, flexible: Bool) -> some View {
+        HStack(spacing: spacing) {
+            ForEach(ExposureStrip.items(camera), id: \.self) { name in
+                item(name, flexible: flexible)
+            }
+        }
+    }
+
+    private func item(_ name: String, flexible: Bool) -> some View {
         let property = camera.properties[name].map(camera.dialOptions(for:))
         let locked = !(property?.settable ?? false)
         let isSelected = (selected ?? active) == name
@@ -164,7 +173,8 @@ struct ExposureStrip: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .padding(.horizontal, 4)
-                    .frame(maxWidth: .infinity, minHeight: Theme.target)
+                    .frame(maxWidth: flexible ? .infinity : nil, minHeight: Theme.target)
+                    .fixedSize(horizontal: !flexible, vertical: false)
                     .contentShape(.rect)
                     .onTapGesture { camera.showToast(Self.modeDialHint) }
                     .accessibilityElement()
@@ -182,7 +192,8 @@ struct ExposureStrip: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .padding(.horizontal, 4)
-                .frame(maxWidth: .infinity, minHeight: Theme.target)
+                .frame(maxWidth: flexible ? .infinity : nil, minHeight: Theme.target)
+                .fixedSize(horizontal: !flexible, vertical: false)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -216,8 +227,9 @@ struct SettingLine: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .padding(.horizontal, 10)
-                        .frame(minHeight: Theme.target)
-                        .contentShape(.rect)
+                        // A small line, as designed; the touch area reaches past it.
+                        .frame(minHeight: 30)
+                        .contentShape(.rect.inset(by: -7))
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(SettingSpec.spec(for: name)?.title ?? name): \(camera.stripValue(name, property))")

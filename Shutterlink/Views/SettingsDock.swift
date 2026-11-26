@@ -218,12 +218,14 @@ struct ShutterOptions: View {
                             Task { await camera.setProperty("shutspeedvalue", to: value) }
                         } label: {
                             Text(choice == "timed" ? "Timed" : PropertyFormat.display("shutspeedvalue", choice))
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(on ? Theme.onAccent : Theme.secondary)
+                                .font(.system(size: 13, weight: on ? .semibold : .regular))
+                                .foregroundStyle(on ? Theme.background : Theme.text)
+                                .lineLimit(1)
                                 .padding(.horizontal, 12)
-                                .frame(height: 30)
-                                .background(on ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.clear), in: .capsule)
-                                .overlay(Capsule().stroke(on ? Color.clear : Theme.outline, lineWidth: 1))
+                                .frame(height: 34)
+                                .background(on ? AnyShapeStyle(Theme.text) : AnyShapeStyle(Color.black.opacity(0.25)), in: .capsule)
+                                .overlay(Capsule().stroke(on ? Color.clear : Theme.text.opacity(0.35), lineWidth: 1))
+                                .contentShape(.capsule.inset(by: -5))
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(on ? .isSelected : [])
