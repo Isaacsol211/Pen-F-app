@@ -184,6 +184,9 @@ struct PropertyOptionsList: View {
                 .sensoryFeedback(.selection, trigger: centreIndex)
                 .animation(.snappy(duration: 0.15), value: centreIndex)
             }
+            // The wheel under the header (406), its notes under it, Done at the bottom.
+            .frame(height: 380)
+            .clipped()
             let value = options.indices.contains(centreIndex) ? options[centreIndex] : current.value
             HStack {
                 Text("\(options.count) options")
@@ -197,6 +200,7 @@ struct PropertyOptionsList: View {
             Text(current.settable ? "Drag to turn, tap a value to set it." : "This setting is locked in the current mode.")
                 .font(.footnote)
                 .foregroundStyle(Theme.tertiary)
+            Spacer(minLength: 0)
             // 406: a light Done at the bottom: sets the value between the rules and goes back.
             Button {
                 if current.settable, value != current.value {

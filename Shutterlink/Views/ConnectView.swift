@@ -533,13 +533,13 @@ struct ConnectView: View {
             }
         }
         .padding(.horizontal, workspace ? 32 : 20)
-        .padding(.top, 12)
+        .padding(.top, 20)
         .padding(.bottom, 8)
         .frame(maxWidth: workspace ? Self.workspaceMaxWidth + 64 : 600, alignment: workspace ? .leading : .center)
         .frame(maxWidth: .infinity)
         // A short fade, then solid: the list scrolls clear under it.
         .background(LinearGradient(stops: [.init(color: Theme.background.opacity(0), location: 0),
-                                           .init(color: Theme.background, location: 0.3)],
+                                           .init(color: Theme.background, location: 0.14)],
                                    startPoint: .top, endPoint: .bottom).ignoresSafeArea())
     }
 
