@@ -905,6 +905,10 @@ struct DialogCard: View {
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(.isModal)
             .accessibilityAction(.escape, onCancel)
+            // The compact card sits near the top (226), the full one a little above the middle.
+            .frame(maxHeight: .infinity, alignment: compact ? .top : .center)
+            .padding(.top, compact ? 66 : 0)
+            .padding(.bottom, compact ? 0 : 60)
             .transition(.scale(scale: 0.94).combined(with: .opacity))
         }
         .onKeyPress(.escape) { onCancel(); return .handled }

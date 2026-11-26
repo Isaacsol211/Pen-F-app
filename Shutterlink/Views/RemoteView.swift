@@ -171,7 +171,7 @@ struct RemoteView: View {
             LiveBackdrop()
             VStack(spacing: 0) {
                 InfoBar { menuButton }
-                liveView(cornerRadius: 0)
+                liveView(cornerRadius: 0, loupeControlsBelow: true)
                     .aspectRatio(4.0 / 3.0, contentMode: .fit)
                     .overlay(alignment: .top) { ErrorBanner().padding(.top, 8) }
                 if camera.properties.isEmpty {
@@ -181,11 +181,19 @@ struct RemoteView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
                     VStack(spacing: 0) {
-                        SettingLine(active: dialBinding,
-                                    aids: tools.filter { ["grid", "histogram", "peaking", "tap", "loupe"].contains($0.id) }) { settingSheet = $0 }
-                        ExposureStrip(active: dialBinding, selected: selected)
-                            .padding(.horizontal, 12)
-                        if camera.isBusyExposing && !camera.isRecordingMovie {
+                        if !showLoupe {
+                            SettingLine(active: dialBinding,
+                                        aids: tools.filter { ["grid", "histogram", "peaking", "tap"].contains($0.id) }) { settingSheet = $0 }
+                            ExposureStrip(active: dialBinding, selected: selected)
+                                .padding(.horizontal, 12)
+                        }
+                        if showLoupe {
+                            // 213: the loupe's zoom and focus reading take the dial's place.
+                            LoupeReadout()
+                                .padding(.top, 18)
+                                .transition(.opacity)
+                            Spacer(minLength: 0)
+                        } else if camera.isBusyExposing && !camera.isRecordingMovie {
                             // A long or open exposure: one big running time in place of the dial.
                             ExposingReadout()
                                 .padding(.top, 16)
@@ -498,9 +506,10 @@ struct RemoteView: View {
 
     /// `histogramOverImage` is off in the workspace layouts, which always show a big histogram in
     /// the inspector instead.
-    private func liveView(cornerRadius: CGFloat, hudTopInset: CGFloat = 0, histogramOverImage: Bool = true) -> some View {
+    private func liveView(cornerRadius: CGFloat, hudTopInset: CGFloat = 0, histogramOverImage: Bool = true,
+                          loupeControlsBelow: Bool = false) -> some View {
         LiveViewPane(showGrid: showGrid, showHistogram: showHistogram && histogramOverImage, showLoupe: $showLoupe,
-                     hudTopInset: hudTopInset)
+                     hudTopInset: hudTopInset, loupeControlsBelow: loupeControlsBelow)
             .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
             .overlay(alignment: .bottom) {
                 if let suggestion = camera.sceneSuggestion, !showLoupe {
@@ -680,7 +689,7 @@ struct RemoteView: View {
             LastShotButton { showGallery = true }
                 .frame(width: 84)
             Spacer()
-            ShutterButton()
+            ShutterButton(elapsedBadge: false)
             Spacer()
             ToolsButton(open: $toolsOpen)
                 .frame(width: 84)
@@ -704,7 +713,8 @@ struct ExposingReadout: View {
             TimelineView(.periodic(from: .now, by: 0.5)) { context in
                 let elapsed = started.map { max(0, context.date.timeIntervalSince($0)) } ?? 0
                 let shown = camera.exposureDuration.map { max(0, $0 - elapsed) } ?? elapsed
-                Text(Duration.seconds(shown.rounded(.down)).formatted(.time(pattern: .minuteSecond)))
+                Text(Duration.seconds(shown.rounded(.down))
+                    .formatted(.time(pattern: .minuteSecond(padMinuteToLength: open ? 2 : 1))))
                     .font(.num(100))
                     .monospacedDigit()
                     .foregroundStyle(Theme.text)
@@ -1041,6 +1051,8 @@ struct ErrorBanner: View {
 }
 
 struct ShutterButton: View {
+    /// The small running-time badge over the button; off in portrait, where the big readout shows it.
+    var elapsedBadge = true
     @Environment(CameraModel.self) private var camera
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pressed = false
@@ -1095,8 +1107,9 @@ struct ShutterButton: View {
                     // Timed long exposure: big countdown in the shutter.
                     TimelineView(.periodic(from: .now, by: 0.25)) { context in
                         let left = max(0, Int((duration - context.date.timeIntervalSince(started)).rounded(.up)))
-                        Text(left >= 60 ? String(format: "%d:%02d", left / 60, left % 60) : (left > 0 ? "\(left)" : "NR"))
-                                    .font(.num(left >= 600 ? 22 : (left >= 60 ? 26 : 34)))
+                        // m:ss as in 216 ("0:18"); NR while the camera reduces noise.
+                        Text(left > 0 ? String(format: "%d:%02d", left / 60, left % 60) : "NR")
+                                    .font(.num(left >= 600 ? 20 : 24))
                             .foregroundStyle(Theme.accent)
                             .contentTransition(.numericText(countsDown: true))
                             .animation(.snappy, value: left)
@@ -1123,7 +1136,7 @@ struct ShutterButton: View {
             // The ring tightens under the finger.
             .overlay(Circle().stroke(Theme.text, lineWidth: pressed ? 4.5 : 3).scaleEffect(pressed ? 0.93 : 1))
             if let started = camera.isRecordingMovie ? camera.movieStartedAt
-                : (camera.isOpenEndedShutter && camera.isShooting ? camera.exposureStartedAt : nil) {
+                : (elapsedBadge && camera.isOpenEndedShutter && camera.isShooting ? camera.exposureStartedAt : nil) {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Text(Duration.seconds(context.date.timeIntervalSince(started)).formatted(.time(pattern: .minuteSecond)))
                         .font(.caption2.monospacedDigit().weight(.bold))

@@ -7,6 +7,8 @@ struct LiveViewPane: View {
     @Binding var showLoupe: Bool
     /// Space taken by HUD drawn over the top of the image (landscape), so overlays sit below it.
     var hudTopInset: CGFloat = 0
+    /// The focus readout and zoom are shown under the picture instead (portrait, 213).
+    var loupeControlsBelow = false
     @State private var flash = 0.0
     // Loupe: magnify the whole viewfinder like a camera's focus assist.
     @AppStorage("loupe.zoom") private var loupeZoom = 4.0
@@ -199,15 +201,27 @@ struct LiveViewPane: View {
 
             VStack {
                 HStack(alignment: .top) {
-                    MiniMap(center: loupeCenter, zoom: loupeZoom)
-                    Spacer()
+                    // 213: "Loupe ×" on the left, the minimap on the right.
                     Button { showLoupe = false } label: {
-                        Label("Loupe", systemImage: "xmark").font(.caption.weight(.semibold))
+                        HStack(spacing: 4) {
+                            Text("Loupe")
+                            Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
+                        }
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.text)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .background(Capsule().fill(Color.black.opacity(0.55)))
+                        .frame(minHeight: Theme.target, alignment: .top)
+                        .contentShape(.rect)
                     }
-                    .buttonStyle(.surface)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close loupe")
+                    Spacer()
+                    MiniMap(center: loupeCenter, zoom: loupeZoom)
                 }
                 Spacer()
-                HStack(alignment: .bottom) {
+                if !loupeControlsBelow { HStack(alignment: .bottom) {
                     FocusMeter(score: camera.focusScore, peak: camera.focusPeak, floor: camera.focusFloor)
                     Spacer()
                     HStack(spacing: 2) {
@@ -221,7 +235,7 @@ struct LiveViewPane: View {
                     }
                     .padding(.horizontal, 4)
                     .surface(.regular, in: .capsule)
-                }
+                } }
             }
             .padding(10)
             .padding(.top, hudTopInset)
@@ -390,6 +404,76 @@ private struct MiniMap: View {
         .surface(.regular, in: .rect(cornerRadius: 11, style: .continuous))
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+}
+
+/// The loupe's controls under the picture (213): zoom chips, then FOCUS over a big reading in Barlow
+/// ("SHARPEST" in green at the peak) and its bar.
+struct LoupeReadout: View {
+    @Environment(CameraModel.self) private var camera
+    @AppStorage("loupe.zoom") private var loupeZoom = 4.0
+
+    var body: some View {
+        let reading = FocusReading(score: camera.focusScore, peak: camera.focusPeak, floor: camera.focusFloor)
+        VStack(spacing: 14) {
+            HStack(spacing: 6) {
+                ForEach([2.0, 4.0, 8.0], id: \.self) { z in
+                    let on = abs(loupeZoom - z) < 0.5
+                    Button { withAnimation(.snappy) { loupeZoom = z } } label: {
+                        Text("\(Int(z))×")
+                            .font(.system(size: 13, weight: on ? .semibold : .regular))
+                            .foregroundStyle(on ? Theme.background : Theme.text)
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(on ? Theme.text : Color.black.opacity(0.25)))
+                            .overlay(Circle().stroke(on ? Color.clear : Theme.text.opacity(0.35), lineWidth: 1))
+                            .frame(width: Theme.target, height: Theme.target)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(Int(z)) times")
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+            VStack(spacing: 4) {
+                Text("FOCUS").font(.system(size: 12, weight: .medium)).tracking(1.7).foregroundStyle(Theme.accent)
+                Text(reading.atPeak ? "SHARPEST" : reading.swept ? "keep turning" : "turn the ring slowly")
+                    .font(.num(reading.atPeak ? 54 : 40))
+                    .foregroundStyle(reading.atPeak ? Theme.green : Theme.text)
+                    .contentTransition(.interpolate)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Theme.stroke)
+                        Capsule().fill(reading.atPeak ? Theme.green : Theme.accent)
+                            .frame(width: geo.size.width * reading.fraction)
+                            .animation(.smooth(duration: 0.15), value: reading.fraction)
+                    }
+                }
+                .frame(width: 210, height: 6)
+                .padding(.top, 4)
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Focus meter")
+            .accessibilityValue(reading.atPeak ? "Sharpest" : "\(Int(reading.fraction * 100)) percent of best")
+        }
+        .frame(maxWidth: .infinity)
+        .sensoryFeedback(.success, trigger: reading.atPeak) { _, new in new }
+    }
+}
+
+/// How sharp the loupe's view is against the best and worst seen since it moved.
+struct FocusReading {
+    let fraction: Double
+    let swept: Bool
+    let atPeak: Bool
+
+    init(score: Double?, peak: Double, floor: Double) {
+        // Only call a peak once the focus has actually been swept: the best reading must stand
+        // clearly above the worst, and there must be detail (stars, edges) to measure.
+        let range = peak - (floor.isFinite ? floor : peak)
+        swept = range > max(3, peak * 0.2)
+        fraction = (score != nil && swept) ? min(1, max(0, ((score ?? 0) - (peak - range)) / range)) : 0.15
+        atPeak = swept && fraction > 0.95
     }
 }
 
