@@ -94,8 +94,14 @@ enum BrandDetector {
         guard let url = URL(string: address) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 3)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await session.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode ?? 0 < 500 else { return nil }
+        let data: Data, response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            debugLog("probe \(address): \(error)")   // why the camera didn't answer (Local Network blocked, no route, timeout…)
+            return nil
+        }
+        guard (response as? HTTPURLResponse)?.statusCode ?? 0 < 500 else { return nil }
         return String(decoding: data.prefix(4000), as: UTF8.self)
     }
 
