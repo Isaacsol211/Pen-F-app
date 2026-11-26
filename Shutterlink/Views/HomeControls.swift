@@ -153,7 +153,26 @@ struct ExposureStrip: View {
         let locked = !(property?.settable ?? false)
         let isSelected = (selected ?? active) == name
         let text = Self.text(name, camera: camera)
-        return Button {
+        if name == "takemode", locked {
+            // A body with a physical mode dial the phone can't turn (LUMIX): the mode is a plain label,
+            // not a value with a dial. Tapping it says where to change it.
+            return AnyView(
+                Text(text)
+                    .font(.num(valueSize, weight: .medium))
+                    .tracking(0.6)
+                    .foregroundStyle(Theme.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .padding(.horizontal, 4)
+                    .frame(maxWidth: .infinity, minHeight: Theme.target)
+                    .contentShape(.rect)
+                    .onTapGesture { camera.showToast(Self.modeDialHint) }
+                    .accessibilityElement()
+                    .accessibilityLabel("Mode: \(text)")
+                    .accessibilityHint(Self.modeDialHint)
+            )
+        }
+        return AnyView(Button {
             active = name
         } label: {
             Text(text)
@@ -169,8 +188,11 @@ struct ExposureStrip: View {
         .buttonStyle(.plain)
         .accessibilityLabel("\(SettingSpec.spec(for: name)?.title ?? name): \(text)")
         .accessibilityHint("Shows the dial")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAddTraits(isSelected ? .isSelected : []))
     }
+
+    /// Where to change the mode on a body whose mode dial the phone can't turn.
+    static let modeDialHint = "Turn the mode dial on the camera to change the mode."
 }
 
 /// The small line under the picture: white balance, drive and quality. White balance picks its dial;

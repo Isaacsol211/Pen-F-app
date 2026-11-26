@@ -115,7 +115,10 @@ struct OptionPanel: View {
         default: nil
         }
         let exposure = ["focalvalue", "shutspeedvalue", "isospeedvalue", "wbvalue"].contains(spec.name)
-        let why = if spec.name == "expcomp", mode.uppercased() == "M" {
+        let modeSettable = camera.properties["takemode"]?.settable == true
+        let why = if spec.name == "takemode" {
+            ExposureStrip.modeDialHint
+        } else if spec.name == "expcomp", mode.uppercased() == "M" {
             "Exposure compensation has no effect in M, where you set the exposure yourself. It works in P, A and S."
         } else if mode.isEmpty || !(exposure || spec.name == "expcomp") {
             // No mode to blame (the body doesn't report it), or not an exposure setting (a drive dial).
@@ -134,6 +137,13 @@ struct OptionPanel: View {
                     Task { await camera.setProperty("takemode", to: unlock.mode) }
                 }
                 .buttonStyle(.surface)
+            } else if let unlock, !modeSettable, !mode.isEmpty, mode.uppercased() != unlock.mode {
+                // The mode is on a physical dial (LUMIX): say which way to turn it.
+                Text("Turn the camera's mode dial to \(unlock.mode) to set this from the phone.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
