@@ -65,7 +65,8 @@ struct OptionPanel: View {
             let property = camera.dialOptions(for: raw)
             let isDial = spec.style == .dial
             let auto = ExposureGrid.isAuto(spec.name, locked: !property.settable, mode: camera.properties["takemode"]?.value)
-            let label = ExposureGrid.label(spec.name == "takemode" ? "mode" : spec.name)
+            // The readout says what the setting is called (201–207: Shutter, Aperture, ISO, White balance, Mode).
+            let label = spec.name == "expcomp" ? "EV" : spec.title
             VStack(alignment: .center, spacing: 10) {
                 if !isDial {
                     HStack(spacing: 8) {
@@ -83,10 +84,22 @@ struct OptionPanel: View {
                     }
                 }
                 if !property.settable {
-                    DialReadout(label: label + (auto ? " · Auto" : ""),
-                                value: ExposureStrip.text(spec.name, camera: camera)
-                                    .replacingOccurrences(of: "ISO ", with: ""), locked: true)
+                    let mode = camera.properties["takemode"]?.value.uppercased() ?? ""
+                    if spec.name == "expcomp" && mode == "M" {
+                        // 205: EV means nothing in M, so no readout: a lock, why, and the way out.
+                        Image(systemName: "lock")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.tertiary)
+                            .padding(.top, 20)
+                    } else {
+                        DialReadout(label: label + (auto ? " · Auto" : ""),
+                                    value: ExposureStrip.text(spec.name, camera: camera)
+                                        .replacingOccurrences(of: "ISO ", with: ""), locked: true)
+                            .padding(.top, 10)
+                    }
                     lockedExplanation
+                        .padding(.horizontal, 24)
+                    Spacer(minLength: 0)
                 } else if spec.name == "shutspeedvalue" {
                     ShutterOptions(property: property)
                 } else if isDial {
@@ -94,6 +107,16 @@ struct OptionPanel: View {
                         Task { await camera.setProperty(spec.name, to: value) }
                     }
                     .id(spec.name)
+                    .overlay(alignment: .top) {
+                        // A camera that lets EV be set in M (LUMIX) only uses it with ISO on Auto.
+                        if spec.name == "expcomp", camera.properties["takemode"]?.value.uppercased() == "M",
+                           let iso = camera.properties["isospeedvalue"]?.value, !iso.lowercased().contains("auto") {
+                            Text("In M the camera applies EV only with ISO on Auto.")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.secondary)
+                                .offset(y: 104)
+                        }
+                    }
                 } else {
                     OptionGrid(property: property) { value in
                         Task { await camera.setProperty(spec.name, to: value) }
@@ -126,17 +149,26 @@ struct OptionPanel: View {
         } else {
             "The camera sets this itself in \(PropertyFormat.display("takemode", mode)) mode."
         }
-        VStack(alignment: .center, spacing: 8) {
+        VStack(alignment: .center, spacing: 12) {
             Text(why)
-                .font(.subheadline)
+                .font(.system(size: 15))
+                .lineSpacing(2)
                 .foregroundStyle(Theme.text)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-            if let unlock, camera.properties["takemode"]?.options.contains(unlock.mode) == true {
-                Button(unlock.label, systemImage: "lock.open") {
+            if spec.name == "expcomp", mode.uppercased() == "M",
+               let modes = camera.properties["takemode"]?.options, modes.contains("A") || modes.contains("S") {
+                // 205: both ways out of M, as outline buttons.
+                ForEach([("Switch to A (aperture priority)", "A"), ("Switch to S (shutter priority)", "S")]
+                    .filter { modes.contains($0.1) }, id: \.1) { item in
+                    Button(item.0) { Task { await camera.setProperty("takemode", to: item.1) } }
+                        .buttonStyle(UnlockButtonStyle())
+                }
+            } else if let unlock, camera.properties["takemode"]?.options.contains(unlock.mode) == true {
+                Button(unlock.label) {
                     Task { await camera.setProperty("takemode", to: unlock.mode) }
                 }
-                .buttonStyle(.surface)
+                .buttonStyle(UnlockButtonStyle())
             } else if let unlock, !modeSettable, !mode.isEmpty, mode.uppercased() != unlock.mode {
                 // The mode is on a physical dial (LUMIX): say which way to turn it.
                 Text("Turn the camera's mode dial to \(unlock.mode) to set this from the phone.")
@@ -146,6 +178,20 @@ struct OptionPanel: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+/// The way out of a locked value (205): a white-outlined capsule, 44 pt.
+struct UnlockButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(Theme.text)
+            .padding(.horizontal, 20)
+            .frame(minHeight: Theme.target)
+            .overlay(Capsule().stroke(Theme.text, lineWidth: 1.5))
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .contentShape(.capsule)
     }
 }
 
@@ -207,8 +253,11 @@ struct ShutterOptions: View {
 
     var body: some View {
         let current = PropertyFormat.isOpenEnded(shutter: property.value) ? property.value : "timed"
+        // The kinds (Timed, Live Comp, Bulb…) show at the slow end of the dial, where they follow on,
+        // or while one is chosen (210); not over everyday speeds (201).
+        let slow = (PropertyFormat.seconds(fromShutter: property.value) ?? 0) >= 1
         VStack(spacing: 8) {
-            if !liveModes.isEmpty {
+            if !liveModes.isEmpty && (current != "timed" || slow) {
                 // Compact chips, like the Camera app's small mode toggles.
                 HStack(spacing: 6) {
                     ForEach(["timed"] + liveModes, id: \.self) { choice in

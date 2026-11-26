@@ -17,10 +17,14 @@ struct ValueDial: View {
     }
 
     var body: some View {
-        VStack(spacing: 6) {
+        // The readout under the values, the dial low over the shutter row (201): the gap between them
+        // is what's left over.
+        VStack(spacing: 0) {
             if let readoutLabel {
                 DialReadout(label: readoutLabel, value: Self.readoutText(property.name, selection))
+                    .padding(.top, 10)
             }
+            Spacer(minLength: 6)
             dial
         }
         // The camera may adjust or reject a value (or a preset changed it): follow it.
@@ -75,6 +79,16 @@ struct ValueDial: View {
         case "expcomp":
             guard let ev = Double(value) else { return value }
             return ev == 0 ? "0" : String(format: "%+d", Int(ev.rounded()))
+        case "wbvalue":
+            // Short on the dial so five fit (206: "Fluor."); the readout above says it in full.
+            let full = PropertyFormat.display(name, value)
+            let short = ["Fluorescent": "Fluor.", "Incandescent": "Incand.", "Underwater": "Water",
+                         "One-touch": "1-touch", "Auto (white priority)": "Auto W", "Auto (ambience priority)": "Auto A",
+                         "Daylight": "Day", "Halogen": "Halog.", "Colour temperature": "K", "White set": "Set"]
+            for (long, abbreviation) in short where full.hasPrefix(long) {
+                return abbreviation + full.dropFirst(long.count)
+            }
+            return full
         default: return PropertyFormat.display(name, value)
         }
     }

@@ -336,12 +336,20 @@ struct CurvedDial: View {
     private let radius: CGFloat = 420
     private let tickRadiusInset: CGFloat = 0
     /// Degrees between values: wider for named values (white balance, mode…) so their labels fit.
+    /// Full stops among third stops (shutter, aperture, ISO, EV): full stops 10° apart and labelled,
+    /// thirds as ticks between (201–204).
+    private var stopScale: Bool { options.contains { isMajor($0) } && options.contains { !isMajor($0) } }
+
     private var step: Double {
+        if stopScale { return 10.0 / 3 }
         let numeric = options.allSatisfy { label($0).contains { $0.isNumber } }
         if numeric { return 8 }
-        let longest = options.map { label($0).count }.max() ?? 4
+        // Named values 10° apart, as designed (206, 207); wider only when most labels are long. A label that
+        // would still touch its neighbour is left out when drawn.
+        let lengths = options.map { label($0).count }.sorted()
+        let typical = lengths.isEmpty ? 4 : lengths[lengths.count / 2]
         // About 8.5 pt a character in Barlow Condensed 19 pt, 6.7 pt a degree at the label radius.
-        return min(18, max(8, (Double(longest) * 8.5 + 18) / 6.7))
+        return min(12, max(10, (Double(typical) * 8.5 + 14) / 6.7))
     }
     /// Finger travel for one value: the arc length between two ticks, so the ruler moves with the finger.
     private var pointsPerValue: CGFloat { radius * CGFloat(step * .pi / 180) }
@@ -352,7 +360,7 @@ struct CurvedDial: View {
 
     var body: some View {
         Canvas { ctx, size in draw(&ctx, size: size) }
-            .frame(height: 140)
+            .frame(height: 112)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { canvasWidth = $0 }
             .contentShape(.rect)
             .gesture(drag)
@@ -394,7 +402,7 @@ struct CurvedDial: View {
                     let major = m == 0 && isMajor(options[i])
                     let len: CGFloat = m == 0 ? (major ? 16 : 13) : 9
                     var path = Path(); path.move(to: at(angle, radius - len)); path.addLine(to: at(angle, radius))
-                    let fade = max(0.15, 1 - abs(angle) / 70)
+                    let fade = max(0.2, 1 - max(0, abs(angle) - 22) / 40)
                     ctx.stroke(path, with: .color(Theme.text.opacity((m == 0 ? 0.8 : 0.5) * fade)),
                                lineWidth: m == 0 ? 1.8 : 1.4)
                 }
@@ -407,11 +415,13 @@ struct CurvedDial: View {
         let labelRadius = radius - 40
         for i in order where i < total {
             let angle = (Double(i) - current) * step
-            if abs(angle) > 30 { continue }
+            // Labels within about ±24° of the pointer, as designed; ticks run on to the edges.
+            if abs(angle) > 25 { continue }
             let near = abs(Double(i) - current) < 0.5
+            if stopScale, !near, !isMajor(options[i]) { continue }
             let text = ctx.resolve(Text(label(options[i]))
                 .font(.num(near ? 22 : 19, weight: near ? .semibold : .medium))
-                .foregroundColor(near ? Theme.text : Color(hex: 0xC9C5BA).opacity(max(0.25, 1 - abs(angle) / 32))))
+                .foregroundColor(near ? Theme.text : Color(hex: 0xC9C5BA).opacity(max(0.5, 1 - abs(angle) / 50))))
             let width = text.measure(in: CGSize(width: 400, height: 60)).width
             let half = Double(width / 2 + 7) / Double(labelRadius * .pi / 180)
             let range = (angle - half)...(angle + half)
@@ -564,7 +574,11 @@ struct DialReadout: View {
 
     var body: some View {
         VStack(spacing: 2) {
-            CapsLabel(label, color: Theme.accent)
+            Text(label.uppercased())
+                .font(.system(size: 12, weight: .medium))
+                .tracking(1.7)
+                .foregroundStyle(Theme.accent)
+                .lineLimit(1)
             Text(value)
                 .font(.num(68))
                 .foregroundStyle(locked ? Theme.secondary : Theme.text)

@@ -6,37 +6,31 @@ import SwiftUI
 struct CameraStatusRow: View {
     @Environment(CameraModel.self) private var camera
 
+    // The design's status (201, 223): "72% · 4,382 left" in 13 pt, the battery red when low, "Hot" in the accent.
     var body: some View {
         let info = camera.liveInfo
-        HStack(spacing: 10) {
+        HStack(spacing: 0) {
             if let battery = info.battery {
-                HStack(spacing: 4) {
-                    Image(systemName: Self.batterySymbol(battery))
-                        .symbolRenderingMode(.hierarchical)
-                        .contentTransition(.symbolEffect(.replace))
-                    Text("\(battery)%")
-                        .contentTransition(.numericText(value: Double(battery)))
-                }
-                .foregroundStyle(battery <= 15 ? Color.red : .primary)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Camera battery \(battery) percent")
+                Text("\(battery)%")
+                    .foregroundStyle(battery <= 15 ? Theme.red : Theme.secondary)
+                    .contentTransition(.numericText(value: Double(battery)))
+                    .accessibilityLabel("Camera battery \(battery) percent")
             }
             if let shots = info.shotsRemaining {
-                HStack(spacing: 4) {
-                    Image(systemName: "photo.stack")
-                    Text("\(shots)").contentTransition(.numericText(value: Double(shots)))
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(shots) shots left on the card")
+                if info.battery != nil { Text(" · ").foregroundStyle(Theme.tertiary).accessibilityHidden(true) }
+                Text("\(shots.formatted()) left")
+                    .foregroundStyle(Theme.secondary)
+                    .contentTransition(.numericText(value: Double(shots)))
+                    .accessibilityLabel("\(shots) shots left on the card")
             }
             if info.temperatureWarning {
-                Image(systemName: "thermometer.high")
+                Text("  Hot")
+                    .fontWeight(.semibold)
                     .foregroundStyle(Theme.accent)
-                    .symbolEffect(.pulse)
                     .accessibilityLabel("Camera is hot")
             }
         }
-        .font(.caption.monospacedDigit().weight(.medium))
+        .font(.system(size: 13).monospacedDigit())
         .animation(.snappy, value: info.battery)
         .animation(.snappy, value: info.shotsRemaining)
     }

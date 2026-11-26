@@ -47,14 +47,13 @@ struct InfoBar<Trailing: View>: View {
             .accessibilityLabel("\(camera.cameraName ?? "Camera"), \(camera.liveViewRunning ? "live" : "live view off")")
             Spacer(minLength: 8)
             CameraStatusRow()
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.secondary)
                 .fixedSize()
             trailing
+                .padding(.leading, -6)
         }
-        .padding(.leading, 18)
-        .padding(.trailing, 10)
-        .frame(minHeight: 52)
+        .padding(.leading, 20)
+        .padding(.trailing, 6)
+        .frame(minHeight: Theme.target)
     }
 }
 
@@ -143,7 +142,11 @@ struct ExposureStrip: View {
         let property = camera.properties[name].map(camera.dialOptions(for:))
         let raw = camera.stripValue(name, property)
         switch name {
-        case "focalvalue": return raw.first?.isNumber == true ? "f/" + raw : raw
+        case "focalvalue":
+            if raw.first?.isNumber == true { return "f/" + raw }
+            // Live view reports "F1.8": written the design's way, f/1.8.
+            if raw.first == "F", raw.dropFirst().first?.isNumber == true { return "f/" + raw.dropFirst() }
+            return raw
         case "isospeedvalue": return raw.first?.isNumber == true ? "ISO " + raw : raw
         case "takemode": return ModeCarousel.title(property?.value ?? raw)
         default: return raw

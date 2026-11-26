@@ -184,16 +184,19 @@ struct RemoteView: View {
                         SettingLine(active: dialBinding) { settingSheet = $0 }
                         ExposureStrip(active: dialBinding, selected: selected)
                             .padding(.horizontal, 12)
-                        Spacer(minLength: 0)
                         if camera.isBusyExposing && !camera.isRecordingMovie {
                             // A long or open exposure: one big running time in place of the dial.
                             ExposingReadout()
+                                .padding(.top, 16)
                                 .transition(.blurReplace)
+                            Spacer(minLength: 0)
                         } else if let spec = SettingSpec.spec(for: selected), camera.properties[selected] != nil {
                             OptionPanel(spec: spec) { activeSetting = nil }
                                 .id(selected)
+                                .frame(maxHeight: .infinity, alignment: .top)
+                        } else {
+                            Spacer(minLength: 0)
                         }
-                        Spacer(minLength: 0)
                     }
                     .frame(maxWidth: Self.controlsMaxWidth)
                 }
@@ -545,9 +548,11 @@ struct RemoteView: View {
 
     private var menuButton: some View {
         Button { showMore = true } label: {
+            // "···" after the status, as on the iPad design (502); the phone design leaves it out, but
+            // the menu needs a way in.
             Image(systemName: "ellipsis")
-                .font(.body.weight(.bold))
-                .foregroundStyle(Theme.text)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.secondary)
                 .frame(width: Theme.target, height: Theme.target)
                 .contentShape(.circle)
         }
