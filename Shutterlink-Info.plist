@@ -26,6 +26,11 @@
 	<!-- RAW files that Photos won't take are saved to Documents/RAW, shown in Files. -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<!-- Declares a service type so iOS lists the app under Local Network and asks for it. -->
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_shutterlink._tcp</string>
+	</array>
 	<!-- Barlow Condensed (OFL) for the numbers. -->
 	<key>UIAppFonts</key>
 	<array>
