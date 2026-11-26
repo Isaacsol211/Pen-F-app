@@ -170,7 +170,7 @@ extension CameraModel {
                 let offset = "\(Self.offsetLabel(set.offsets[index])) EV"
                 self.bracket.label = name == "expcomp" ? offset : "\(offset) · \(PropertyFormat.display(name, value))"
                 if self.properties[name]?.value != value {
-                    guard await self.setProperty(name, to: value) else { break }
+                    guard await self.setPropertyWhenReady(name, to: value) else { break }
                     try? await Task.sleep(for: .milliseconds(250))
                 }
                 if Task.isCancelled { break }
@@ -181,12 +181,26 @@ extension CameraModel {
             let finished = self.bracket.done
             // Put the setting back, even after Cancel (a new task, so it isn't cancelled too).
             if let original, self.phase == .connected, self.properties[name]?.value != original {
-                await Task { _ = await self.setProperty(name, to: original, reportErrors: false) }.value
+                await Task { _ = await self.setPropertyWhenReady(name, to: original, reportErrors: false) }.value
             }
             self.bracket = BracketState()
             self.bracketTask = nil
             if finished > 0 { self.showToast("Bracket: \(finished) of \(set.values.count) frames") }
         }
+    }
+
+    /// Sets a property between the frames of a series. Right after a shot the camera is still exposing or
+    /// writing the file and refuses changes (an Olympus answers HTTP 520), so this waits and tries again
+    /// for a few seconds before giving up. Only the last refusal is shown.
+    func setPropertyWhenReady(_ name: String, to value: String, reportErrors: Bool = true) async -> Bool {
+        let attempts = 12
+        for attempt in 1...attempts {
+            let last = attempt == attempts
+            if await setProperty(name, to: value, reportErrors: reportErrors && last) { return true }
+            if last || Task.isCancelled || phase != .connected { break }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        return false
     }
 
     // MARK: - Focus stacking

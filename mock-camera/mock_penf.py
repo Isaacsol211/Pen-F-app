@@ -311,6 +311,7 @@ def live_view_loop(cam):
 
 
 class Handler(QuietHandler):
+    busy = 0
     cam: MockCamera = None
     model = "PEN-F"
 
@@ -420,6 +421,7 @@ class Handler(QuietHandler):
                 print(f"  * {cam.values['shutspeedvalue']} exposure started")
                 return self.xml("<response><take>ok</take></response>")
             time.sleep(0.35)  # pretend to focus and expose
+            cam.busy_until = time.time() + Handler.busy  # still writing the file, like a real body with RAW
             name = cam.add_image(cam.frames[cam.frame_index % len(cam.frames)])
             print(f"  * click -> {name}")
             return self.xml("<response><take>ok</take><affocus>ok</affocus></response>")
@@ -457,6 +459,8 @@ class Handler(QuietHandler):
         cam = self.cam
         if cam.mode != "rec":
             return self.refuse("settings need rec mode")
+        if time.time() < getattr(cam, "busy_until", 0):
+            return self.refuse("busy writing the last shot")
         name = q.get("propname")
         m = re.search(rb"<value>(.*?)</value>", body, re.S)
         if not m or name not in cam.values:
@@ -528,9 +532,12 @@ def main():
     ap = arguments(__doc__, 8080, 80)
     ap.add_argument("--model", default="PEN-F",
                     help="model name get_caminfo reports, e.g. E-M10MarkIII or AIR-A01 (default PEN-F)")
+    ap.add_argument("--busy", type=float, default=0,
+                    help="seconds after each shot during which settings are refused with 520, like a real body "
+                         "that is still writing the file (default 0)")
     args = ap.parse_args()
     cam = MockCamera(load_frames())
-    Handler.cam, Handler.model = cam, args.model
+    Handler.cam, Handler.model, Handler.busy = cam, args.model, args.busy
     threading.Thread(target=live_view_loop, args=(cam,), daemon=True).start()
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
     print(f"Mock PEN-F listening on http://{args.bind}:{args.port}  ({len(cam.frames)} frames, {FPS} fps)")
