@@ -361,6 +361,8 @@ struct WheelColumn: View {
     let values: [Int]
     let unit: String
     @Binding var selection: Int?
+    /// What 0 reads as ("Until stopped"), where it means something else.
+    var zeroText: String?
     private let row: CGFloat = 34
 
     var body: some View {
@@ -369,7 +371,7 @@ struct WheelColumn: View {
                 LazyVStack(spacing: 0) {
                     ForEach(values, id: \.self) { value in
                         let on = value == selection
-                        Text("\(value) \(unit)")
+                        Text(value == 0 && zeroText != nil ? zeroText! : (unit.isEmpty ? "\(value)" : "\(value) \(unit)"))
                             .font(.num(on ? 34 : 20, weight: on ? .semibold : .medium))
                             .foregroundStyle(on ? Theme.text : Theme.secondary)
                             .frame(maxWidth: .infinity, minHeight: row)

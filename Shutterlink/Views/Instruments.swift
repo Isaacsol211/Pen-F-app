@@ -91,6 +91,49 @@ struct CompositionGrid: View {
     }
 }
 
+/// The interval's Every or Frames on a wheel, in the bottom panel (301).
+struct IntervalValueWheel: View {
+    enum Field { case seconds, count }
+    let editing: Field
+    @Binding var seconds: Double
+    @Binding var count: Int
+    let close: () -> Void
+    @State private var value: Int?
+
+    private var values: [Int] {
+        editing == .seconds ? Array(1...9) + Array(stride(from: 10, through: 600, by: 5))
+                            : [0] + Array(2...19) + Array(stride(from: 20, through: 9990, by: 10))
+    }
+
+    var body: some View {
+        VStack(spacing: 18) {
+            WheelColumn(values: values, unit: editing == .seconds ? "s" : "", selection: $value, zeroText: editing == .count ? "Until stopped" : nil)
+                .frame(height: 170)
+                .overlay {
+                    VStack(spacing: 0) {
+                        Rectangle().fill(Theme.stroke).frame(height: 1)
+                        Spacer().frame(height: 46)
+                        Rectangle().fill(Theme.stroke).frame(height: 1)
+                    }
+                    .allowsHitTesting(false)
+                }
+            Button("Set") {
+                if let value {
+                    if editing == .seconds { seconds = Double(value) } else { count = value }
+                }
+                close()
+            }
+            .buttonStyle(.accent)
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 16)
+        .onAppear {
+            let current = editing == .seconds ? Int(seconds) : count
+            value = values.min { abs($0 - current) < abs($1 - current) }
+        }
+    }
+}
+
 /// A row of short bars for a running sequence (design 303): done in white, the next one in the accent.
 /// At most 24 bars, each standing for a share of the frames.
 struct FrameBars: View {
@@ -147,8 +190,8 @@ struct SunArc: View {
                         let p = point(Double(i) / Double(samples.count - 1), alt)
                         if i == 0 { arc.move(to: p) } else { arc.addLine(to: p) }
                     }
-                    ctx.stroke(arc, with: .color(Theme.text.opacity(0.45)),
-                               style: StrokeStyle(lineWidth: 1.4, lineCap: .round, dash: [0.1, 6]))
+                    ctx.stroke(arc, with: .color(Theme.text.opacity(0.6)),
+                               style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [0.1, 6]))
                     var line = Path(); line.move(to: CGPoint(x: 0, y: horizon)); line.addLine(to: CGPoint(x: size.width, y: horizon))
                     ctx.stroke(line, with: .color(Theme.outline), lineWidth: 1)
                     let sun = point(x, altitude)
@@ -201,19 +244,21 @@ struct IntervalPanel: View {
     @AppStorage("interval.seconds") private var seconds = 20.0
     @AppStorage("interval.ramp") private var ramp = false
     @AppStorage("interval.maxISO") private var maxISO = 3200
+    @State private var editing: IntervalValueWheel.Field?
 
     private var plan: IntervalPlan {
         IntervalPlan(count: count, seconds: seconds, ramp: ramp && camera.canRampExposure, maxISO: maxISO)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
             if camera.interval.running {
                 progressCard
             } else {
                 setupCards
             }
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .animation(.smooth, value: camera.interval.running)
     }
 
@@ -221,68 +266,54 @@ struct IntervalPanel: View {
         if let location = camera.locationLog.lastKnown {
             SunArc(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
                 .padding(.horizontal, -20)
+                .padding(.bottom, 14)
         }
         HStack(spacing: 8) {
             preset("Star stack", count: 30, seconds: 22)
             preset("Time-lapse", count: 240, seconds: 5)
             preset("Trails", count: 120, seconds: 32)
         }
-        .padding(.bottom, 6)
-        BigNumber(label: "Every", value: "\(Int(seconds)) s", caption: count == 0 ? "until you stop it" : "for \(count) frames", size: 88)
+        .padding(.bottom, 14)
+        // 301: Every and Frames side by side; tap one to change it on a wheel.
         VStack(spacing: 0) {
-            Stepper(value: $seconds, in: 1...600, step: seconds < 10 ? 1 : 5) {
-                LabeledContent("Every", value: "\(Int(seconds)) s")
-            }
-            .hairRow(minHeight: 56)
-            Stepper(value: $count, in: 0...9999, step: count < 20 ? 1 : 10) {
-                LabeledContent("Frames", value: count == 0 ? "Until stopped" : "\(count)")
-            }
-            .hairRow(minHeight: 56)
+            PairRow(cells: [
+                .init(label: "Every", value: "\(Int(seconds)) s", action: { editing = .seconds }),
+                .init(label: "Frames", value: count == 0 ? "Until stopped" : "\(count)", action: { editing = .count }),
+            ])
             note(summary)
             if let shutter = PropertyFormat.seconds(fromShutter: camera.properties["shutspeedvalue"]?.value ?? ""),
                shutter + 1 > seconds {
-                Label("The interval is shorter than the exposure (\(Int(shutter)) s). Shots will run back to back.",
-                      systemImage: "exclamationmark.triangle")
-                    .font(.footnote).foregroundStyle(Theme.accent)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 12)
-                    .hairRow()
+                NoteRow("The interval is shorter than the exposure (\(Int(shutter)) s). Shots will run back to back.", warning: true)
             }
             Toggle(isOn: $ramp) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Follow the light")
-                    Text("Day to night (or night to day)").font(.footnote).foregroundStyle(Theme.secondary)
+                    Text("Follow the light").font(.system(size: 16, weight: .medium))
+                    Text("Day to night (or night to day)").font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 }
             }
             .tint(Theme.accent)
             .disabled(!camera.canRampExposure)
             .hairRow(minHeight: 62)
             if ramp && camera.canRampExposure {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Highest ISO").font(.subheadline).foregroundStyle(Theme.secondary)
-                    Picker("Highest ISO", selection: $maxISO) {
-                        ForEach([1600, 3200, 6400, 12800], id: \.self) { Text(verbatim: "\($0)").tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                }
-                .padding(.vertical, 12)
-                .hairRow()
+                SegRow(label: "Highest ISO", options: [1600, 3200, 6400, 12800], selection: $maxISO) { "\($0)" }
             }
             note(camera.canRampExposure
                  ? "Keeps live view as bright as when you start: as it gets dark the shutter gets longer (up to what the interval leaves room for), then the ISO goes up, a third of a stop at a time, and back at sunrise. Needs live view to show the exposure (Live View Boost off)."
                  : "Switch the camera to M so the app can change the shutter speed.")
+            if camera.isOpenEndedShutter {
+                NoteRow("Interval shooting needs a timed shutter speed, not Live Composite/Time/Bulb.", warning: true)
+            }
         }
-        Button {
-            camera.startInterval(plan)
-        } label: {
-            Text("Start")
-        }
-        .buttonStyle(.accent)
-        .disabled(camera.mode != .rec || camera.isOpenEndedShutter)
-        .padding(.top, 8)
-        if camera.isOpenEndedShutter {
-            note("Interval shooting needs a timed shutter speed, not Live Composite/Time/Bulb.")
-        }
+        .overlay(alignment: .top) { Hairline() }
+        Spacer(minLength: 20)
+        Button("Start") { camera.startInterval(plan) }
+            .buttonStyle(.accent)
+            .disabled(camera.mode != .rec || camera.isOpenEndedShutter)
+            .padding(.bottom, 14)
+            .dPanelCover(isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } }),
+                         title: editing == .count ? "Frames" : "Every") {
+                IntervalValueWheel(editing: editing ?? .seconds, seconds: $seconds, count: $count) { editing = nil }
+            }
     }
 
     private func note(_ text: String) -> some View {
@@ -303,7 +334,7 @@ struct IntervalPanel: View {
                 if let next = camera.interval.nextShotAt {
                     let left = max(0, Int(next.timeIntervalSince(context.date).rounded(.up)))
                     BigNumber(value: String(format: "%d:%02d", left / 60, left % 60),
-                              caption: "Next shot in \(left) s", size: 72)
+                              caption: "Next shot in \(left) s", size: 80)
                 } else {
                     BigNumber(value: "…", caption: "Exposing…", size: 72)
                 }
@@ -312,16 +343,18 @@ struct IntervalPanel: View {
                 FrameBars(done: camera.interval.done, total: camera.interval.total)
             }
             if let note = camera.interval.rampNote {
-                Text(note).font(.footnote).foregroundStyle(Theme.accent)
+                NoteRow(note, color: Theme.accent)
             }
+            Spacer(minLength: 20)
             Button(role: .destructive) {
                 camera.stopInterval()
             } label: {
                 Text("Stop")
             }
             .buttonStyle(.outline)
+            .padding(.bottom, 14)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var summary: String {
