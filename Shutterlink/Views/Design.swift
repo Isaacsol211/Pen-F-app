@@ -717,6 +717,44 @@ extension View {
     }
 }
 
+extension View {
+    /// The bottom panel from anywhere: a clear full-screen cover hosting the same panel, for controls
+    /// nested deep in a screen (Stop after's custom time).
+    func dPanelCover<Content: View>(isPresented: Binding<Bool>, title: String? = nil,
+                                    @ViewBuilder content: @escaping () -> Content) -> some View {
+        fullScreenCover(isPresented: isPresented) {
+            PanelCoverHost(title: title, close: { isPresented.wrappedValue = false }, content: content)
+                .presentationBackground(.clear)
+        }
+        .transaction { $0.disablesAnimations = true }
+    }
+}
+
+private struct PanelCoverHost<Content: View>: View {
+    let title: String?
+    let close: () -> Void
+    @ViewBuilder var content: () -> Content
+    @State private var shown = false
+
+    var body: some View {
+        ZStack {
+            if shown {
+                BottomPanel(title: title, onClose: dismiss, content: content)
+            }
+        }
+        .animation(.spring(duration: 0.32, bounce: 0), value: shown)
+        .onAppear { shown = true }
+    }
+
+    private func dismiss() {
+        shown = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            var transaction = Transaction(); transaction.disablesAnimations = true
+            withTransaction(transaction, close)
+        }
+    }
+}
+
 private struct DScreen<Screen: View>: ViewModifier {
     @Binding var isPresented: Bool
     let screen: () -> Screen

@@ -233,29 +233,34 @@ struct BulbTimerControl: View {
     private let presets: [Double] = [0, 30, 60, 120, 300, 600]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        // 210: "STOP AFTER" in the accent, centred, over a row of chips (white when chosen).
+        VStack(spacing: 8) {
             Text("STOP AFTER")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(1)
-                .foregroundStyle(Theme.secondary)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(presets, id: \.self) { seconds in
-                        chip(seconds == 0 ? "Off" : Self.short(seconds), on: camera.bulbTimer == seconds) {
-                            camera.bulbTimer = seconds
-                        }
-                    }
-                    chip(presets.contains(camera.bulbTimer) ? "Other…" : Self.short(camera.bulbTimer),
-                         on: !presets.contains(camera.bulbTimer)) { showCustom = true }
-                }
+                .font(.system(size: 11, weight: .medium))
+                .tracking(1.5)
+                .foregroundStyle(Theme.accent)
+            ViewThatFits(in: .horizontal) {
+                chips
+                ScrollView(.horizontal, showsIndicators: false) { chips }.scrollClipDisabled()
             }
-            .scrollClipDisabled()
         }
+        .frame(maxWidth: .infinity)
         .sensoryFeedback(.selection, trigger: camera.bulbTimer)
         .disabled(camera.isShooting)
-        .sheet(isPresented: $showCustom) {
-            BulbTimerSheet(seconds: camera.bulbTimer) { camera.bulbTimer = $0 }
-                .presentationDetents([.height(320)])
+        .dPanelCover(isPresented: $showCustom, title: "Stop the exposure after") {
+            BulbTimerSheet(seconds: camera.bulbTimer, onSet: { camera.bulbTimer = $0 }, close: { showCustom = false })
+        }
+    }
+
+    private var chips: some View {
+        HStack(spacing: 6) {
+            ForEach(presets, id: \.self) { seconds in
+                chip(seconds == 0 ? "Off" : Self.short(seconds), on: camera.bulbTimer == seconds) {
+                    camera.bulbTimer = seconds
+                }
+            }
+            chip(presets.contains(camera.bulbTimer) ? "Other…" : Self.short(camera.bulbTimer),
+                 on: !presets.contains(camera.bulbTimer)) { showCustom = true }
         }
     }
 
@@ -269,11 +274,13 @@ struct BulbTimerControl: View {
     private func chip(_ text: String, on: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(text)
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                .foregroundStyle(on ? Color.black : Color.white.opacity(0.8))
-                .padding(.horizontal, 8)
-                .frame(height: 24)
-                .background(on ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Color.white.opacity(0.1)), in: .capsule)
+                .font(.system(size: 13, weight: on ? .semibold : .regular).monospacedDigit())
+                .foregroundStyle(on ? Theme.background : Theme.text)
+                .padding(.horizontal, 10)
+                .frame(minWidth: 34, minHeight: 34)
+                .background(on ? AnyShapeStyle(Theme.text) : AnyShapeStyle(Color.black.opacity(0.25)), in: .capsule)
+                .overlay(Capsule().stroke(on ? Color.clear : Theme.text.opacity(0.35), lineWidth: 1))
+                .contentShape(.capsule.inset(by: -5))
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])
@@ -281,42 +288,89 @@ struct BulbTimerControl: View {
 }
 
 private struct BulbTimerSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var minutes: Int
-    @State private var seconds: Int
+    @State private var minutes: Int?
+    @State private var seconds: Int?
     let onSet: (Double) -> Void
+    let close: () -> Void
 
-    init(seconds total: Double, onSet: @escaping (Double) -> Void) {
+    init(seconds total: Double, onSet: @escaping (Double) -> Void, close: @escaping () -> Void) {
         let value = Int(total.rounded())
         _minutes = State(initialValue: value / 60)
-        _seconds = State(initialValue: value % 60)
+        _seconds = State(initialValue: (value % 60) / 5 * 5)
         self.onSet = onSet
+        self.close = close
     }
 
+    // 211: two Barlow wheels (minutes, seconds) between hairlines, then Set and Cancel.
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 18) {
             HStack(spacing: 0) {
-                Picker("Minutes", selection: $minutes) {
-                    ForEach(0...120, id: \.self) { Text("\($0) min").tag($0) }
-                }
-                Picker("Seconds", selection: $seconds) {
-                    ForEach(Array(stride(from: 0, through: 55, by: 5)), id: \.self) { Text("\($0) s").tag($0) }
-                }
+                WheelColumn(values: Array(0...120), unit: "min", selection: $minutes)
+                WheelColumn(values: Array(stride(from: 0, through: 55, by: 5)), unit: "s", selection: $seconds)
             }
-            .pickerStyle(.wheel)
-            .navigationTitle("Stop the exposure after")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", systemImage: "xmark") { dismiss() }
-                }.sharedBackgroundVisibility(.hidden)
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Set", systemImage: "checkmark") {
-                        onSet(Double(minutes * 60 + seconds))
-                        dismiss()
+            .frame(height: 170)
+            .overlay {
+                VStack(spacing: 0) {
+                    Rectangle().fill(Theme.stroke).frame(height: 1)
+                    Spacer().frame(height: 46)
+                    Rectangle().fill(Theme.stroke).frame(height: 1)
+                }
+                .allowsHitTesting(false)
+            }
+            .padding(.top, 6)
+            VStack(spacing: 10) {
+                Button("Set") {
+                    onSet(Double((minutes ?? 0) * 60 + (seconds ?? 0)))
+                    close()
+                }
+                .buttonStyle(.accent)
+                Button("Cancel", action: close)
+                    .buttonStyle(.outline)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 16)
+    }
+}
+
+/// One wheel of values: the chosen one large in Barlow in the middle, its neighbours smaller and dim.
+struct WheelColumn: View {
+    let values: [Int]
+    let unit: String
+    @Binding var selection: Int?
+    private let row: CGFloat = 34
+
+    var body: some View {
+        GeometryReader { geo in
+            ScrollView(.vertical, showsIndicators: false) {
+                LazyVStack(spacing: 0) {
+                    ForEach(values, id: \.self) { value in
+                        let on = value == selection
+                        Text("\(value) \(unit)")
+                            .font(.num(on ? 34 : 20, weight: on ? .semibold : .medium))
+                            .foregroundStyle(on ? Theme.text : Theme.secondary)
+                            .frame(maxWidth: .infinity, minHeight: row)
+                            .id(value)
+                            .onTapGesture { withAnimation(.snappy) { selection = value } }
                     }
-                }.sharedBackgroundVisibility(.hidden)
+                }
+                .scrollTargetLayout()
             }
+            .contentMargins(.vertical, (geo.size.height - row) / 2, for: .scrollContent)
+            .scrollTargetBehavior(.viewAligned)
+            .scrollPosition(id: $selection, anchor: .center)
+            .sensoryFeedback(.selection, trigger: selection)
+            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.25),
+                                         .init(color: .black, location: 0.75), .init(color: .clear, location: 1)],
+                                 startPoint: .top, endPoint: .bottom))
+        }
+        .accessibilityElement()
+        .accessibilityLabel(unit == "min" ? "Minutes" : "Seconds")
+        .accessibilityValue("\(selection ?? 0)")
+        .accessibilityAdjustableAction { direction in
+            guard let i = values.firstIndex(of: selection ?? 0) else { return }
+            let next = direction == .increment ? i + 1 : i - 1
+            if values.indices.contains(next) { selection = values[next] }
         }
     }
 }

@@ -200,39 +200,33 @@ struct OptionGrid: View {
     let property: CameraProperty
     let onSelect: (String) -> Void
 
+    // Three across, text only, 62 pt tiles: the chosen one filled with the accent (208, 209). The
+    // bottom panel scrolls when a camera has many (LUMIX lists a dozen drive modes).
     var body: some View {
-        // A fixed height for the rows it needs (up to three), so the panel isn't squeezed to a
-        // row and a half; longer lists scroll, with the indicator showing there's more.
-        let rows = (property.options.count + 2) / 3
-        ScrollView(.vertical, showsIndicators: rows > 3) {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
-                ForEach(Array(property.options.enumerated()), id: \.offset) { _, option in
-                    let selected = option == property.value
-                    Button {
-                        onSelect(option)
-                    } label: {
-                        VStack(spacing: 4) {
-                            if let icon = SettingSpec.optionIcon(property.name, option) {
-                                Image(systemName: icon).font(.system(size: 17, weight: .semibold))
-                            }
-                            Text(PropertyFormat.display(property.name, option))
-                                .font(.caption.weight(.semibold))
-                                .lineLimit(2)
-                                .minimumScaleFactor(0.7)
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 56)
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+            ForEach(Array(property.options.enumerated()), id: \.offset) { _, option in
+                let selected = option == property.value
+                let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+                Button {
+                    onSelect(option)
+                } label: {
+                    Text(PropertyFormat.display(property.name, option))
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.75)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 6)
+                        .frame(maxWidth: .infinity, minHeight: 62)
                         .foregroundStyle(selected ? Theme.onAccent : Theme.text)
-                    }
-                    .buttonStyle(.plain)
-                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(selected ? Theme.accent : Color.clear))
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(selected ? Color.clear : Theme.stroke, lineWidth: 1))
-                    .accessibilityAddTraits(selected ? .isSelected : [])
+                        .background(shape.fill(selected ? Theme.accent : Color.clear))
+                        .overlay(shape.stroke(selected ? Color.clear : Theme.outline, lineWidth: 1))
+                        .contentShape(shape)
                 }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
-            .padding(2)
         }
-        .frame(height: CGFloat(min(rows, 3)) * 60 + (rows > 3 ? 30 : 0))
+        .padding(1)
         .sensoryFeedback(.selection, trigger: property.value)
     }
 }
@@ -290,18 +284,22 @@ struct ShutterOptions: View {
                 .id("shutter-dial")
                 .transition(.blurReplace)
             } else {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .center, spacing: 12) {
                     BulbTimerControl()
+                        .padding(.top, 22)
                     Text(current == "livecomp"
                          ? "Live Composite stacks only new light: star trails without over-exposing the sky. "
                             + (camera.bulbTimer > 0 ? "It stops by itself after \(CameraModel.durationLabel(camera.bulbTimer))." : "Tap the shutter to start, again to stop.")
                          : (camera.bulbTimer > 0
                             ? "The exposure stops by itself after \(CameraModel.durationLabel(camera.bulbTimer)), or when you tap the shutter."
                             : "The exposure runs until you tap the shutter again."))
-                        .font(.footnote)
+                        .font(.system(size: 13))
                         .foregroundStyle(Theme.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity)
                 .transition(.blurReplace)
             }
         }

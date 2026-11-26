@@ -231,9 +231,56 @@ struct ExposureStrip: View {
 struct SettingLine: View {
     @Environment(CameraModel.self) private var camera
     @Binding var active: String?
+    /// Aids that are switched on (212): "Grid on", "Peaking on"… after the settings; tap one to turn it off.
+    var aids: [ToolItem] = []
     let openSheet: (String) -> Void
 
     var body: some View {
+        VStack(spacing: 0) {
+            // 212: the aids that are on, in a line of their own over the settings.
+            if aids.contains(where: \.on) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) { aidItems(all: true) }
+                    HStack(spacing: 10) { aidItems(all: false) }
+                }
+                .frame(height: 22)
+                .transition(.opacity)
+            }
+            settings
+        }
+        .animation(.snappy, value: aids.map(\.on))
+        .disabled(camera.isBusyExposing)
+    }
+
+    @ViewBuilder private func aidItems(all: Bool) -> some View {
+        let on = aids.filter(\.on)
+        if !on.isEmpty {
+            if all {
+                ForEach(on) { item in
+                    Button(action: item.action) {
+                        Text("\(item.title) on")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.text.opacity(0.85))
+                            .lineLimit(1)
+                            .fixedSize()
+                            .frame(minHeight: 22)
+                            .contentShape(.rect.inset(by: -10))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(item.title) on")
+                    .accessibilityHint("Turns it off")
+                }
+            } else {
+                Text("\(on.count) aids on")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize()
+                    .padding(.horizontal, 6)
+            }
+        }
+    }
+
+    private var settings: some View {
         HStack(spacing: 6) {
             ForEach(["wbvalue", "drivemode", "quality"].filter { camera.properties[$0] != nil }, id: \.self) { name in
                 let property = camera.properties[name].map(camera.dialOptions(for:))
@@ -255,7 +302,6 @@ struct SettingLine: View {
                 .accessibilityLabel("\(SettingSpec.spec(for: name)?.title ?? name): \(camera.stripValue(name, property))")
             }
         }
-        .disabled(camera.isBusyExposing)
     }
 }
 

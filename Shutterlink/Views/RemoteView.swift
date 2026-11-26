@@ -181,7 +181,8 @@ struct RemoteView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
                     VStack(spacing: 0) {
-                        SettingLine(active: dialBinding) { settingSheet = $0 }
+                        SettingLine(active: dialBinding,
+                                    aids: tools.filter { ["grid", "histogram", "peaking", "tap", "loupe"].contains($0.id) }) { settingSheet = $0 }
                         ExposureStrip(active: dialBinding, selected: selected)
                             .padding(.horizontal, 12)
                         if camera.isBusyExposing && !camera.isRecordingMovie {
