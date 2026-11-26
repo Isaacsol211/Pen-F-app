@@ -199,6 +199,14 @@ struct RemoteView: View {
                                 .padding(.top, 18)
                                 .transition(.opacity)
                             Spacer(minLength: 0)
+                        } else if camera.bracket.running {
+                            // 218: the sequence's progress in place of the dial.
+                            BigNumber(label: camera.bracket.isFocusStack ? "Focus stack" : "Bracketing",
+                                      value: "\(camera.bracket.done + 1) of \(camera.bracket.total)",
+                                      caption: camera.bracket.label, size: 68)
+                                .padding(.top, 16)
+                                .transition(.blurReplace)
+                            Spacer(minLength: 0)
                         } else if camera.isBusyExposing && !camera.isRecordingMovie {
                             // A long or open exposure: one big running time in place of the dial.
                             ExposingReadout()
