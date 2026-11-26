@@ -282,102 +282,100 @@ struct NDPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
             if let seconds, let meter {
                 BigNumber(label: "With the filter on, expose for", value: shutterLabel(seconds: seconds),
                           caption: "\(shutterLabel(seconds: meter.seconds)) → \(shutterLabel(seconds: seconds))", size: 104, color: Theme.accent)
                 stopScale(from: meter.seconds, to: seconds)
+                    .padding(.vertical, 10)
             } else {
                 BigNumber(label: "ND filter", value: "\(stops) stops", caption: "Meter without the filter first", size: 88)
+                    .padding(.bottom, 14)
             }
-            card {
-                Text("1. Meter without the filter").font(.headline)
-                if let live = camera.meteredExposure {
-                    Text(describe(live))
-                        .font(.num(26, weight: .medium))
-                } else {
-                    Text("Waiting for the camera's exposure…").foregroundStyle(Theme.secondary)
+            // 1: the reading on the right of its row, "Meter again" under it in the accent (310).
+            HStack(alignment: .top, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("1. Meter without the filter").font(.system(size: 16, weight: .medium))
+                    Text("Let the camera meter in A or P (or set the exposure yourself in M), with a fixed ISO.")
+                        .font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Button(meter == nil ? "Use this exposure" : "Meter again", systemImage: "camera.metering.center.weighted") {
-                    meter = camera.meteredExposure
-                }
-                .buttonStyle(.surface)
+                Spacer(minLength: 6)
+                Text(camera.meteredExposure.map(describe) ?? "Waiting…")
+                    .font(.num(20, weight: .semibold))
+                    .foregroundStyle(camera.meteredExposure == nil ? Theme.secondary : Theme.text)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+            }
+            .padding(.vertical, 12)
+            .overlay(alignment: .top) { Hairline() }
+            Button(meter == nil ? "Use this exposure" : "Meter again") { meter = camera.meteredExposure }
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Theme.accent)
+                .frame(minHeight: Theme.target)
+                .buttonStyle(.plain)
                 .disabled(camera.meteredExposure == nil)
-                Text("Let the camera meter in A or P (or set the exposure yourself in M), with a fixed ISO.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.secondary)
-            }
-            card {
-                Text("2. The filter").font(.headline)
-                HStack(spacing: 6) {
-                    ForEach([(3, "ND8"), (6, "ND64"), (10, "ND1000"), (15, "ND32k")], id: \.0) { value, name in
-                        Button {
-                            stops = value
-                        } label: {
-                            VStack(spacing: 1) {
-                                Text("\(value) stops").font(.caption.weight(.semibold))
-                                Text(name).font(.caption2).foregroundStyle(stops == value ? Theme.onAccent : Theme.secondary)
-                            }
-                            .foregroundStyle(stops == value ? Theme.onAccent : Theme.text)
-                            .frame(maxWidth: .infinity, minHeight: 64)
-                            .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(stops == value ? Theme.accent : Color.clear))
-                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(stops == value ? Color.clear : Theme.outline, lineWidth: 1))
+            SectionLabel("2. The filter")
+            HStack(spacing: 6) {
+                ForEach([(3, "ND8"), (6, "ND64"), (10, "ND1000"), (15, "ND32k")], id: \.0) { value, name in
+                    let on = stops == value
+                    Button {
+                        stops = value
+                    } label: {
+                        VStack(spacing: 1) {
+                            Text("\(value) stops").font(.system(size: 15, weight: .semibold))
+                            Text(name).font(.system(size: 12)).foregroundStyle(on ? Theme.onAccent : Theme.secondary)
                         }
-                        .buttonStyle(.plain)
+                        .foregroundStyle(on ? Theme.onAccent : Theme.text)
+                        .frame(maxWidth: .infinity, minHeight: 66)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(on ? Theme.accent : Color.clear))
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(on ? Color.clear : Theme.outline, lineWidth: 1))
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(on ? .isSelected : [])
                 }
-                Stepper(value: $stops, in: 1...20) {
-                    LabeledContent("Strength", value: "\(stops) stops")
+            }
+            .sensoryFeedback(.selection, trigger: stops)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Strength").font(.system(size: 16, weight: .medium))
+                    Text("1 to 20").font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 }
-                if let meter, let seconds {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(shutterLabel(seconds: meter.seconds)).foregroundStyle(Theme.secondary)
-                        Image(systemName: "arrow.right").foregroundStyle(Theme.tertiary)
-                        Text(shutterLabel(seconds: seconds))
-                            .font(.title2.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(Theme.accent)
-                    }
-                    if camera.ndShutter(seconds: seconds).timedByApp {
-                        Text("Longer than the camera's own speeds: the app runs Bulb and stops it. Keep Shutterlink open.")
-                            .font(.footnote).foregroundStyle(Theme.secondary)
-                    }
-                }
+                Spacer()
+                Stepper("Strength", value: $stops, in: 1...20).labelsHidden()
+                Text("\(stops) stops").font(.num(22, weight: .semibold)).frame(minWidth: 70, alignment: .trailing)
+                    .contentTransition(.numericText())
+            }
+            .frame(minHeight: 58)
+            .overlay(alignment: .bottom) { Hairline() }
+            if let seconds, camera.ndShutter(seconds: seconds).timedByApp {
+                NoteRow("Longer than the camera's own speeds: the app runs Bulb and stops it. Keep Shutterlink open.")
             }
             if let meter {
                 Button {
                     Task { await camera.runPreset(id: "nd", title: "ND filter") { camera.ndSteps(meter: meter, stops: stops) } }
                 } label: {
                     HStack {
-                        if camera.presetRunning { ProgressView() }
+                        if camera.presetRunning { ProgressView().tint(Theme.onAccent) }
                         Text("Set up the camera")
                     }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.accent)
                 .disabled(camera.presetRunning || camera.mode != .rec)
+                .padding(.top, 14)
                 if camera.presetResultsFor == "nd", !camera.presetSteps.isEmpty {
-                    card {
-                        ForEach(camera.presetSteps) { StepResultRow(step: $0) }
+                    ForEach(camera.presetSteps) { step in
+                        StepResultRow(step: step).padding(.vertical, 10).overlay(alignment: .bottom) { Hairline() }
                     }
                 }
                 if let seconds {
-                    card {
-                        Text("3. Fit the filter and shoot").font(.headline)
-                        Text("Focus first: with a dark filter on, autofocus may not find anything. Then switch the lens to MF.")
-                            .font(.footnote)
-                            .foregroundStyle(Theme.secondary)
-                        Button {
-                            Task { await camera.shootND(seconds: seconds) }
-                        } label: {
-                            Label("Shoot \(shutterLabel(seconds: seconds))", systemImage: "camera.aperture")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.surface)
-                        .disabled(camera.isShooting || camera.mode != .rec || camera.presetRunning)
+                    SectionLabel("3. Fit the filter and shoot")
+                    NoteRow("Focus first: with a dark filter on, autofocus may not find anything. Then switch the lens to MF.")
+                    Button("Shoot \(shutterLabel(seconds: seconds))") {
+                        Task { await camera.shootND(seconds: seconds) }
                     }
+                    .buttonStyle(.outline)
+                    .disabled(camera.isShooting || camera.mode != .rec || camera.presetRunning)
+                    .padding(.top, 12)
                 }
             }
         }
