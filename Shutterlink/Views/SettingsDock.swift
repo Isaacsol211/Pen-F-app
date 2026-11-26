@@ -19,7 +19,7 @@ struct SettingSpec {
         SettingSpec(name: "drivemode", title: "Drive", icon: "square.stack.3d.up", style: .grid),
         SettingSpec(name: "quality", title: "Quality", icon: "photo", style: .grid),
         SettingSpec(name: "colorphase", title: "Hue", icon: "swatchpalette", style: .dial),
-        SettingSpec(name: "exposemovie", title: "Movie", icon: "video", style: .grid),
+        SettingSpec(name: "exposemovie", title: "Movie", icon: "video", style: .dial),
     ]
 
     static func spec(for name: String) -> SettingSpec? { all.first { $0.name == name } }
@@ -247,11 +247,10 @@ struct ShutterOptions: View {
 
     var body: some View {
         let current = PropertyFormat.isOpenEnded(shutter: property.value) ? property.value : "timed"
-        // The kinds (Timed, Live Comp, Bulb…) show at the slow end of the dial, where they follow on,
-        // or while one is chosen (210); not over everyday speeds (201).
-        let slow = (PropertyFormat.seconds(fromShutter: property.value) ?? 0) >= 1
+        // The dial runs on past its slowest speed into the camera's own Live Comp / Live Time / Bulb; once
+        // one is chosen the kinds show as chips, with Stop after (210). Not over timed speeds (201, 214).
         VStack(spacing: 8) {
-            if !liveModes.isEmpty && (current != "timed" || slow) {
+            if !liveModes.isEmpty && current != "timed" {
                 // Compact chips, like the Camera app's small mode toggles.
                 HStack(spacing: 6) {
                     ForEach(["timed"] + liveModes, id: \.self) { choice in
@@ -277,8 +276,8 @@ struct ShutterOptions: View {
                 .sensoryFeedback(.selection, trigger: current)
             }
             if current == "timed" {
-                ValueDial(property: timed, readoutLabel: "Shutter") { value in
-                    lastTimed = value
+                ValueDial(property: property, readoutLabel: "Shutter") { value in
+                    if !PropertyFormat.isOpenEnded(shutter: value) { lastTimed = value }
                     Task { await camera.setProperty("shutspeedvalue", to: value) }
                 }
                 .id("shutter-dial")

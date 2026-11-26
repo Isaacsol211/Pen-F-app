@@ -165,7 +165,10 @@ struct RemoteView: View {
     private func portraitLayout(height: CGFloat) -> some View {
         let names = ExposureStrip.items(camera)
         let selected = names.contains(activeSetting ?? "") || ["wbvalue"].contains(activeSetting ?? "")
-            ? activeSetting! : (names.contains("shutspeedvalue") ? "shutspeedvalue" : names.first { $0 != "takemode" } ?? names.first ?? "")
+            ? activeSetting!
+            // Video mode opens on its exposure dial (215); otherwise the shutter (201).
+            : (camera.isMovieMode && names.contains("exposemovie") ? "exposemovie"
+               : names.contains("shutspeedvalue") ? "shutspeedvalue" : names.first { $0 != "takemode" } ?? names.first ?? "")
         let dialBinding = Binding<String?>(get: { selected }, set: { activeSetting = $0 })
         return ZStack {
             LiveBackdrop()
