@@ -118,7 +118,7 @@ struct GalleryView: View {
     @ViewBuilder private func split(landscape: Bool, size: CGSize) -> some View {
         let grid = browser(workspace: true)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .safeAreaBar(edge: .bottom) { bottomBar }
+            .safeAreaBar(edge: .bottom) { filterBar(split: true) }
         if landscape {
             HStack(spacing: 0) {
                 grid.frame(width: min(560, max(330, (size.width * 0.38).rounded())))
@@ -227,10 +227,11 @@ struct GalleryView: View {
 
     /// Filter, and "download the RAWs of the photos I starred".
     @ViewBuilder private var bottomBar: some View {
-        if selecting { selectionBar } else { filterBar }
+        if selecting { selectionBar } else { filterBar(split: false) }
     }
 
-    private var filterBar: some View {
+    /// `split`: the workspace split, where a tap previews a photo, so there's no Select.
+    private func filterBar(split: Bool) -> some View {
         VStack(spacing: 8) {
             RawImportBar()
             if !camera.images.isEmpty {
@@ -248,11 +249,13 @@ struct GalleryView: View {
                     .overlay(Capsule().stroke(Theme.outline, lineWidth: 1))
                     .sensoryFeedback(.selection, trigger: starredOnly)
                     Spacer(minLength: 0)
-                    Button("Select") { withAnimation(.snappy) { selecting = true } }
-                        .font(.system(size: 15))
-                        .foregroundStyle(Theme.text)
-                        .frame(minHeight: Theme.target)
-                        .buttonStyle(.plain)
+                    if !split {
+                        Button("Select") { withAnimation(.snappy) { selecting = true } }
+                            .font(.system(size: 15))
+                            .foregroundStyle(Theme.text)
+                            .frame(minHeight: Theme.target)
+                            .buttonStyle(.plain)
+                    }
                     Button {
                         // On a Mac the RAWs go to a folder you pick (for Lightroom, Capture One…);
                         // on iPhone and iPad, to Photos.

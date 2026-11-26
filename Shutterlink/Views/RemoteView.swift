@@ -369,6 +369,8 @@ struct RemoteView: View {
                 }
             }
             .frame(maxHeight: .infinity)
+            // The deck is a solid surface, like the inspector in 502.
+            .background(Theme.background.ignoresSafeArea(edges: .bottom))
         }
     }
 

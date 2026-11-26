@@ -120,6 +120,8 @@ struct ExposureGrid: View {
         if name == "wbvalue", let raw = property?.value, raw != "0", let full = PropertyFormat.whiteBalance[raw] {
             return full
         }
+        // f/1.8, as on the phone and in 502.
+        if name == "focalvalue" { return ExposureStrip.text(name, camera: camera) }
         return camera.stripValue(name, property)
     }
 

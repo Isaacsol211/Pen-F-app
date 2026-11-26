@@ -100,12 +100,20 @@ struct ConnectView: View {
                 cover(compact: compactCover)
                 scanToConnect
                 emptyState
-            } else {
-                BrandLockup(markSize: grid ? 44 : 40)
-                    .padding(.top, grid ? 28 : 20)
+            } else if grid {
+                // 504: the lockup, the headline, then the cameras as cards side by side.
+                BrandLockup(markSize: 44)
+                    .padding(.top, 28)
+                SolidHeadline("Shoot from\nyour \(Platform.isMac ? "Mac" : (UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "phone")).", size: 76)
+                    .padding(.top, 16)
                 scanToConnect
-                cameraList(grid: grid)
-                if !grid { tip }
+                cameraList(grid: true)
+            } else {
+                BrandLockup(markSize: 40)
+                    .padding(.top, 20)
+                scanToConnect
+                cameraList(grid: false)
+                tip
             }
         }
     }
@@ -119,7 +127,7 @@ struct ConnectView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .leading, spacing: 20) {
                 guide
-                if !camera.savedCameras.isEmpty { tip }
+                if !camera.savedCameras.isEmpty { tip.padding(.horizontal, 4) }
             }
             .frame(width: guideWidth)
             .padding(.top, 28)
@@ -148,9 +156,11 @@ struct ConnectView: View {
             .scrollIndicators(.hidden)
             .scrollClipDisabled()
             Self.stepRows(for: brand)
+            Spacer(minLength: 0)
         }
         .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // 504: the panel runs the height of the screen beside the cameras.
+        .frame(maxWidth: .infinity, minHeight: 600, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Theme.surface))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
         .clipShape(.rect(cornerRadius: 24, style: .continuous))
@@ -293,9 +303,9 @@ struct ConnectView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.bottom, 2)
             if grid {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), spacing: 12)], spacing: 12) {
-                    ForEach(camera.savedCameras) { card($0, hero: true) }
-                    addButton(minHeight: 84)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: 12)], spacing: 12) {
+                    ForEach(camera.savedCameras) { tile($0) }
+                    addTile
                 }
 
             } else {
@@ -304,6 +314,72 @@ struct ConnectView: View {
             }
 
         }
+    }
+
+    /// A camera as a card in the workspace home (504): name in Barlow, brand and when under it, a chevron.
+    private func tile(_ saved: SavedCamera) -> some View {
+        let connecting = camera.phase == .connecting && connectingID == saved.id
+        let lastUsed = saved.lastUsed.formatted(.relative(presentation: .named))
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return Button {
+            connectingID = saved.id
+            Task { await camera.connect(to: saved) }
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(saved.name).font(.num(28)).foregroundStyle(Theme.text).lineLimit(1).minimumScaleFactor(0.6)
+                    CapsLabel(connecting ? (camera.status ?? "Connecting…") : "\(saved.brand.shortTitle) · \(lastUsed)",
+                              color: connecting ? Theme.accent : Theme.secondary)
+                }
+                Spacer(minLength: 6)
+                if connecting { ProgressView().tint(Theme.accent) } else if !editingCameras {
+                    Image(systemName: "chevron.right").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.tertiary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 72)
+            .background(shape.fill(Theme.surface.opacity(0.85)))
+            .overlay(shape.stroke(Theme.outline, lineWidth: 1))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .disabled(camera.phase != .disconnected || editingCameras)
+        .overlay(alignment: .trailing) {
+            if editingCameras {
+                Button { forgetting = saved } label: {
+                    Image(systemName: "minus.circle.fill").font(.system(size: 24))
+                        .symbolRenderingMode(.palette).foregroundStyle(Theme.background, Theme.red)
+                        .frame(width: Theme.target, height: Theme.target)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 6)
+                .accessibilityLabel("Forget \(saved.name)")
+            }
+        }
+        .contextMenu {
+            Button("Forget this camera", systemImage: "trash", role: .destructive) {
+                withAnimation(.snappy) { camera.forget(saved) }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(saved.name), \(saved.brand.title), last used \(lastUsed)")
+        .accessibilityHint("Connects to this camera")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// "+ Add a camera" as a dashed card (504).
+    private var addTile: some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        return Button { showAdd = true } label: {
+            Text("+ Add a camera")
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.secondary)
+                .frame(maxWidth: .infinity, minHeight: 72)
+                .overlay(shape.strokeBorder(Theme.tertiary, style: StrokeStyle(lineWidth: 1.2, dash: [4, 4])))
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .disabled(camera.phase != .disconnected)
     }
 
     private func addButton(minHeight: CGFloat) -> some View {
