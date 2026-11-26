@@ -953,6 +953,7 @@ struct SegRow<Value: Hashable>: View {
     let label: String
     let options: [Value]
     @Binding var selection: Value
+    var accent: Color = Theme.accent
     let title: (Value) -> String
 
     var body: some View {
@@ -965,10 +966,10 @@ struct SegRow<Value: Hashable>: View {
                     Button { withAnimation(.snappy) { selection = option } } label: {
                         Text(title(option))
                             .font(.num(18, weight: on ? .semibold : .medium))
-                            .foregroundStyle(on ? Theme.accent : Theme.secondary)
+                            .foregroundStyle(on ? accent : Theme.secondary)
                             .padding(.horizontal, 9)
                             .frame(minHeight: Theme.target)
-                            .overlay(alignment: .bottom) { if on { Rectangle().fill(Theme.accent).frame(height: 2) } }
+                            .overlay(alignment: .bottom) { if on { Rectangle().fill(accent).frame(height: 2) } }
                             .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
