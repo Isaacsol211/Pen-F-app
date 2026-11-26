@@ -31,6 +31,7 @@ struct ValueDial: View {
         CurvedDial(options: property.options,
                    label: { Self.shortLabel(property.name, $0) },
                    isMajor: { Self.isMajor(property.name, $0) },
+                   isAnchor: { property.name == "expcomp" && Double($0) == 0 },
                    selection: $selection,
                    onCommit: { if $0 != property.value { onCommit($0) } })
     }
@@ -223,7 +224,6 @@ struct AllSettingsView: View {
             }
             .listStyle(.plain)
             .listRowBackgroundClear(ambient: true)
-            .tint(Theme.text)
             .navigationTitle("Camera settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -235,6 +235,7 @@ struct AllSettingsView: View {
                 }.sharedBackgroundVisibility(.hidden)
             }
         }
+        .tint(Theme.text)
     }
 
     private func row(_ property: CameraProperty) -> some View {

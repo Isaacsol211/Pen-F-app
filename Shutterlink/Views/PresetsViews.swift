@@ -25,15 +25,20 @@ struct PresetsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("One tap.\nCamera set.")
-                .font(.num(50, relativeTo: .largeTitle))
+                .font(.num(54, relativeTo: .largeTitle))
+                // Set solid, as designed (line height about 1).
+                .lineSpacing(-12)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
             if let undo = camera.presetUndo {
                 undoCard(undo)
             }
-            card {
-                CapsLabel("One tap")
+            card(spacing: 0) {
+                CapsLabel("One tap").padding(.bottom, 4)
                 ForEach(PresetRecipe.allCases) { recipe in
                     recipeRow(recipe)
+                        .padding(.vertical, 8)
+                        .overlay(alignment: .bottom) { Rectangle().fill(Theme.stroke).frame(height: 1) }
                 }
             }
             card {
@@ -85,24 +90,34 @@ struct PresetsPanel: View {
         }
     }
 
+    /// A card outlined in green (design 313): the one thing to undo, with a white Undo button.
     private func undoCard(_ undo: SettingsSnapshot) -> some View {
-        card {
-            HStack(spacing: 12) {
-                Image(systemName: "arrow.uturn.backward.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(Theme.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Undo \(undo.title)").font(.headline)
-                    Text("Puts back the settings from before it.")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.secondary)
-                }
-                Spacer(minLength: 0)
-                Button("Undo") { Task { await camera.undoPreset() } }
-                    .buttonStyle(.surface)
-                    .disabled(camera.presetRunning)
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Undo \(undo.title)").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                Text("Puts back the settings from before it.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.secondary)
             }
+            Spacer(minLength: 0)
+            Button { Task { await camera.undoPreset() } } label: {
+                Text("Undo")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Theme.background)
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: Theme.target)
+                    .background(Capsule().fill(Theme.text))
+            }
+            .buttonStyle(.plain)
+            .disabled(camera.presetRunning)
         }
+        .padding(.leading, 14)
+        .padding(.trailing, 6)
+        .padding(.vertical, 6)
+        .background(shape.fill(Theme.surface.opacity(0.85)))
+        .overlay(shape.stroke(Theme.green.opacity(0.8), lineWidth: 1.5))
+        .transition(.blurReplace)
     }
 
     private func header(icon: String, title: String, subtitle: String, open: Bool, chevron: String,

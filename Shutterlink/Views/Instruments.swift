@@ -97,6 +97,108 @@ struct CompositionGrid: View {
     }
 }
 
+/// A row of short bars for a running sequence (design 303): done in white, the next one in the accent.
+/// At most 24 bars, each standing for a share of the frames.
+struct FrameBars: View {
+    let done: Int
+    let total: Int
+
+    var body: some View {
+        let count = min(24, max(1, total))
+        let filled = Int((Double(done) / Double(max(1, total)) * Double(count)).rounded(.down))
+        HStack(spacing: 4) {
+            ForEach(0..<count, id: \.self) { i in
+                Capsule()
+                    .fill(i < filled ? Theme.text : (i == filled ? Theme.accent : Theme.stroke))
+                    .frame(height: 6)
+            }
+        }
+        .animation(.smooth, value: filled)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Where the sun is today (design 301): its path as a dotted arc over a horizon, the sun where it is
+/// now, and what light that means. Drawn from the iPhone's clock and last known location (the same
+/// sun position the scene suggestions use); hidden without a location.
+struct SunArc: View {
+    let latitude: Double
+    let longitude: Double
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let now = context.date
+            let start = Calendar.current.startOfDay(for: now)
+            let samples = stride(from: 0.0, through: 24 * 3600, by: 900).map {
+                Astronomy.sky(at: start.addingTimeInterval($0), latitude: latitude, longitude: longitude).sunAltitude
+            }
+            let altitude = Astronomy.sky(at: now, latitude: latitude, longitude: longitude).sunAltitude
+            let x = now.timeIntervalSince(start) / (24 * 3600)
+            let peak = max(10, samples.map(abs).max() ?? 60)
+            ZStack(alignment: .topLeading) {
+                Canvas { ctx, size in
+                    let horizon = size.height * 0.72
+                    let scale = (horizon - 18) / peak
+                    func point(_ fx: Double, _ alt: Double) -> CGPoint {
+                        CGPoint(x: fx * size.width, y: horizon - alt * scale)
+                    }
+                    // The sky glows warm near the horizon; the ground below it is near-black.
+                    ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: horizon)),
+                             with: .linearGradient(Gradient(colors: [Theme.background, Self.glow(altitude).opacity(0.55)]),
+                                                   startPoint: .zero, endPoint: CGPoint(x: 0, y: horizon)))
+                    ctx.fill(Path(CGRect(x: 0, y: horizon, width: size.width, height: size.height - horizon)),
+                             with: .color(Theme.background))
+                    var arc = Path()
+                    for (i, alt) in samples.enumerated() {
+                        let p = point(Double(i) / Double(samples.count - 1), alt)
+                        if i == 0 { arc.move(to: p) } else { arc.addLine(to: p) }
+                    }
+                    ctx.stroke(arc, with: .color(Theme.text.opacity(0.45)),
+                               style: StrokeStyle(lineWidth: 1.4, lineCap: .round, dash: [0.1, 6]))
+                    var line = Path(); line.move(to: CGPoint(x: 0, y: horizon)); line.addLine(to: CGPoint(x: size.width, y: horizon))
+                    ctx.stroke(line, with: .color(Theme.outline), lineWidth: 1)
+                    let sun = point(x, altitude)
+                    let halo = CGRect(x: sun.x - 18, y: sun.y - 18, width: 36, height: 36)
+                    ctx.fill(Path(ellipseIn: halo), with: .color(Theme.accent.opacity(altitude > -6 ? 0.25 : 0.1)))
+                    ctx.fill(Path(ellipseIn: halo.insetBy(dx: 9, dy: 9)),
+                             with: .color(altitude > -6 ? Theme.accent : Theme.tertiary))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(altitude >= 0 ? "Sun \(Int(altitude.rounded()))° up" : "Sun \(Int((-altitude).rounded()))° down")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.secondary)
+                    Text(Self.light(altitude))
+                        .font(.num(28))
+                        .foregroundStyle(Theme.accent)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 14)
+            }
+        }
+        .frame(height: 150)
+        .accessibilityElement(children: .combine)
+    }
+
+    static func light(_ altitude: Double) -> String {
+        switch altitude {
+        case 6...: "Daylight"
+        case -4..<6: "Golden hour now"
+        case -6 ..< -4: "Blue hour now"
+        case -18 ..< -6: "Twilight"
+        default: "Night"
+        }
+    }
+
+    private static func glow(_ altitude: Double) -> Color {
+        switch altitude {
+        case 6...: Color(hex: 0x6E8FC4)
+        case -4..<6: Color(hex: 0xC9853F)
+        case -12 ..< -4: Color(hex: 0x3B4A8C)
+        default: Color(hex: 0x141A36)
+        }
+    }
+}
+
 /// Interval timer (time-lapse / star stacking) setup and progress: in a sheet on a phone, in the
 /// inspector on a large canvas.
 struct IntervalPanel: View {
@@ -122,6 +224,10 @@ struct IntervalPanel: View {
     }
 
     @ViewBuilder private var setupCards: some View {
+        if let location = camera.locationLog.lastKnown {
+            SunArc(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)
+                .padding(.horizontal, -20)
+        }
         HStack(spacing: 8) {
             preset("Star stack", count: 30, seconds: 22)
             preset("Time-lapse", count: 240, seconds: 5)
@@ -207,6 +313,9 @@ struct IntervalPanel: View {
                 } else {
                     BigNumber(value: "…", caption: "Exposing…", size: 72)
                 }
+            }
+            if camera.interval.total > 0 {
+                FrameBars(done: camera.interval.done, total: camera.interval.total)
             }
             if let note = camera.interval.rampNote {
                 Text(note).font(.footnote).foregroundStyle(Theme.accent)

@@ -57,10 +57,10 @@ struct GalleryView: View {
                             .disabled(camera.galleryLoading)
                     }.sharedBackgroundVisibility(.hidden)
                 }
-                .tint(Theme.text)
                 .animation(.smooth, value: camera.rawImport)
                 .task { await camera.openGallery() }
             }
+            .tint(Theme.text)
         }
     }
 
@@ -153,13 +153,17 @@ struct GalleryView: View {
             RawImportBar()
             if !camera.images.isEmpty {
                 HStack(spacing: 8) {
-                    ForEach([false, true], id: \.self) { starred in
-                        Button(starred ? (starredCount > 0 ? "Starred · \(starredCount)" : "Starred") : "All") {
-                            withAnimation(.snappy) { starredOnly = starred }
+                    // One outlined pill, the chosen half filled white (design 401).
+                    HStack(spacing: 0) {
+                        ForEach([false, true], id: \.self) { starred in
+                            Button(starred ? (starredCount > 0 ? "Starred · \(starredCount)" : "Starred") : "All") {
+                                withAnimation(.snappy) { starredOnly = starred }
+                            }
+                            .buttonStyle(ChipStyle(selected: starredOnly == starred, outlined: false))
+                            .accessibilityAddTraits(starredOnly == starred ? .isSelected : [])
                         }
-                        .buttonStyle(ChipStyle(selected: starredOnly == starred))
-                        .accessibilityAddTraits(starredOnly == starred ? .isSelected : [])
                     }
+                    .overlay(Capsule().stroke(Theme.outline, lineWidth: 1))
                     .sensoryFeedback(.selection, trigger: starredOnly)
                     Spacer(minLength: 0)
                     Button {

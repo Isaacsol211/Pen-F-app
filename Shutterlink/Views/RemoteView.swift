@@ -1040,7 +1040,11 @@ struct ErrorBanner: View {
 
 struct ShutterButton: View {
     @Environment(CameraModel.self) private var camera
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pressed = false
+    /// Between letting go and the camera confirming the shot (the Wi-Fi round trip): the blades show it.
+    @State private var awaiting = false
+    @State private var haptics = ShutterHaptics()
 
     /// Interval or bracket progress, drawn as a ring around the shutter.
     private var sequenceProgress: CGFloat? {
@@ -1108,7 +1112,14 @@ struct ShutterButton: View {
                 }
             }
             .frame(width: 74, height: 74)
-            .overlay(Circle().stroke(Theme.text, lineWidth: 3))
+            // The blades close over the button while the camera is asked, and open when it answers.
+            .overlay {
+                ShutterBlades(closing: awaiting, spinning: awaiting && !reduceMotion)
+                    .frame(width: 58, height: 58)
+                    .allowsHitTesting(false)
+            }
+            // The ring tightens under the finger.
+            .overlay(Circle().stroke(Theme.text, lineWidth: pressed ? 4.5 : 3).scaleEffect(pressed ? 0.93 : 1))
             if let started = camera.isRecordingMovie ? camera.movieStartedAt
                 : (camera.isOpenEndedShutter && camera.isShooting ? camera.exposureStartedAt : nil) {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -1148,25 +1159,37 @@ struct ShutterButton: View {
                 .onChanged { _ in
                     guard enabled, !pressed else { return }
                     pressed = true
+                    haptics.prepare()
                     if !camera.isOpenEndedShutter && !camera.isMovieMode {
+                        // Half press: focus. The hand gets its answer now, not when the camera replies.
+                        haptics.focus()
                         Task { await camera.shutterPressed() }
                     }
                 }
                 .onEnded { _ in
                     guard pressed else { return }
                     pressed = false
+                    haptics.fire()
                     if camera.isMovieMode {
                         Task { await camera.toggleMovie() }
                     } else if camera.isOpenEndedShutter {
                         Task { await camera.toggleOpenExposure() }
                     } else {
+                        waitForCamera(since: camera.shotCounter)
                         Task { await camera.shutterReleased() }
                     }
                 }
         )
+        // The camera's answer: the shot arrived, the exposure started or ended, or it refused.
+        .onChange(of: camera.shotCounter) { awaiting = false }
+        .onChange(of: camera.exposureStartedAt) { awaiting = false }
+        .onChange(of: camera.lastError) { _, error in
+            // The error pattern itself comes from the remote (it covers every refusal, not only the shutter).
+            if error != nil { awaiting = false }
+        }
         .opacity(enabled ? 1 : 0.4)
         .animation(.smooth, value: camera.exposureStartedAt)
-        .sensoryFeedback(.impact(weight: .medium), trigger: camera.shotCounter)
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.28, bounce: 0), value: awaiting)
         .sensoryFeedback(.start, trigger: camera.isRecordingMovie)
         .accessibilityElement()
         .accessibilityLabel(movie ? (camera.isRecordingMovie ? "Stop recording" : "Record movie") : "Shutter")
@@ -1174,6 +1197,84 @@ struct ShutterButton: View {
         .accessibilityAction {
             Task { await camera.pressShutterOnce() }
         }
+    }
+}
+
+extension ShutterButton {
+    /// Shows the blades until the camera confirms, or for at most 5 s (a camera that never says).
+    fileprivate func waitForCamera(since counter: Int) {
+        awaiting = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            if camera.shotCounter == counter { awaiting = false }
+        }
+    }
+}
+
+/// Six blades of an iris over the shutter: open (invisible) at rest, closing to a small hexagon while
+/// the camera is asked, turning slowly; they open again when it answers. With Reduce Motion they only
+/// fade.
+struct ShutterBlades: View {
+    let closing: Bool
+    let spinning: Bool
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !spinning)) { context in
+            let turn = spinning ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 6) * 60 : 0
+            Canvas { ctx, size in
+                let r = min(size.width, size.height) / 2
+                let c = CGPoint(x: size.width / 2, y: size.height / 2)
+                let aperture = r * 0.42
+                for i in 0..<6 {
+                    let a = (Double(i) * 60 + turn) * .pi / 180
+                    var blade = Path()
+                    // Each blade: from the rim to a point on the small opening, swept by 60°.
+                    blade.move(to: CGPoint(x: c.x + r * cos(a), y: c.y + r * sin(a)))
+                    blade.addLine(to: CGPoint(x: c.x + r * cos(a + .pi / 3), y: c.y + r * sin(a + .pi / 3)))
+                    blade.addLine(to: CGPoint(x: c.x + aperture * cos(a + .pi / 2.2), y: c.y + aperture * sin(a + .pi / 2.2)))
+                    blade.addLine(to: CGPoint(x: c.x + aperture * cos(a + .pi / 6), y: c.y + aperture * sin(a + .pi / 6)))
+                    blade.closeSubpath()
+                    ctx.fill(blade, with: .color(Theme.onAccent.opacity(0.85)))
+                    ctx.stroke(blade, with: .color(Theme.text.opacity(0.35)), lineWidth: 0.8)
+                }
+            }
+            .clipShape(Circle())
+        }
+        .scaleEffect(closing ? 1 : 1.35)
+        .opacity(closing ? 1 : 0)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The shutter's haptics (plan item 2): light on the half press (focus), firm on the full press (fire),
+/// both on touch; the error pattern if the camera refuses. Untested on a phone so far.
+@MainActor
+final class ShutterHaptics {
+    #if os(iOS)
+    private let light = UIImpactFeedbackGenerator(style: .light)
+    private let firm = UIImpactFeedbackGenerator(style: .heavy)
+    private let notice = UINotificationFeedbackGenerator()
+    #endif
+
+    func prepare() {
+        #if os(iOS)
+        light.prepare(); firm.prepare(); notice.prepare()
+        #endif
+    }
+    func focus() {
+        #if os(iOS)
+        light.impactOccurred()
+        #endif
+    }
+    func fire() {
+        #if os(iOS)
+        firm.impactOccurred()
+        #endif
+    }
+    func refused() {
+        #if os(iOS)
+        notice.notificationOccurred(.error)
+        #endif
     }
 }
 

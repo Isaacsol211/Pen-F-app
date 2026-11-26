@@ -288,6 +288,8 @@ extension ButtonStyle where Self == OutlineButtonStyle {
 /// A selectable chip: white-on-black when chosen, outlined when not.
 struct ChipStyle: ButtonStyle {
     let selected: Bool
+    /// Off inside a joined pill, which draws one outline round all its chips.
+    var outlined = true
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -296,7 +298,7 @@ struct ChipStyle: ButtonStyle {
             .padding(.horizontal, 16)
             .frame(minHeight: Theme.target)
             .background(Capsule().fill(selected ? Theme.text : Color.clear))
-            .overlay(Capsule().stroke(selected ? Color.clear : Theme.outline, lineWidth: 1))
+            .overlay(Capsule().stroke(selected || !outlined ? Color.clear : Theme.outline, lineWidth: 1))
             .opacity(configuration.isPressed ? 0.7 : 1)
             .contentShape(.capsule)
     }
@@ -305,104 +307,248 @@ struct ChipStyle: ButtonStyle {
 // MARK: - The curved dial
 
 /// The one dial for every setting: a ruler bent along a big arc across the bottom of the screen, the
-/// centre value under an accent pointer. Drag or tap to move; the value is committed when you let go.
+/// centre value under an accent pointer.
+///
+/// Feel (docs/design/04-motion-sound-haptics.md, item 1): the ruler follows the finger 1:1, coasts on
+/// after a flick with the momentum projected from the release speed, and settles on a value with a
+/// spring that doesn't bounce (a slight bounce only after a flick). A selection tick for every value it
+/// passes, a firmer rigid tap on full stops and on 0 EV. With Reduce Motion it goes straight to the
+/// nearest value. The value is committed once the dial has settled. Tap a label to go to it.
 struct CurvedDial: View {
     /// The values, in order; `label` turns one into its text.
     let options: [String]
     let label: (String) -> String
-    /// Whether a value is a full stop (gets a longer tick).
+    /// Whether a value is a full stop (longer tick, firmer haptic).
     var isMajor: (String) -> Bool = { _ in false }
+    /// A value that gets the firm haptic as well (0 EV).
+    var isAnchor: (String) -> Bool = { _ in false }
     @Binding var selection: String
     let onCommit: (String) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Where the ruler is, in values (0 = first); nil when it rests on `selection`.
     @State private var position: Double?
     @State private var dragStart: Double?
+    @State private var coast: Task<Void, Never>?
+    @State private var haptics = DialHaptics()
+    @State private var canvasWidth: CGFloat?
 
-    private let step = 8.0           // degrees between values
-    private let minorPerStep = 3     // extra ticks between values
     private let radius: CGFloat = 420
-    private let pointsPerValue: CGFloat = 38
+    private let tickRadiusInset: CGFloat = 0
+    /// Degrees between values: wider for named values (white balance, mode…) so their labels fit.
+    private var step: Double {
+        let numeric = options.allSatisfy { label($0).contains { $0.isNumber } }
+        if numeric { return 8 }
+        let longest = options.map { label($0).count }.max() ?? 4
+        // About 8.5 pt a character in Barlow Condensed 19 pt, 6.7 pt a degree at the label radius.
+        return min(18, max(8, (Double(longest) * 8.5 + 18) / 6.7))
+    }
+    /// Finger travel for one value: the arc length between two ticks, so the ruler moves with the finger.
+    private var pointsPerValue: CGFloat { radius * CGFloat(step * .pi / 180) }
 
     private var index: Int { options.firstIndex(of: selection) ?? 0 }
     private var current: Double { position ?? Double(index) }
+    private var maxIndex: Double { Double(max(0, options.count - 1)) }
 
     var body: some View {
-        Canvas { ctx, size in
-            let cx = size.width / 2
-            let cy = 26 + radius
-            let centre = CGPoint(x: cx, y: cy)
-            // Ticks
-            let total = options.count
-            let first = max(0, Int(current) - 14), last = min(total - 1, Int(current) + 14)
-            if total > 0, first <= last {
-                for i in first...last {
-                    for m in 0..<minorPerStep + 1 {
-                        let value = Double(i) + Double(m) / Double(minorPerStep + 1)
-                        if value > Double(total - 1) { continue }
-                        let angle = (value - current) * step
-                        if abs(angle) > 62 { continue }
-                        let rad = (angle - 90) * .pi / 180
-                        let major = m == 0 && isMajor(options[i])
-                        let len: CGFloat = m == 0 ? (major ? 16 : 11) : 6
-                        let p0 = CGPoint(x: centre.x + (radius - len) * cos(rad), y: centre.y + (radius - len) * sin(rad))
-                        let p1 = CGPoint(x: centre.x + radius * cos(rad), y: centre.y + radius * sin(rad))
-                        var path = Path(); path.move(to: p0); path.addLine(to: p1)
-                        let fade = max(0.15, 1 - abs(angle) / 70)
-                        ctx.stroke(path, with: .color(Theme.text.opacity((m == 0 ? 0.75 : 0.4) * fade)), lineWidth: m == 0 ? 1.6 : 1)
-                    }
-                    // Label
-                    let angle = (Double(i) - current) * step
-                    if abs(angle) <= 28 {
-                        let rad = (angle - 90) * .pi / 180
-                        let r = radius - 38
-                        let pt = CGPoint(x: centre.x + r * cos(rad), y: centre.y + r * sin(rad))
-                        let near = abs(Double(i) - current) < 0.5
-                        let text = Text(label(options[i]))
-                            .font(.num(near ? 22 : 19, weight: near ? .semibold : .medium))
-                            .foregroundColor(near ? Theme.text : Color(hex: 0xC9C5BA).opacity(max(0.25, 1 - abs(angle) / 30)))
-                        var inner = ctx
-                        inner.translateBy(x: pt.x, y: pt.y)
-                        inner.rotate(by: .degrees(angle))
-                        inner.draw(ctx.resolve(text), at: .zero, anchor: .center)
-                    }
+        Canvas { ctx, size in draw(&ctx, size: size) }
+            .frame(height: 140)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { canvasWidth = $0 }
+            .contentShape(.rect)
+            .gesture(drag)
+            .simultaneousGesture(SpatialTapGesture().onEnded { tap($0.location) })
+            .onDisappear { coast?.cancel() }
+            .accessibilityElement()
+            .accessibilityLabel("Dial")
+            .accessibilityValue(label(selection))
+            .accessibilityAdjustableAction { direction in
+                let next = direction == .increment ? index + 1 : index - 1
+                guard options.indices.contains(next) else { return }
+                selection = options[next]
+                haptics.passed(options[next], major: isMajor(options[next]) || isAnchor(options[next]))
+                onCommit(selection)
+            }
+    }
+
+    // MARK: Drawing
+
+    private func draw(_ ctx: inout GraphicsContext, size: CGSize) {
+        let cx = size.width / 2
+        let centre = CGPoint(x: cx, y: 26 + radius)
+        let total = options.count
+        let minor = max(0, Int((step / 2).rounded()) - 1)   // ticks about 2° apart, as designed
+        func at(_ angle: Double, _ r: CGFloat) -> CGPoint {
+            let rad = (angle - 90) * .pi / 180
+            return CGPoint(x: centre.x + r * cos(rad), y: centre.y + r * sin(rad))
+        }
+        guard total > 0 else { return }
+        let span = Int(62 / step) + 2
+        let first = max(0, Int(current) - span), last = min(total - 1, Int(current) + span)
+        if first <= last {
+            for i in first...last {
+                for m in 0...minor {
+                    let value = Double(i) + Double(m) / Double(minor + 1)
+                    if value > Double(total - 1) { continue }
+                    let angle = (value - current) * step
+                    if abs(angle) > 62 { continue }
+                    let major = m == 0 && isMajor(options[i])
+                    let len: CGFloat = m == 0 ? (major ? 16 : 13) : 9
+                    var path = Path(); path.move(to: at(angle, radius - len)); path.addLine(to: at(angle, radius))
+                    let fade = max(0.15, 1 - abs(angle) / 70)
+                    ctx.stroke(path, with: .color(Theme.text.opacity((m == 0 ? 0.8 : 0.5) * fade)),
+                               lineWidth: m == 0 ? 1.8 : 1.4)
                 }
             }
-            // Pointer
-            var tri = Path()
-            tri.move(to: CGPoint(x: cx, y: 24)); tri.addLine(to: CGPoint(x: cx - 8, y: 2)); tri.addLine(to: CGPoint(x: cx + 8, y: 2)); tri.closeSubpath()
-            ctx.fill(tri, with: .color(Theme.accent))
         }
-        .frame(height: 140)
-        .contentShape(.rect)
-        .gesture(
-            DragGesture(minimumDistance: 2)
-                .onChanged { drag in
-                    if dragStart == nil { dragStart = Double(index) }
-                    let moved = -Double(drag.translation.width / pointsPerValue)
-                    position = min(Double(options.count - 1), max(0, (dragStart ?? 0) + moved))
-                    if let p = position {
-                        let i = Int(p.rounded())
-                        if options.indices.contains(i), options[i] != selection { selection = options[i] }
-                    }
+        // Labels, nearest the pointer first; one that would touch a label already drawn is left out,
+        // so long names never run into each other. The value under the pointer is always drawn.
+        var taken: [ClosedRange<Double>] = []
+        let order = (first...max(first, last)).sorted { abs(Double($0) - current) < abs(Double($1) - current) }
+        let labelRadius = radius - 40
+        for i in order where i < total {
+            let angle = (Double(i) - current) * step
+            if abs(angle) > 30 { continue }
+            let near = abs(Double(i) - current) < 0.5
+            let text = ctx.resolve(Text(label(options[i]))
+                .font(.num(near ? 22 : 19, weight: near ? .semibold : .medium))
+                .foregroundColor(near ? Theme.text : Color(hex: 0xC9C5BA).opacity(max(0.25, 1 - abs(angle) / 32))))
+            let width = text.measure(in: CGSize(width: 400, height: 60)).width
+            let half = Double(width / 2 + 7) / Double(labelRadius * .pi / 180)
+            let range = (angle - half)...(angle + half)
+            if !near, taken.contains(where: { $0.overlaps(range) }) { continue }
+            taken.append(range)
+            var inner = ctx
+            let pt = at(angle, labelRadius)
+            inner.translateBy(x: pt.x, y: pt.y)
+            inner.rotate(by: .degrees(angle))
+            inner.draw(text, at: .zero, anchor: .center)
+        }
+        var tri = Path()
+        tri.move(to: CGPoint(x: cx, y: 24)); tri.addLine(to: CGPoint(x: cx - 8, y: 2)); tri.addLine(to: CGPoint(x: cx + 8, y: 2)); tri.closeSubpath()
+        ctx.fill(tri, with: .color(Theme.accent))
+    }
+
+    // MARK: Gestures
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 2)
+            .onChanged { drag in
+                if dragStart == nil {
+                    coast?.cancel()
+                    dragStart = current
+                    haptics.prepare()
                 }
-                .onEnded { _ in
-                    dragStart = nil
-                    withAnimation(.snappy(duration: 0.2)) { position = nil }
-                    onCommit(selection)
-                }
-        )
-        .sensoryFeedback(.selection, trigger: selection)
-        .animation(.snappy(duration: 0.18), value: selection)
-        .accessibilityElement()
-        .accessibilityLabel("Dial")
-        .accessibilityValue(label(selection))
-        .accessibilityAdjustableAction { direction in
-            let next = direction == .increment ? index + 1 : index - 1
-            guard options.indices.contains(next) else { return }
-            selection = options[next]
-            onCommit(selection)
+                var p = (dragStart ?? 0) - Double(drag.translation.width / pointsPerValue)
+                // Past either end the ruler gives a little, with resistance.
+                if p < 0 { p = -rubber(-p) } else if p > maxIndex { p = maxIndex + rubber(p - maxIndex) }
+                move(to: p)
+            }
+            .onEnded { drag in
+                dragStart = nil
+                let velocity = -Double(drag.velocity.width / pointsPerValue)   // values a second
+                settle(from: current, velocity: velocity)
+            }
+    }
+
+    /// A tap on a label turns the dial to it: the tap's angle from the arc's centre says which value.
+    private func tap(_ location: CGPoint) {
+        guard dragStart == nil, location.y > 30, let width = canvasWidth else { return }
+        let dx = Double(location.x - width / 2), dy = Double(26 + radius - location.y)
+        let angle = atan2(dx, dy) * 180 / .pi
+        let target = min(maxIndex, max(0, (current + angle / step).rounded()))
+        guard target != current.rounded() else { return }
+        haptics.prepare()
+        settle(from: current, velocity: 0, to: target)
+    }
+
+    private func rubber(_ over: Double) -> Double { 0.6 * (1 - 1 / (over * 0.8 + 1)) }
+
+    /// Moves the ruler, with a haptic for each value it passes and the selection following.
+    private func move(to p: Double) {
+        let before = Int(current.rounded())
+        position = p
+        let now = Int(min(maxIndex, max(0, p)).rounded())
+        guard now != before, options.indices.contains(now) else { return }
+        // One tick per value passed, even when a fast drag skips several in a frame.
+        let range = now > before ? Array((before + 1)...now) : Array((now...(before - 1)).reversed())
+        for i in range.suffix(3) where options.indices.contains(i) {
+            haptics.passed(options[i], major: isMajor(options[i]) || isAnchor(options[i]))
+        }
+        selection = options[now]
+    }
+
+    /// After a release: coast on the projected momentum, then spring onto a value and commit it.
+    private func settle(from start: Double, velocity: Double, to fixed: Double? = nil) {
+        coast?.cancel()
+        let flick = abs(velocity) > 6
+        // Where a scroll view would stop (deceleration rate 0.998 per ms), then the nearest value.
+        let projected = reduceMotion ? start : start + velocity * 0.35
+        let target = fixed ?? Double(Int(min(maxIndex, max(0, projected)).rounded()))
+        if reduceMotion {
+            move(to: target)
+            position = nil
+            commit()
+            return
+        }
+        coast = Task { @MainActor in
+            // A spring from where the finger left it, at the finger's speed: critically damped,
+            // or a little under after a flick so it overshoots once and comes back.
+            let response = flick ? 0.55 : 0.32
+            let damping = flick ? 0.78 : 1.0
+            let omega = 2 * Double.pi / response
+            var x = start, v = velocity
+            let dt = 1.0 / 120
+            var clock = ContinuousClock.now
+            for _ in 0..<480 {
+                let a = -omega * omega * (x - target) - 2 * damping * omega * v
+                v += a * dt
+                x += v * dt
+                move(to: x)
+                if abs(x - target) < 0.002 && abs(v) < 0.02 { break }
+                clock = clock.advanced(by: .milliseconds(8))
+                try? await Task.sleep(until: clock, clock: .continuous)
+                if Task.isCancelled { return }
+            }
+            move(to: target)
+            position = nil
+            commit()
         }
     }
+
+    private func commit() {
+        haptics.settled()
+        onCommit(selection)
+    }
+}
+
+/// The dial's haptics: a selection tick for each value, a rigid tap for full stops and 0 EV. Untested
+/// on a phone so far (the simulator has no Taptic Engine).
+@MainActor
+final class DialHaptics {
+    #if os(iOS)
+    private let tick = UISelectionFeedbackGenerator()
+    private let firm = UIImpactFeedbackGenerator(style: .rigid)
+    private var lastFired = Date.distantPast
+    #endif
+
+    func prepare() {
+        #if os(iOS)
+        tick.prepare(); firm.prepare()
+        #endif
+    }
+
+    func passed(_ value: String, major: Bool) {
+        #if os(iOS)
+        // The Taptic Engine blurs ticks closer than ~12 ms together; skip those rather than queue them.
+        let now = Date()
+        guard now.timeIntervalSince(lastFired) > 0.012 else { return }
+        lastFired = now
+        if major { firm.impactOccurred(intensity: 0.8) } else { tick.selectionChanged() }
+        tick.prepare()
+        #endif
+    }
+
+    func settled() {}
 }
 
 /// The big readout above the dial: the selected value's label in the accent and the value at 68 pt.
