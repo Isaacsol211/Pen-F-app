@@ -607,7 +607,11 @@ struct RemoteView: View {
     private func panelTool(_ panel: SidePanel, id: String, title: String, feature: String,
                            running: Bool = false) -> ToolItem {
         ToolItem(id: id, icon: panel.icon, title: title, on: running || sidePanel == panel, opens: true,
-                 locked: !ShutterlinkPro.shared.isUnlocked, action: pro(feature) { toolsOpen = false; afterSheet { toggle(panel) } })
+                 locked: !ShutterlinkPro.shared.isUnlocked, action: pro(feature) {
+            // Bracket opens on Exposure; Focus stack has its own tile.
+            if panel == .bracket { UserDefaults.standard.set(false, forKey: "bracket.focus") }
+            toolsOpen = false; afterSheet { toggle(panel) }
+        })
     }
 
     private var tools: [ToolItem] {
@@ -636,7 +640,15 @@ struct RemoteView: View {
                 camera.focusPeaking.toggle()
             },
             panelTool(.bracket, id: "bracket", title: "Bracket", feature: "Bracketing and focus stacking",
-                      running: camera.bracket.running),
+                      running: camera.bracket.running && !camera.bracket.isFocusStack),
+            // Its own tile so it's easy to find; the same screen as Bracket, on its Focus tab (305–307).
+            ToolItem(id: "focusstack", icon: "square.stack.3d.forward.dottedline", title: "Focus stack",
+                     on: camera.bracket.running && camera.bracket.isFocusStack, opens: true,
+                     locked: !ShutterlinkPro.shared.isUnlocked, action: pro("Bracketing and focus stacking") {
+                UserDefaults.standard.set(true, forKey: "bracket.focus")
+                toolsOpen = false
+                afterSheet { toggle(.bracket) }
+            }),
             panelTool(.nd, id: "nd", title: "ND filter", feature: "The ND filter calculator"),
             panelTool(.motion, id: "motion", title: "Motion", feature: "The motion trigger", running: camera.motion.armed),
             ToolItem(id: "pocket", icon: "moon.zzz", title: "Pocket", on: false, opens: true) {
@@ -903,7 +915,7 @@ struct ToolButton: View {
         }
     }
 
-    private static let drawn: Set<String> = ["presets", "astro", "interval", "bracket", "nd", "motion", "highres", "pocket",
+    private static let drawn: Set<String> = ["presets", "astro", "interval", "bracket", "focusstack", "nd", "motion", "highres", "pocket",
                                              "video", "loupe", "night", "histogram", "grid", "peaking", "geotag", "tap"]
 }
 

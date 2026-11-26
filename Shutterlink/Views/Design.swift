@@ -944,3 +944,113 @@ struct SolidHeadline: View {
         .accessibilityAddTraits(.isHeader)
     }
 }
+
+// MARK: - Rows of the tool screens (dkit: seg, pair, row)
+
+/// A setting with a few choices on one hairline row (304: Frames 3 5 7 9): the label left in 13 pt,
+/// the choices right in Barlow, the chosen one in the accent with an accent underline.
+struct SegRow<Value: Hashable>: View {
+    let label: String
+    let options: [Value]
+    @Binding var selection: Value
+    let title: (Value) -> String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+            Spacer(minLength: 8)
+            HStack(spacing: 2) {
+                ForEach(options, id: \.self) { option in
+                    let on = option == selection
+                    Button { withAnimation(.snappy) { selection = option } } label: {
+                        Text(title(option))
+                            .font(.num(18, weight: on ? .semibold : .medium))
+                            .foregroundStyle(on ? Theme.accent : Theme.secondary)
+                            .padding(.horizontal, 9)
+                            .frame(minHeight: Theme.target)
+                            .overlay(alignment: .bottom) { if on { Rectangle().fill(Theme.accent).frame(height: 2) } }
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(label) \(title(option))")
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+        }
+        .frame(minHeight: 54)
+        .overlay(alignment: .bottom) { Hairline() }
+        .sensoryFeedback(.selection, trigger: selection)
+    }
+}
+
+/// Two or three values side by side (301: Every 5 s · Frames 240): a 12 pt label over a 30 pt Barlow value.
+struct PairRow: View {
+    struct Cell: Identifiable {
+        let label: String
+        let value: String
+        var action: (() -> Void)?
+        var id: String { label }
+    }
+    let cells: [Cell]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(cells.enumerated()), id: \.element.id) { index, cell in
+                let alignment: HorizontalAlignment = index == 0 ? .leading : (index == cells.count - 1 ? .trailing : .center)
+                let content = VStack(alignment: alignment, spacing: 2) {
+                    Text(cell.label).font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    Text(cell.value).font(.num(30)).foregroundStyle(Theme.text)
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                        .contentTransition(.numericText())
+                }
+                .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+                if let action = cell.action {
+                    Button(action: action) { content.contentShape(.rect) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(cell.label) \(cell.value)")
+                        .accessibilityHint("Changes it")
+                } else {
+                    content.accessibilityElement(children: .combine)
+                }
+            }
+        }
+        .frame(minHeight: 78)
+        .overlay(alignment: .bottom) { Hairline() }
+    }
+}
+
+/// A plain note between hairlines (dkit `note`): 13 pt secondary.
+struct NoteRow: View {
+    let text: String
+    var color: Color = Theme.secondary
+    var warning = false
+
+    init(_ text: String, color: Color = Theme.secondary, warning: Bool = false) {
+        self.text = text; self.color = color; self.warning = warning
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            if warning {
+                Image(systemName: "exclamationmark.triangle").font(.system(size: 14, weight: .semibold))
+            }
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.system(size: 13))
+        .lineSpacing(2)
+        .foregroundStyle(warning ? Theme.accent : color)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) { Hairline() }
+    }
+}
+
+/// A section label inside a tool screen ("WILL SHOOT"): 11 pt tracked capitals, space above.
+struct SectionLabel: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        CapsLabel(text).padding(.top, 18).padding(.bottom, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

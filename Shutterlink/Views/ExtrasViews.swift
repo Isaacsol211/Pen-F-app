@@ -6,6 +6,7 @@ import UIKit
 /// The bracketing cards: in a sheet on a phone, in the inspector on a large canvas.
 struct BracketPanel: View {
     @Environment(CameraModel.self) private var camera
+    @Environment(\.dismiss) private var dismiss
     @AppStorage("bracket.frames") private var frames = 3
     @AppStorage("bracket.thirds") private var thirds = 3
     @AppStorage("bracket.target") private var targetRaw = BracketTarget.auto.rawValue
@@ -18,15 +19,18 @@ struct BracketPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 0) {
             if camera.bracket.running {
                 progressCard
             } else {
-                Picker("Bracket", selection: $focusMode) {
-                    Label("Exposure", systemImage: "plusminus.circle").tag(false)
-                    Label("Focus", systemImage: "scope").tag(true)
+                // 304/305: Exposure and Focus as two chips, white when chosen.
+                HStack(spacing: 8) {
+                    Button("Exposure") { withAnimation(.snappy) { focusMode = false } }
+                        .buttonStyle(ChipStyle(selected: !focusMode))
+                    Button("Focus") { withAnimation(.snappy) { focusMode = true } }
+                        .buttonStyle(ChipStyle(selected: focusMode))
                 }
-                .pickerStyle(.segmented)
+                .padding(.bottom, 14)
                 if focusMode {
                     focusCards
                 } else {
@@ -34,76 +38,57 @@ struct BracketPanel: View {
                 }
             }
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .animation(.smooth, value: camera.bracket.running)
+        .sensoryFeedback(.selection, trigger: focusMode)
     }
 
     @ViewBuilder private var setupCards: some View {
         BigNumber(value: "\(frames) × \(BracketPanel.stepLabel(thirds))",
-                  caption: "\(frames) frames, \(BracketPanel.stepLabel(thirds)) stop\(thirds == 3 ? "" : "s") apart", size: 88)
-        card {
-            Text("Frames").font(.headline)
-            Picker("Frames", selection: $frames) {
-                ForEach([3, 5, 7, 9], id: \.self) { Text("\($0)").tag($0) }
+                  caption: "\(frames) frames, \(BracketPanel.stepLabel(thirds)) stop\(thirds == 3 ? "" : "s") apart", size: 104)
+            .padding(.bottom, 14)
+        VStack(spacing: 0) {
+            SegRow(label: "Frames", options: [3, 5, 7, 9], selection: $frames) { "\($0)" }
+            SegRow(label: "Step", options: Array(1...6), selection: $thirds) { BracketPanel.stepLabel($0) }
+            SegRow(label: "Vary", options: BracketTarget.allCases.map(\.rawValue), selection: $targetRaw) {
+                BracketTarget(rawValue: $0)?.title ?? $0
             }
-            .pickerStyle(.segmented)
-            Text("Step").font(.headline)
-            Picker("Step", selection: $thirds) {
-                ForEach(1...6, id: \.self) { Text(BracketPanel.stepLabel($0)).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            Text("Vary").font(.headline)
-            Picker("Vary", selection: $targetRaw) {
-                ForEach(BracketTarget.allCases) { Text($0.title).tag($0.rawValue) }
-            }
-            .pickerStyle(.segmented)
-            Text(camera.properties["takemode"] == nil
-                 ? "Auto varies EV. In M, choose Shutter: the app can't read this camera's mode dial."
-                 : "Auto varies the shutter speed in M and exposure compensation in P, A and S.")
-                .font(.footnote)
-                .foregroundStyle(Theme.secondary)
+            NoteRow(camera.properties["takemode"] == nil
+                    ? "Auto varies EV. In M, choose Shutter: the app can't read this camera's mode dial."
+                    : "Auto varies the shutter speed in M and exposure compensation in P, A and S.")
         }
-        card {
-            Text("Will shoot").font(.headline)
-            switch camera.bracketSet(plan) {
-            case .success(let set):
-                WrapLayout(spacing: 6) {
-                    ForEach(Array(zip(set.offsets, set.values).enumerated()), id: \.offset) { item in
-                        let (offset, value) = item.element
-                        VStack(spacing: 2) {
-                            Text(CameraModel.offsetLabel(offset)).font(.caption2.weight(.semibold)).foregroundStyle(Theme.secondary)
-                            Text(PropertyFormat.display(set.property, value)).font(.caption.monospaced().weight(.semibold))
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .surface(.regular, in: .rect(cornerRadius: 10, style: .continuous))
+        .overlay(alignment: .top) { Hairline() }
+        SectionLabel("Will shoot")
+        switch camera.bracketSet(plan) {
+        case .success(let set):
+            // One box per frame: the offset over the value, the metered one outlined in the accent.
+            HStack(spacing: 6) {
+                ForEach(Array(zip(set.offsets, set.values).enumerated()), id: \.offset) { item in
+                    let (offset, value) = item.element
+                    let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    VStack(spacing: 2) {
+                        Text(CameraModel.offsetLabel(offset)).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                        Text(PropertyFormat.display(set.property, value)).font(.num(18)).foregroundStyle(Theme.text)
+                            .lineLimit(1).minimumScaleFactor(0.6)
                     }
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .overlay(shape.stroke(offset == 0 ? Theme.accent : Theme.outline, lineWidth: 1))
                 }
-                if set.clamped {
-                    Label("Some frames reach the end of the camera's range and repeat a value.",
-                          systemImage: "exclamationmark.triangle")
-                        .font(.footnote).foregroundStyle(Theme.accent)
-                }
-                Text("The setting goes back to \(PropertyFormat.display(set.property, camera.properties[set.property]?.value ?? "")) afterwards.")
-                    .font(.footnote).foregroundStyle(Theme.secondary)
-            case .failure(let error):
-                Label(error.localizedDescription, systemImage: "exclamationmark.triangle")
-                    .font(.footnote).foregroundStyle(Theme.accent)
             }
+            NoteRow(set.clamped
+                    ? "The setting goes back to \(PropertyFormat.display(set.property, camera.properties[set.property]?.value ?? "")) afterwards. Some frames reach the end of the camera's range and repeat a value."
+                    : "The setting goes back to \(PropertyFormat.display(set.property, camera.properties[set.property]?.value ?? "")) afterwards.")
+        case .failure(let error):
+            NoteRow(error.localizedDescription, warning: true)
         }
-        Button {
-            camera.startBracket(plan)
-        } label: {
-            Label("Shoot \(frames) frames", systemImage: "square.stack.3d.down.right")
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-        }
-        .buttonStyle(.accent)
-        .disabled(!camera.canBracket || (try? camera.bracketSet(plan).get()) == nil)
         if camera.isOpenEndedShutter {
-            Text("Bracketing needs a timed shutter speed, not Bulb or Live modes.")
-                .font(.footnote).foregroundStyle(Theme.secondary)
+            NoteRow("Bracketing needs a timed shutter speed, not Bulb or Live modes.")
         }
+        Spacer(minLength: 20)
+        Button("Shoot \(frames) frames") { camera.startBracket(plan) }
+            .buttonStyle(.accent)
+            .disabled(!camera.canBracket || (try? camera.bracketSet(plan).get()) == nil)
+            .padding(.bottom, 14)
     }
 
     // MARK: Focus stacking
@@ -111,68 +96,78 @@ struct BracketPanel: View {
     @ViewBuilder private var focusCards: some View {
         if camera.capabilities.focusDrive {
             BigNumber(value: "\(focusFrames)", caption: "frames, from where you focused towards infinity", size: 104)
-            card {
-                Stepper(value: $focusFrames, in: 2...200) {
-                    HStack {
-                        Text("Frames").font(.headline)
-                        Spacer()
-                        Text("\(focusFrames)").font(.body.monospacedDigit().weight(.semibold))
+                .padding(.bottom, 14)
+            VStack(spacing: 0) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Frames").font(.system(size: 16, weight: .medium))
+                        Text("2 to 200").font(.system(size: 13)).foregroundStyle(Theme.secondary)
                     }
+                    Spacer()
+                    Stepper("Frames", value: $focusFrames, in: 2...200).labelsHidden()
+                    Text("\(focusFrames)").font(.num(22, weight: .medium)).frame(minWidth: 36, alignment: .trailing)
+                        .contentTransition(.numericText())
                 }
-                Text("Step").font(.headline)
-                Picker("Step", selection: $focusStepRaw) {
-                    ForEach(FocusStepSize.allCases) { Text($0.title).tag($0.rawValue) }
+                .frame(minHeight: 58)
+                .overlay(alignment: .bottom) { Hairline() }
+                SegRow(label: "Step", options: FocusStepSize.allCases.map(\.rawValue), selection: $focusStepRaw) {
+                    FocusStepSize(rawValue: $0)?.title ?? "\($0)"
                 }
-                .pickerStyle(.segmented)
-                Text("Fine for macro and wide apertures, coarser for landscapes and stopped-down lenses. The stack stops early if the lens reaches infinity.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.secondary)
+                NoteRow("Fine for macro and wide apertures, coarser for landscapes and stopped-down lenses. The stack stops early if the lens reaches infinity.")
             }
-            card {
-                Label("Before you start", systemImage: "lightbulb").font(.headline)
-                Text(camera.focusStackSetup)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondary)
-                Label("Not yet tried on a real camera of this brand: shoot a short stack first.", systemImage: "flask")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.secondary)
+            .overlay(alignment: .top) { Hairline() }
+            SectionLabel("Before you start")
+            NoteRow(camera.focusStackSetup)
+            NoteRow("Not yet tried on a real camera of this brand: shoot a short stack first.", warning: true)
+            if camera.isOpenEndedShutter {
+                NoteRow("Focus stacking needs a timed shutter speed, not Bulb or Live modes.")
             }
-            Button {
+            Spacer(minLength: 20)
+            Button("Shoot \(focusFrames)-frame focus stack") {
                 camera.startFocusStack(frames: focusFrames, step: FocusStepSize(rawValue: focusStepRaw) ?? .fine)
-            } label: {
-                Label("Shoot \(focusFrames)-frame focus stack", systemImage: "square.stack.3d.forward.dottedline")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
             }
             .buttonStyle(.accent)
             .disabled(!camera.canFocusStack)
-            if camera.isOpenEndedShutter {
-                Text("Focus stacking needs a timed shutter speed, not Bulb or Live modes.")
-                    .font(.footnote).foregroundStyle(Theme.secondary)
-            }
+            .padding(.bottom, 14)
         } else {
-            card {
-                Label("Use the camera's own focus bracketing", systemImage: "scope").font(.headline)
-                Text(camera.focusStackUnavailable)
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondary)
-            }
+            // 307: the camera does it itself.
+            SolidHeadline("Use the camera's own\nfocus bracketing", size: 44)
+                .padding(.vertical, 12)
+            Text(camera.focusStackUnavailable)
+                .font(.system(size: 15))
+                .lineSpacing(3)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 20)
+            Button("Done") { dismiss() }
+                .buttonStyle(.outline)
+                .padding(.bottom, 14)
         }
     }
 
     private var progressCard: some View {
-        VStack(spacing: 18) {
-            ProgressRing(text: "\(camera.bracket.done)", sub: "of \(camera.bracket.total)",
-                         fraction: camera.bracket.total > 0 ? Double(camera.bracket.done) / Double(camera.bracket.total) : 0)
-            Text(camera.bracket.isFocusStack ? "Focus stack" : "Bracketing").font(.num(26))
-            if let label = camera.bracket.label {
-                Text(label).font(.subheadline).foregroundStyle(Theme.secondary)
+        // 306: the frames as a fanned stack (the done ones lit), "3 of 10", the bars, Cancel at the bottom.
+        VStack(spacing: 0) {
+            if camera.bracket.isFocusStack {
+                FocusStackArt(done: camera.bracket.done, total: max(1, camera.bracket.total))
+                    .frame(height: 230)
+                    .frame(maxWidth: .infinity)
+            } else {
+                ProgressRing(text: "\(camera.bracket.done)", sub: "of \(camera.bracket.total)",
+                             fraction: camera.bracket.total > 0 ? Double(camera.bracket.done) / Double(camera.bracket.total) : 0)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
             }
+            BigNumber(value: "\(camera.bracket.done) of \(camera.bracket.total)",
+                      caption: camera.bracket.label ?? (camera.bracket.isFocusStack ? "Focus stack" : "Bracketing"), size: 72)
+                .padding(.top, 8)
+            FrameBars(done: camera.bracket.done, total: camera.bracket.total)
+                .padding(.vertical, 18)
+            Spacer(minLength: 20)
             Button(role: .destructive) { camera.cancelBracket() } label: { Text("Cancel") }
                 .buttonStyle(.outline)
+                .padding(.bottom, 14)
         }
-        .frame(maxWidth: .infinity)
     }
 
     static func stepLabel(_ thirds: Int) -> String {
@@ -184,6 +179,34 @@ struct BracketPanel: View {
         case 5: "1⅔"
         default: "2"
         }
+    }
+}
+
+/// The frames of a focus stack fanned from near to far (306), the done ones in the accent.
+struct FocusStackArt: View {
+    let done: Int
+    let total: Int
+
+    var body: some View {
+        Canvas { ctx, size in
+            let count = min(total, 10)
+            let w = size.width * 0.42, h = w * 0.62
+            for i in (0..<count).reversed() {
+                let t = Double(i) / Double(max(1, count - 1))
+                let rect = CGRect(x: size.width * 0.18 + t * size.width * 0.34, y: size.height * 0.62 - t * size.height * 0.5 - h / 2,
+                                  width: w, height: h)
+                let lit = Int((Double(done) / Double(max(1, total)) * Double(count)).rounded(.down))
+                let path = Path(roundedRect: rect, cornerRadius: 8)
+                ctx.fill(path, with: .color(Theme.background))
+                ctx.stroke(path, with: .color(i < lit ? Theme.accent : Theme.text.opacity(0.45 - t * 0.2)),
+                           lineWidth: i < lit ? 2 : 1.2)
+            }
+            ctx.draw(Text("Near").font(.system(size: 11)).foregroundColor(Theme.secondary),
+                     at: CGPoint(x: size.width * 0.16, y: size.height * 0.92))
+            ctx.draw(Text("Far").font(.system(size: 11)).foregroundColor(Theme.secondary),
+                     at: CGPoint(x: size.width * 0.86, y: size.height * 0.06))
+        }
+        .accessibilityHidden(true)
     }
 }
 

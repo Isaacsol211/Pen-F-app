@@ -282,10 +282,15 @@ struct SidePanelView: View {
             VStack(spacing: 0) {
                 ScreenHeader(panel.title) { HeaderButton("Done") { dismiss() } }
                     .padding(.top, 6)
-                ScrollView {
-                    content.padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 20)
+                // At least the screen's height, so a tool's main button sits at the bottom (301, 304…)
+                // behind the Spacer the tool puts before it; longer content scrolls.
+                GeometryReader { geo in
+                    ScrollView {
+                        content.padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 20)
+                            .frame(minHeight: geo.size.height, alignment: .top)
+                    }
+                    .scrollIndicators(.hidden)
                 }
-                .scrollIndicators(.hidden)
             }
             // Presets sit on the blurred live view, as designed; the other screens on black.
             .background { if panel == .presets { AmbientBackground() } else { Theme.background.ignoresSafeArea() } }
