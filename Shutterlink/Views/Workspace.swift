@@ -260,6 +260,7 @@ enum SidePanel: String, Identifiable {
 /// a scroll view with a Done button.
 struct SidePanelView: View {
     let panel: SidePanel
+    @AppStorage("bracket.focus") private var focusTab = false
     var onClose: (() -> Void)?
     var openAstro: () -> Void = {}
     var openFocusStack: () -> Void = {}
@@ -282,7 +283,7 @@ struct SidePanelView: View {
         } else {
             // A design screen (3xx): the title on the left, Done on the right, then the content.
             VStack(spacing: 0) {
-                ScreenHeader(panel.title) { HeaderButton("Done") { dismiss() } }
+                ScreenHeader(panel == .bracket && focusTab ? "Focus stack" : panel.title) { HeaderButton("Done") { dismiss() } }
                     .padding(.top, 6)
                 // At least the screen's height, so a tool's main button sits at the bottom (301, 304…)
                 // behind the Spacer the tool puts before it; longer content scrolls.

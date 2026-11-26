@@ -567,6 +567,7 @@ struct WheelValueRow: View {
                 Spacer()
                 Text(format(value)).font(.num(22, weight: .semibold)).foregroundStyle(Theme.text)
                     .contentTransition(.numericText())
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.tertiary)
             }
             .frame(minHeight: 58)
             .contentShape(.rect)

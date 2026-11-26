@@ -48,7 +48,7 @@ struct QRScannerSheet: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 8)
-            Spacer(minLength: 20)
+            Spacer().frame(height: 34)
             // A square: the feed inside, the accent corners just outside it (106).
             ZStack {
                 QRScanner { text in
