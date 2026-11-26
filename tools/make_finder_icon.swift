@@ -14,7 +14,7 @@ func rgb(_ hex: UInt32) -> CGColor {
 }
 
 /// Draws the mark in a 120-unit square scaled to `size` px, y down like the design's SVG.
-func render(size: Int, corners: CGColor, dot: CGColor, background: CGColor) -> CGImage {
+func render(size: Int, corners: CGColor, dot: CGColor, background: CGColor, scale: CGFloat = 1) -> CGImage {
     let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.setFillColor(background)
@@ -22,6 +22,10 @@ func render(size: Int, corners: CGColor, dot: CGColor, background: CGColor) -> C
     let k = CGFloat(size) / 120
     ctx.translateBy(x: 0, y: CGFloat(size))
     ctx.scaleBy(x: k, y: -k)
+    // Whole mark (corners, stroke and dot) scaled about the centre.
+    ctx.translateBy(x: 60, y: 60)
+    ctx.scaleBy(x: scale, y: scale)
+    ctx.translateBy(x: -60, y: -60)
     ctx.setStrokeColor(corners)
     ctx.setLineWidth(8)
     ctx.setLineCap(.round)
@@ -49,7 +53,9 @@ func write(_ image: CGImage, to path: String) {
 
 let bg = rgb(0x0A0A0A), cream = rgb(0xF4F1EA), gold = rgb(0xF2C46D)
 let icons = "Shutterlink/Assets.xcassets/AppIcon.appiconset/"
-write(render(size: 1024, corners: cream, dot: gold, background: bg), to: icons + "AppIcon.png")
-write(render(size: 1024, corners: cream, dot: gold, background: bg), to: icons + "AppIcon-Dark.png")
-write(render(size: 1024, corners: rgb(0xFFFFFF), dot: rgb(0xFFFFFF), background: rgb(0x000000)), to: icons + "AppIcon-Tinted.png")
+// The icon's mark is 0.72 of the in-app mark, so iOS's corner rounding doesn't crowd it (corners span ~50%).
+let iconScale: CGFloat = 0.72
+write(render(size: 1024, corners: cream, dot: gold, background: bg, scale: iconScale), to: icons + "AppIcon.png")
+write(render(size: 1024, corners: cream, dot: gold, background: bg, scale: iconScale), to: icons + "AppIcon-Dark.png")
+write(render(size: 1024, corners: rgb(0xFFFFFF), dot: rgb(0xFFFFFF), background: rgb(0x000000), scale: iconScale), to: icons + "AppIcon-Tinted.png")
 write(render(size: 540, corners: cream, dot: gold, background: bg), to: "Shutterlink/Assets.xcassets/LaunchMark.imageset/LaunchMark.png")
