@@ -24,7 +24,7 @@ struct PresetsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SolidHeadline("One tap.\nCamera set.", size: 54)
+            SolidHeadline("One tap.\nCamera set.", size: 60)
                 .padding(.top, 4)
             if let undo = camera.presetUndo {
                 undoCard(undo)
@@ -75,15 +75,17 @@ struct PresetsPanel: View {
                 .disabled(camera.ettrRunning || camera.mode != .rec || camera.isShooting)
             }
         }
-        .animation(.smooth, value: expanded)
         .animation(.smooth, value: camera.presetUndo)
-        .alert("Save current settings", isPresented: $naming) {
-            TextField("Name", text: $newName)
-            Button("Save") { camera.saveCurrentSettings(as: newName) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Mode, aperture, shutter, ISO, exposure, white balance and drive: whatever the camera lets the app set.")
+        .dScreen(item: Binding(get: { expanded.map(PresetID.init) }, set: { expanded = $0?.id })) { item in
+            detail(item.id)
         }
+        // 315: the name in the design's dialog card.
+        .fullScreenCover(isPresented: $naming) {
+            SaveNameDialog(name: $newName, save: { camera.saveCurrentSettings(as: newName); naming = false },
+                           cancel: { naming = false })
+                .presentationBackground(.clear)
+        }
+        .transaction { if naming { $0.disablesAnimations = true } }
     }
 
     /// A card outlined in green (design 313): the one thing to undo, with a white Undo button.
@@ -153,61 +155,49 @@ struct PresetsPanel: View {
     }
 
     @ViewBuilder private func recipeRow(_ recipe: PresetRecipe) -> some View {
-        let open = expanded == recipe.id
         Button {
-            if recipe == .astro { openAstro() } else { expanded = open ? nil : recipe.id }
+            if recipe == .astro { openAstro() } else { expanded = recipe.id }
         } label: {
-            header(icon: recipe.icon, title: recipe.title, subtitle: recipe.summary, open: open,
+            header(icon: recipe.icon, title: recipe.title, subtitle: recipe.summary, open: false,
                    chevron: recipe == .astro ? "arrow.up.right" : "chevron.right", on: camera.isPresetOn(recipe.id),
                    recipe: recipe)
         }
         .buttonStyle(.plain)
-        if open {
-            let steps = camera.presetResultsFor == recipe.id && !camera.presetSteps.isEmpty
-                ? camera.presetSteps : camera.steps(for: recipe)
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(steps) { StepResultRow(step: $0) }
-                if !recipe.tip.isEmpty {
-                    Label(recipe.tip, systemImage: "lightbulb")
-                        .font(.footnote)
-                        .foregroundStyle(Theme.secondary)
-                }
-                applyButton("Apply \(recipe.title)", id: recipe.id) { _ = await camera.apply(recipe) }
-                if recipe == .macro, camera.capabilities.focusDrive {
-                    Button("Focus stack next", systemImage: "square.stack.3d.forward.dottedline") { openFocusStack() }
-                        .buttonStyle(.surface)
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(.leading, 6)
-            .transition(.opacity)
-        }
     }
 
     @ViewBuilder private func savedRow(_ saved: SavedPreset) -> some View {
-        let open = expanded == saved.id.uuidString
         Button {
-            expanded = open ? nil : saved.id.uuidString
+            expanded = saved.id.uuidString
         } label: {
-            header(icon: "bookmark.fill", title: saved.name, subtitle: summary(saved), open: open, chevron: "chevron.right",
+            header(icon: "bookmark.fill", title: saved.name, subtitle: summary(saved), open: false, chevron: "chevron.right",
                    on: camera.isPresetOn(saved.id.uuidString))
         }
         .buttonStyle(.plain)
-        if open {
-            let steps = camera.presetResultsFor == saved.id.uuidString && !camera.presetSteps.isEmpty
-                ? camera.presetSteps : camera.steps(for: saved)
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(steps) { StepResultRow(step: $0) }
-                applyButton("Apply \(saved.name)", id: saved.id.uuidString) { await camera.apply(saved) }
-                Button("Delete", systemImage: "trash", role: .destructive) {
+    }
+
+    /// 314: a recipe (or a saved preset) on a screen of its own.
+    @ViewBuilder private func detail(_ id: String) -> some View {
+        if let recipe = PresetRecipe.allCases.first(where: { $0.id == id }) {
+            let steps = camera.presetResultsFor == recipe.id && !camera.presetSteps.isEmpty
+                ? camera.presetSteps : camera.steps(for: recipe)
+            PresetDetail(title: recipe.title, caption: recipe.summary, steps: steps, tip: recipe.tip,
+                         close: { expanded = nil }) {
+                applyButton("Apply \(recipe.title)", id: recipe.id) { _ = await camera.apply(recipe) }
+                if recipe == .macro, camera.capabilities.focusDrive {
+                    Button("Focus stack next") { expanded = nil; openFocusStack() }
+                        .buttonStyle(.outline)
+                }
+            }
+        } else if let saved = camera.savedPresetsForCamera.first(where: { $0.id.uuidString == id }) {
+            let steps = camera.presetResultsFor == id && !camera.presetSteps.isEmpty ? camera.presetSteps : camera.steps(for: saved)
+            PresetDetail(title: saved.name, caption: summary(saved), steps: steps, tip: "", close: { expanded = nil }) {
+                applyButton("Apply \(saved.name)", id: id) { await camera.apply(saved) }
+                Button("Delete", role: .destructive) {
                     expanded = nil
                     camera.deleteSavedPreset(saved)
                 }
-                .buttonStyle(.surface)
-                .frame(maxWidth: .infinity)
+                .buttonStyle(OutlineButtonStyle(color: Theme.red))
             }
-            .padding(.leading, 6)
-            .transition(.opacity)
         }
     }
 
@@ -227,15 +217,114 @@ struct PresetsPanel: View {
             Task { if on { await camera.undoPreset() } else { await action() } }
         } label: {
             HStack {
-                if camera.presetRunning { ProgressView() }
+                if camera.presetRunning { ProgressView().tint(Theme.onAccent) }
                 Text(camera.presetRunning ? "Applying…" : on ? "Turn off · put back the settings from before" : title)
+                    .lineLimit(1).minimumScaleFactor(0.8)
             }
-            .font(.headline)
-            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.accent)
-        .tint(on ? Color.green : Theme.accent)
         .disabled(camera.presetRunning || camera.mode != .rec)
+    }
+}
+
+private struct PresetID: Identifiable { let id: String }
+
+/// A preset on its own screen (314): Close top right, the exposure it sets large, what it will set,
+/// a tip, and its buttons at the bottom.
+struct PresetDetail<Buttons: View>: View {
+    let title: String
+    let caption: String
+    let steps: [PresetStep]
+    let tip: String
+    let close: () -> Void
+    @ViewBuilder var buttons: Buttons
+
+    /// "f/8 · 1/250": the aperture and shutter it sets, when it sets them.
+    private var headline: String {
+        let parts = ["focalvalue", "shutspeedvalue"].compactMap { name -> String? in
+            guard let step = steps.first(where: { $0.property == name }), let value = step.value else { return nil }
+            return name == "focalvalue" ? "f/" + ValueDial.shortLabel(name, value) : PropertyFormat.display(name, value)
+        }
+        return parts.isEmpty ? title : parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScreenHeader(title) { HeaderButton("Close", action: close) }
+                .padding(.top, 6)
+            GeometryReader { geo in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        BigNumber(value: headline, caption: caption, size: 60)
+                            .padding(.vertical, 12)
+                        SectionLabel("Will set")
+                        ForEach(steps) { step in
+                            StepResultRow(step: step)
+                                .padding(.vertical, 10)
+                                .overlay(alignment: .bottom) { Hairline() }
+                        }
+                        if !tip.isEmpty {
+                            SectionLabel("Tip")
+                            NoteRow(tip)
+                        }
+                        Spacer(minLength: 20)
+                        VStack(spacing: 10) { buttons }
+                            .padding(.bottom, 14)
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: geo.size.height, alignment: .top)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+        .background(Theme.background.ignoresSafeArea())
+    }
+}
+
+/// "Save current settings" (315): the dialog card with a name field, Save and Cancel.
+struct SaveNameDialog: View {
+    @Binding var name: String
+    let save: () -> Void
+    let cancel: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ZStack {
+            LiveBackdrop.wash.opacity(0.7).ignoresSafeArea().onTapGesture(perform: cancel)
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Save current settings").font(.num(28)).foregroundStyle(Theme.text)
+                Text("Mode, aperture, shutter, ISO, exposure, white balance and drive: whatever the camera lets the app set.")
+                    .font(.system(size: 15)).foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Name").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+                    TextField("Name", text: $name)
+                        .font(.system(size: 17))
+                        .focused($focused)
+                        .submitLabel(.done)
+                        .onSubmit(save)
+                        .frame(minHeight: Theme.target)
+                }
+                .padding(.vertical, 4)
+                .overlay(alignment: .bottom) { Hairline() }
+                Button("Save", action: save)
+                    .buttonStyle(.accent)
+                    .padding(.top, 6)
+                Button("Cancel", action: cancel)
+                    .font(.system(size: 16)).foregroundStyle(Theme.text)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .buttonStyle(.plain)
+            }
+            .padding(24)
+            .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Theme.outline, lineWidth: 1))
+            .frame(maxWidth: 420)
+            .padding(.horizontal, 28)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape, cancel)
+        }
+        .onKeyPress(.escape) { cancel(); return .handled }
+        .onAppear { focused = true }
     }
 }
 
