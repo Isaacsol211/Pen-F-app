@@ -278,24 +278,17 @@ struct SidePanelView: View {
                 content
             }
         } else {
+            // A design screen (3xx): the title on the left, Done on the right, then the content.
             VStack(spacing: 0) {
-                HStack {
-                    Text(panel.title).font(.num(26))
-                    Spacer()
-                    Button("Done") { dismiss() }
-                        .font(.system(size: 15))
-                        .foregroundStyle(Theme.text)
-                        .frame(minHeight: Theme.target)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
+                ScreenHeader(panel.title) { HeaderButton("Done") { dismiss() } }
+                    .padding(.top, 6)
                 ScrollView {
-                    content.padding(.horizontal, 20).padding(.vertical, 8)
+                    content.padding(.horizontal, 20).padding(.top, 4).padding(.bottom, 20)
                 }
                 .scrollIndicators(.hidden)
             }
-            // Presets sit on the blurred live view, as designed; the other panels on black.
-            .background { if panel == .presets { Color.clear } else { Theme.background } }
+            // Presets sit on the blurred live view, as designed; the other screens on black.
+            .background { if panel == .presets { AmbientBackground() } else { Theme.background.ignoresSafeArea() } }
         }
     }
 

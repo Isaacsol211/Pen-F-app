@@ -30,8 +30,6 @@ struct RemoteView: View {
     /// Drive or Quality, whose options open in a sheet from the small line under the picture.
     @State private var settingSheet: String?
     @State private var showMore = false
-    /// Height of the Tools sheet's content, so the sheet is only as tall as it needs to be.
-    @State private var toolsHeight: CGFloat = 560
 
     var body: some View {
         GeometryReader { geo in
@@ -78,30 +76,52 @@ struct RemoteView: View {
         .dynamicTypeSize(...DynamicTypeSize.xLarge)
         // Red night-vision mode keeps your eyes dark-adapted under the stars. Applied only when on:
         // a colour filter over the whole screen forces it to re-render offscreen on every frame.
+        // The design's bottom panels (208, 209, 219–221), drawn by the app, edge to edge.
+        .dPanel(isPresented: $toolsOpen, title: "Tools") {
+            ToolsSheet(tools: tools, isOpen: $toolsOpen)
+        }
+        .dPanel(isPresented: Binding(get: { settingSheet != nil }, set: { if !$0 { settingSheet = nil } }),
+                title: settingSheet.flatMap { SettingSpec.spec(for: $0)?.title }) {
+            if let name = settingSheet, let spec = SettingSpec.spec(for: name) { SettingSheet(spec: spec) }
+        }
+        .dPanel(isPresented: $showMore, title: camera.cameraName ?? "Camera") {
+            moreSheet
+        }
+        // The motion trigger keeps the picture above usable, so the box can be dragged into place (311).
+        .dPanel(isPresented: Binding(get: { !isWorkspace && openPanel == .motion }, set: { if !$0 { openPanel = nil } }),
+                title: SidePanel.motion.title, dimsBehind: false) {
+            MotionPanel().padding(.horizontal, 20).padding(.bottom, 12)
+        }
         .modifier(NightVision(enabled: nightMode))
+        .overlay {
+            ZStack {
+                if confirmDisconnect {
+                    DialogCard(title: "Disconnect from the camera?", action: "Disconnect", compact: true,
+                               onAction: { confirmDisconnect = false; Task { await camera.disconnect() } },
+                               onCancel: { confirmDisconnect = false })
+                }
+                if confirmPowerOff {
+                    DialogCard(title: "Turn the camera off?",
+                               message: "You'll need to switch it on and start Wi-Fi on the camera again to reconnect.",
+                               action: "Turn off",
+                               onAction: { confirmPowerOff = false; Task { await camera.powerOff() } },
+                               onCancel: { confirmPowerOff = false })
+                }
+            }
+            .animation(.spring(duration: 0.28, bounce: 0), value: confirmDisconnect || confirmPowerOff)
+        }
         .overlay(alignment: .top) { ToastView() }
-        .sheet(isPresented: $showAllSettings) { AllSettingsView() }
-        .sheet(isPresented: $showLog) { LogView() }
-        .sheet(isPresented: $showAstro) { AstroView() }
-        .sheet(item: $proPrompt) { ProView(feature: $0.feature) }
-        // A tool's sheet is only for the phone layouts; in the workspace the same state opens its panel.
-        .sheet(item: Binding(get: { isWorkspace ? nil : openPanel }, set: { openPanel = $0 })) { panel in
+        // Design screens: full screen on a phone.
+        .dScreen(isPresented: $showAllSettings) { AllSettingsView() }
+        .dScreen(isPresented: $showLog) { LogView() }
+        .dScreen(isPresented: $showAstro) { AstroView() }
+        .dScreen(item: $proPrompt) { ProView(feature: $0.feature) }
+        // A tool's screen is only for the phone layouts; in the workspace the same state opens its panel.
+        .dScreen(item: Binding(get: { isWorkspace || openPanel == .motion ? nil : openPanel }, set: { openPanel = $0 })) { panel in
             SidePanelView(panel: panel, openAstro: openAstroFromPresets, openFocusStack: openFocusStackFromPresets)
-                .presentationDetents(panel == .motion ? [.medium, .large] : [.large])
-                .dSheet(ambient: panel == .presets)
-                // Live view stays usable above the motion trigger, so the box can be dragged into place.
-                .presentationBackgroundInteraction(panel == .motion ? .enabled(upThrough: .medium) : .automatic)
         }
         .fullScreenCover(isPresented: $pocketMode) { PocketModeView() }
         .fullScreenCover(isPresented: $showGallery) { GalleryView() }
-        .confirmationDialog("Turn the camera off?", isPresented: $confirmPowerOff, titleVisibility: .visible) {
-            Button("Turn off", role: .destructive) { Task { await camera.powerOff() } }
-        } message: {
-            Text("You'll need to switch it on and start Wi-Fi on the camera again to reconnect.")
-        }
-        .confirmationDialog("Disconnect from the camera?", isPresented: $confirmDisconnect, titleVisibility: .visible) {
-            Button("Disconnect", role: .destructive) { Task { await camera.disconnect() } }
-        }
         .onChange(of: showLoupe) { _, on in Task { await camera.setLoupe(on) } }
         .onChange(of: camera.isMovieMode) {
             if activeSetting == "exposemovie", !camera.isMovieMode {
@@ -181,18 +201,6 @@ struct RemoteView: View {
                     .frame(maxWidth: Self.controlsMaxWidth)
                     .padding(.bottom, 4)
             }
-        }
-        .sheet(item: Binding(get: { settingSheet.map(SettingSheetID.init) }, set: { settingSheet = $0?.id })) { sheet in
-            if let spec = SettingSpec.spec(for: sheet.id) {
-                SettingSheet(spec: spec)
-                    .presentationDetents([.height(360), .large])
-                    .dSheet()
-            }
-        }
-        .sheet(isPresented: $toolsOpen) {
-            ToolsSheet(tools: tools, isOpen: $toolsOpen, height: $toolsHeight)
-                .presentationDetents([.height(max(320, toolsHeight)), .large])
-                .dSheet()
         }
     }
 
@@ -546,26 +554,23 @@ struct RemoteView: View {
         .buttonStyle(.plain)
         .disabled(camera.isBusyExposing)
         .accessibilityLabel("More")
-        .sheet(isPresented: $showMore) {
-            MoreSheet(
-                openPro: { showMore = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { proPrompt = ProPrompt(feature: nil) } },
-                openHighRes: { showMore = false; open(.highRes) },
-                allSettings: { showMore = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showAllSettings = true } },
-                log: { showMore = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showLog = true } },
-                disconnect: { showMore = false; confirmDisconnect = true },
-                powerOff: { showMore = false; confirmPowerOff = true })
-            .presentationDetents([.large])
-            .dSheet()
-        }
     }
 
-    /// Runs `next` once the Tools sheet has gone: a sheet can't come up while another is leaving.
+    /// The ⋯ menu's rows (221), in the bottom panel.
+    private var moreSheet: some View {
+        MoreSheet(
+            openPro: { showMore = false; proPrompt = ProPrompt(feature: nil) },
+            openHighRes: { showMore = false; open(.highRes) },
+            allSettings: { showMore = false; showAllSettings = true },
+            log: { showMore = false; showLog = true },
+            disconnect: { withAnimation(.snappy) { showMore = false; confirmDisconnect = true } },
+            powerOff: { withAnimation(.snappy) { showMore = false; confirmPowerOff = true } })
+    }
+
+    /// Runs `next` as the Tools panel closes. The panel is drawn by the app (not a sheet), so the
+    /// screen it opens can come up straight away.
     private func afterSheet(_ next: @escaping () -> Void) {
-        if isWorkspace {
-            next()
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: next)
-        }
+        next()
     }
 
     /// Runs a Pro tool's action when Pro is unlocked; otherwise opens the Pro screen for it.
@@ -721,8 +726,6 @@ struct ExposingReadout: View {
     }
 }
 
-/// An identifiable setting name, for the Drive / Quality sheet.
-private struct SettingSheetID: Identifiable { let id: String }
 
 /// The live frame, blurred and dimmed to fill the screen behind the remote. Refreshed a couple of
 /// times a second: it is only a colour wash, so it needn't follow every frame.
@@ -795,14 +798,6 @@ struct SettingSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(spec.title).font(.num(26))
-                Spacer()
-                Button("Done") { dismiss() }
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.text)
-                    .frame(minHeight: Theme.target)
-            }
             if let raw = camera.properties[spec.name] {
                 let property = camera.dialOptions(for: raw)
                 if property.settable {
@@ -814,11 +809,10 @@ struct SettingSheet: View {
                         .font(.subheadline).foregroundStyle(Theme.secondary)
                 }
             }
-            Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 8)
-        .background(Theme.background)
+        .padding(.top, 4)
+        .padding(.bottom, 16)
     }
 }
 
@@ -1315,11 +1309,6 @@ private struct MoreSheet: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                Text(camera.cameraName ?? "Camera")
-                    .font(.num(28))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 10)
-                    .hairRow()
                 if !camera.capabilities.liveViewSizes.isEmpty {
                     Menu {
                         Picker("Live view size", selection: Binding(get: { camera.liveViewQuality },

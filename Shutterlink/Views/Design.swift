@@ -598,3 +598,293 @@ extension View {
             .listRowSeparatorTint(Theme.stroke)
     }
 }
+
+// MARK: - Panels, screens and dialogs (drawn by the app, as designed)
+
+/// The design's bottom panel (208, 209, 211, 219–221): edge to edge, rounded top corners, a grabber, a
+/// hairline edge, the live view still visible above under a light scrim. Drawn by the app rather than
+/// a system sheet, which iOS 26 floats with side margins. Drag the top down, tap above it or press
+/// Escape to close; VoiceOver treats it as modal and its escape gesture closes it.
+struct BottomPanel<Content: View>: View {
+    var title: String?
+    /// The scrim and its tap; off where the picture above must stay usable (the motion trigger).
+    var dimsBehind = true
+    let onClose: () -> Void
+    @ViewBuilder var content: Content
+    @State private var drag: CGFloat = 0
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            if dimsBehind {
+                LiveBackdrop.wash.opacity(0.3)
+                    .ignoresSafeArea()
+                    .contentShape(.rect)
+                    .onTapGesture(perform: onClose)
+                    .accessibilityHidden(true)
+            }
+            VStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    Capsule().fill(Color(hex: 0x4A4946)).frame(width: 40, height: 5).padding(.top, 8)
+                    if let title {
+                        HStack {
+                            Text(title).font(.num(26)).foregroundStyle(Theme.text)
+                                .accessibilityAddTraits(.isHeader)
+                            Spacer()
+                            Button(action: onClose) {
+                                Image(systemName: "xmark").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                                    .frame(width: Theme.target, height: Theme.target)
+                            }
+                            .accessibilityLabel("Close")
+                        }
+                        .padding(.leading, 20).padding(.trailing, 8)
+                        .frame(minHeight: 48)
+                    }
+                }
+                .contentShape(.rect)
+                .gesture(DragGesture()
+                    .onChanged { drag = max(0, $0.translation.height) }
+                    .onEnded { value in
+                        if value.translation.height > 90 || value.predictedEndTranslation.height > 220 { onClose() }
+                        withAnimation(.spring(duration: 0.3, bounce: 0)) { drag = 0 }
+                    })
+                // As tall as the content, scrolling only when it can't fit.
+                ViewThatFits(in: .vertical) {
+                    content
+                    ScrollView { content }.scrollIndicators(.hidden)
+                }
+            }
+            .frame(maxWidth: 640)
+            .frame(maxWidth: .infinity)
+            .background {
+                UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous)
+                    .fill(Theme.background)
+                    .overlay(UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28, style: .continuous)
+                        .stroke(Theme.outline, lineWidth: 1))
+                    .frame(maxWidth: 640)
+                    .ignoresSafeArea(edges: .bottom)
+            }
+            .offset(y: drag)
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape, onClose)
+            .transition(.move(edge: .bottom))
+            // Never so tall that the live view goes from above it.
+            .padding(.top, 120)
+        }
+        .onKeyPress(.escape) { onClose(); return .handled }
+    }
+}
+
+extension View {
+    /// Shows `content` in the app's bottom panel while `isPresented`.
+    func dPanel<Content: View>(isPresented: Binding<Bool>, title: String? = nil, dimsBehind: Bool = true,
+                               @ViewBuilder content: @escaping () -> Content) -> some View {
+        overlay {
+            ZStack {
+                if isPresented.wrappedValue {
+                    BottomPanel(title: title, dimsBehind: dimsBehind,
+                                onClose: { withAnimation(.spring(duration: 0.32, bounce: 0)) { isPresented.wrappedValue = false } },
+                                content: content)
+                }
+            }
+            .animation(.spring(duration: 0.32, bounce: 0), value: isPresented.wrappedValue)
+        }
+    }
+
+    /// A design screen (3xx, 4xx, 105, 106): full screen on a phone, a page-sized sheet on a large canvas.
+    func dScreen<Content: View>(isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content) -> some View {
+        modifier(DScreen(isPresented: isPresented, screen: content))
+    }
+
+    func dScreen<Item: Identifiable, Content: View>(item: Binding<Item?>, @ViewBuilder content: @escaping (Item) -> Content) -> some View {
+        dScreen(isPresented: Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })) {
+            if let value = item.wrappedValue { content(value) }
+        }
+    }
+}
+
+private struct DScreen<Screen: View>: ViewModifier {
+    @Binding var isPresented: Bool
+    let screen: () -> Screen
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    func body(content: Content) -> some View {
+        if sizeClass == .regular {
+            content.sheet(isPresented: $isPresented) {
+                screen().presentationSizing(.page).presentationBackground(Theme.background)
+            }
+        } else {
+            content.fullScreenCover(isPresented: $isPresented) { screen() }
+        }
+    }
+}
+
+/// The header of a design screen: the title on the left in 15 pt semibold, an action on the right
+/// (Done, Close), 44 pt tall. Optional leading item (Back, Reload, Cancel).
+struct ScreenHeader<Leading: View, Trailing: View>: View {
+    let title: String
+    var centred = false
+    var titleSize: CGFloat = 15
+    @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        ZStack {
+            if centred {
+                Text(title).font(.system(size: titleSize, weight: .semibold)).foregroundStyle(Theme.text)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            HStack(spacing: 12) {
+                leading
+                if !centred {
+                    Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                        .accessibilityAddTraits(.isHeader)
+                }
+                Spacer(minLength: 8)
+                trailing
+            }
+        }
+        .padding(.horizontal, 20)
+        .frame(minHeight: Theme.target)
+    }
+}
+
+extension ScreenHeader {
+    init(_ title: String, centred: Bool = false, titleSize: CGFloat = 15,
+         @ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing) {
+        self.title = title; self.centred = centred; self.titleSize = titleSize
+        self.leading = leading(); self.trailing = trailing()
+    }
+}
+
+extension ScreenHeader where Leading == EmptyView {
+    init(_ title: String, centred: Bool = false, @ViewBuilder trailing: () -> Trailing) {
+        self.title = title; self.centred = centred; self.leading = EmptyView(); self.trailing = trailing()
+    }
+}
+
+/// A plain text button for headers: 15 pt, white (or secondary), 44 pt target.
+struct HeaderButton: View {
+    let title: String
+    var color: Color = Theme.text
+    let action: () -> Void
+
+    init(_ title: String, color: Color = Theme.text, action: @escaping () -> Void) {
+        self.title = title; self.color = color; self.action = action
+    }
+
+    var body: some View {
+        Button(title, action: action)
+            .font(.system(size: 15))
+            .foregroundStyle(color)
+            .frame(minWidth: Theme.target, minHeight: Theme.target)
+            .contentShape(.rect)
+            .buttonStyle(.plain)
+    }
+}
+
+/// The design's dialog card (226): a dark card over a scrim, Barlow title, message, a coloured
+/// capsule for the action and Cancel under it. Modal for VoiceOver; Escape or the scrim cancels.
+struct DialogCard: View {
+    let title: String
+    var message: String?
+    let action: String
+    var actionColor: Color = Theme.red
+    /// The compact form (Disconnect): title and a small white button on one line.
+    var compact = false
+    let onAction: () -> Void
+    let onCancel: () -> Void
+    @AccessibilityFocusState private var focused: Bool
+
+    var body: some View {
+        ZStack {
+            LiveBackdrop.wash.opacity(0.7).ignoresSafeArea()
+                .contentShape(.rect)
+                .onTapGesture(perform: onCancel)
+                .accessibilityHidden(true)
+            Group {
+                if compact {
+                    HStack(spacing: 12) {
+                        Text(title).font(.num(24)).foregroundStyle(Theme.text)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityFocused($focused)
+                        Spacer(minLength: 0)
+                        Button(action: onAction) {
+                            Text(action).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.background)
+                                .padding(.horizontal, 18).frame(minHeight: Theme.target)
+                                .background(Capsule().fill(Theme.text))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 24).padding(.vertical, 20)
+                    // As designed there's no Cancel button: a tap outside, Escape, or VoiceOver's
+                    // escape gesture (or this action) cancels.
+                    .accessibilityAction(named: "Cancel", onCancel)
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(title).font(.num(28)).foregroundStyle(Theme.text)
+                            .accessibilityFocused($focused)
+                        if let message {
+                            Text(message).font(.system(size: 15)).foregroundStyle(Theme.secondary)
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer().frame(height: 6)
+                        Button(action: onAction) {
+                            Text(action).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.background)
+                                .frame(maxWidth: .infinity, minHeight: 50)
+                                .background(Capsule().fill(actionColor))
+                        }
+                        .buttonStyle(.plain)
+                        Button(action: onCancel) {
+                            Text("Cancel").font(.system(size: 16)).foregroundStyle(Theme.text)
+                                .frame(maxWidth: .infinity, minHeight: 48)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(24)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 24, style: .continuous).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Theme.outline, lineWidth: 1))
+            .frame(maxWidth: 420)
+            .padding(.horizontal, 28)
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape, onCancel)
+            .transition(.scale(scale: 0.94).combined(with: .opacity))
+        }
+        .onKeyPress(.escape) { onCancel(); return .handled }
+        .onAppear { focused = true }
+    }
+}
+
+/// A Barlow headline set solid (line height about 0.9, as the designs' big headings): one line per
+/// `\n`, pulled together, since SwiftUI ignores negative line spacing.
+struct SolidHeadline: View {
+    let text: String
+    let size: CGFloat
+    var color: Color = Theme.text
+    var leading: CGFloat = 0.9
+
+    init(_ text: String, size: CGFloat, color: Color = Theme.text, leading: CGFloat = 0.9) {
+        self.text = text; self.size = size; self.color = color; self.leading = leading
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
+                Text(line)
+                    .font(.num(size, relativeTo: .largeTitle))
+                    .foregroundStyle(color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .frame(height: size * leading, alignment: .center)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text.replacingOccurrences(of: "\n", with: " "))
+        .accessibilityAddTraits(.isHeader)
+    }
+}

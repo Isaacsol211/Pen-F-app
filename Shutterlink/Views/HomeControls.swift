@@ -401,7 +401,7 @@ struct ToolsTray: View {
     var columns = 4
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             section("Shooting", tools.filter(\.opens))
             section("Switches", tools.filter { !$0.opens })
         }
@@ -409,8 +409,9 @@ struct ToolsTray: View {
 
     @ViewBuilder private func section(_ title: String, _ items: [ToolItem]) -> some View {
         if !items.isEmpty {
-            CapsLabel(title, color: Theme.tertiary)
-                .padding(.leading, 2)
+            CapsLabel(title, color: Theme.secondary)
+                .padding(.leading, 4)
+                .padding(.top, 14)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
                 ForEach(items) { ToolButton(item: $0) }
             }
@@ -418,37 +419,22 @@ struct ToolsTray: View {
     }
 }
 
-/// The Tools sheet: the live view stays visible above it.
+/// The Tools panel's content (219): the live view stays visible above the panel.
 struct ToolsSheet: View {
     @Environment(CameraModel.self) private var camera
     let tools: [ToolItem]
     @Binding var isOpen: Bool
-    @Binding var height: CGFloat
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Tools").font(.num(26))
-                    Spacer()
-                    Button { isOpen = false } label: {
-                        Image(systemName: "xmark").font(.footnote.weight(.bold)).foregroundStyle(Theme.text)
-                            .frame(width: Theme.target, height: Theme.target)
-                    }
-                    .accessibilityLabel("Close tools")
-                }
-                ToolsTray(tools: tools)
-                if camera.interval.running {
-                    Text("The interval timer is running: the Tools button shows \(camera.interval.done)\(camera.interval.total > 0 ? "/\(camera.interval.total)" : "").")
-                        .font(.footnote).foregroundStyle(Theme.secondary)
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            ToolsTray(tools: tools)
+            if camera.interval.running {
+                Text("The interval timer is running: the Tools button shows \(camera.interval.done)\(camera.interval.total > 0 ? "/\(camera.interval.total)" : "").")
+                    .font(.footnote).foregroundStyle(Theme.secondary)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 8)
-            .padding(.bottom, 24)
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 + 16 }
         }
-        .scrollIndicators(.hidden)
-        .background(Theme.background)
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
     }
 }

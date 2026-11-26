@@ -21,7 +21,16 @@ struct ConnectView: View {
         GeometryReader { geo in
             let workspace = Workspace.isWorkspace(geo)
             ScrollView {
-                if workspace {
+                if camera.phase == .connecting && !showAdd {
+                    // 104: the whole screen says what's happening while it connects.
+                    let saved = camera.savedCameras.first { $0.id == connectingID }
+                    ConnectingView(name: saved?.name ?? (camera.wifiSSID.isEmpty ? "Your camera" : camera.wifiSSID),
+                                   ssid: saved?.ssid ?? (camera.wifiSSID.isEmpty ? nil : camera.wifiSSID))
+                        .frame(maxWidth: 560, alignment: .leading)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 20)
+                        .transition(.opacity)
+                } else if workspace {
                     workspaceContent(width: geo.size.width)
                 } else {
                     cameras(grid: false, compactCover: geo.size.height < 600)
@@ -37,19 +46,45 @@ struct ConnectView: View {
             .onChange(of: workspace) { _, value in isWorkspace = value }
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
-        .background { ConnectBackground() }
-        .sheet(isPresented: $showAdd) {
+        // 107: forgetting a camera asks in the design's dialog card.
+        .overlay {
+            ZStack {
+                if let saved = forgetting {
+                    DialogCard(title: "Forget \(saved.name)?",
+                               message: "It comes off this list, with the Wi-Fi password Shutterlink saved for it. Connect again to add it back.",
+                               action: "Forget this camera",
+                               onAction: {
+                                   withAnimation(.snappy) {
+                                       camera.forget(saved)
+                                       if camera.savedCameras.isEmpty { editingCameras = false }
+                                   }
+                                   forgetting = nil
+                               },
+                               onCancel: { forgetting = nil })
+                }
+            }
+            .animation(.spring(duration: 0.28, bounce: 0), value: forgetting)
+        }
+        .background { ConnectBackground(firstRun: camera.savedCameras.isEmpty && camera.phase != .connecting) }
+        .dScreen(isPresented: $showAdd) {
             AddCameraSheet(twoColumns: isWorkspace)
                 .environment(camera)
         }
         #if !targetEnvironment(macCatalyst)
-        .sheet(isPresented: $showScanner) {
+        .dScreen(isPresented: $showScanner) {
             QRScannerSheet { camera.connectFromScannedCode($0) }
         }
         #endif
         .onChange(of: camera.phase) { _, phase in
             if phase != .connecting { connectingID = nil }
         }
+        #if DEBUG
+        // Design checks in the Simulator (no camera there): -designScreen 106 opens the scanner.
+        .onAppear {
+            if let i = CommandLine.arguments.firstIndex(of: "-designScreen"), CommandLine.arguments.count > i + 1,
+               CommandLine.arguments[i + 1] == "106" { showScanner = true }
+        }
+        #endif
     }
 
     // MARK: - Workspace (large canvases)
@@ -208,14 +243,12 @@ struct ConnectView: View {
     private func cover(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: compact ? 10 : 16) {
             BrandLockup(markSize: compact ? 38 : 48)
-            Text("Shoot from\nyour phone.")
-                .font(.num(compact ? 52 : 68, relativeTo: .largeTitle))
-                .lineSpacing(-6)
-                .foregroundStyle(Theme.text)
-                .fixedSize(horizontal: false, vertical: true)
+            SolidHeadline("Shoot from\nyour phone.", size: compact ? 56 : 76)
+                .padding(.top, compact ? 0 : 24)
             Text("Remote control for Olympus, OM System, Panasonic LUMIX, Nikon, Canon and Sony cameras over their own Wi-Fi.")
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondary)
+                .font(.system(size: 15))
+                .lineSpacing(3)
+                .foregroundStyle(Color(hex: 0xD8D4C9))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.top, compact ? 16 : 32)
@@ -245,48 +278,31 @@ struct ConnectView: View {
                 Button(editingCameras ? "Done" : "Edit") {
                     withAnimation(.snappy) { editingCameras.toggle() }
                 }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.accent)
+                .font(.system(size: 15))
+                .foregroundStyle(Theme.text)
+                .frame(minHeight: Theme.target)
                 .disabled(camera.phase != .disconnected)
             }
+            .padding(.bottom, -10)
+            // Under the heading, as designed (103).
+            Text(CameraWiFi.canJoin
+                 ? "Turn on the camera's Wi-Fi and tap it. A camera added by scanning joins its Wi-Fi by itself; for others, join it in Settings ▸ Wi-Fi first, or scan its code once."
+                 : "Turn on the camera's Wi-Fi and join it in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) it.")
+                .font(.footnote)
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 2)
             if grid {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 290), spacing: 12)], spacing: 12) {
                     ForEach(camera.savedCameras) { card($0, hero: true) }
                     addButton(minHeight: 84)
                 }
-            Text(CameraWiFi.canJoin
-                 ? "Turn on the camera's Wi-Fi and tap it. A camera added by scanning joins its Wi-Fi by itself; for others, join it in Settings ▸ Wi-Fi first, or scan its code once."
-                 : "Turn on the camera's Wi-Fi and join it in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) it.")
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
 
             } else {
                 ForEach(Array(camera.savedCameras.enumerated()), id: \.element.id) { card($1, hero: $0 == 0) }
                 addButton(minHeight: 60)
             }
-            Text(CameraWiFi.canJoin
-                 ? "Turn on the camera's Wi-Fi and tap it. A camera added by scanning joins its Wi-Fi by itself; for others, join it in Settings ▸ Wi-Fi first, or scan its code once."
-                 : "Turn on the camera's Wi-Fi and join it in \(Platform.settings) ▸ Wi-Fi, then \(Platform.tap) it.")
-                .font(.subheadline)
-                .foregroundStyle(Theme.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
 
-        }
-        .confirmationDialog("Forget \(forgetting?.name ?? "this camera")?", isPresented: .init(
-            get: { forgetting != nil }, set: { if !$0 { forgetting = nil } }), titleVisibility: .visible) {
-            Button("Forget", role: .destructive) {
-                guard let saved = forgetting else { return }
-                withAnimation(.snappy) {
-                    camera.forget(saved)
-                    if camera.savedCameras.isEmpty { editingCameras = false }
-                }
-                forgetting = nil
-            }
-        } message: {
-            Text("It comes off this list, with the Wi-Fi password Shutterlink saved for it. Connect again to add it back.")
         }
     }
 
@@ -294,11 +310,17 @@ struct ConnectView: View {
         Button {
             showAdd = true
         } label: {
-            Label("Add a camera", systemImage: "plus.circle")
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.secondary)
-                .frame(maxWidth: .infinity, minHeight: Theme.target, alignment: .leading)
-                .contentShape(.rect)
+            HStack(spacing: 10) {
+                Circle()
+                    .strokeBorder(Theme.tertiary, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                    .frame(width: 26, height: 26)
+                    .overlay(Text("+").font(.system(size: 16)).foregroundStyle(Theme.secondary))
+                Text("Add a camera")
+            }
+            .font(.system(size: 16))
+            .foregroundStyle(Theme.secondary)
+            .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .leading)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .disabled(camera.phase != .disconnected)
@@ -335,7 +357,7 @@ struct ConnectView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                if hero && !connecting { CameraLineArt().frame(width: 104, height: 72) }
+                if hero && !connecting { CameraLineArt().frame(width: 118, height: 84) }
                 if connecting {
                     ProgressView().tint(Theme.accent)
                 } else if !editingCameras && !hero {
@@ -365,10 +387,10 @@ struct ConnectView: View {
                 Button {
                     forgetting = saved
                 } label: {
-                    Image(systemName: "trash.circle.fill")
-                        .font(.system(size: 30))
+                    Image(systemName: "minus.circle.fill")
+                        .font(.system(size: 24))
                         .symbolRenderingMode(.palette)
-                        .foregroundStyle(Theme.text, Theme.red)
+                        .foregroundStyle(Theme.background, Theme.red)
                         .frame(width: Theme.target, height: Theme.target)
                 }
                 .buttonStyle(.plain)
@@ -415,13 +437,13 @@ struct ConnectView: View {
             TimelineView(.periodic(from: .now, by: 2)) { _ in
                 WifiStatusRow(address: NetworkInfo.wifiAddress(), host: camera.host)
             }
-            if camera.savedCameras.isEmpty {
+            if camera.savedCameras.isEmpty && camera.phase != .connecting {
                 Button {
                     showAdd = true
                 } label: {
-                    Label("Add your camera", systemImage: "plus").frame(maxWidth: .infinity)
+                    Text("Add your camera").frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.accent)
+                .buttonStyle(.outline)
                 // In the workspace the button stays a button, not a bar across a 13-inch screen.
                 .frame(maxWidth: workspace ? 360 : .infinity)
             }
@@ -431,7 +453,9 @@ struct ConnectView: View {
         .padding(.bottom, 8)
         .frame(maxWidth: workspace ? Self.workspaceMaxWidth + 64 : 600, alignment: workspace ? .leading : .center)
         .frame(maxWidth: .infinity)
-        .background(Theme.background)
+        // No bar: the line sits on the backdrop, as designed; a fade keeps it readable over the list.
+        .background(LinearGradient(colors: [Theme.background.opacity(0), Theme.background.opacity(0.9)],
+                                   startPoint: .top, endPoint: .init(x: 0.5, y: 0.35)).ignoresSafeArea())
     }
 
     /// A brand's setup steps, numbered, then its support note.
@@ -519,7 +543,17 @@ struct AddCameraSheet: View {
     private var sideBySide: Bool { twoColumns && sheetWidth >= 660 }
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            // A design screen (105): Cancel on the left, the title centred.
+            ScreenHeader("Add a camera", centred: true, titleSize: 18) {
+                HeaderButton("Cancel") {
+                    camera.lastError = nil   // a failed try here shouldn't follow the user home
+                    dismiss()
+                }
+                .disabled(camera.phase == .connecting)
+                .padding(.leading, -8)
+            } trailing: { EmptyView() }
+            .padding(.top, 4)
             ScrollView {
                 Group {
                     if sideBySide {
@@ -555,21 +589,10 @@ struct AddCameraSheet: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sheetWidth = $0 }
             .safeAreaInset(edge: .bottom, spacing: 0) { connectBar }
             .scrollDismissesKeyboard(.interactively)
-            .background(Theme.background)
-            .navigationTitle("Add a camera")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        camera.lastError = nil   // a failed try here shouldn't follow the user home
-                        dismiss()
-                    }
-                    .disabled(camera.phase == .connecting)
-                }.sharedBackgroundVisibility(.hidden)
-            }
         }
+        .background(Theme.background.ignoresSafeArea())
         #if !targetEnvironment(macCatalyst)
-        .sheet(isPresented: $showScanner) {
+        .dScreen(isPresented: $showScanner) {
             QRScannerSheet { text in
                 guard camera.applyScannedCode(text) else { return false }
                 scanNote = nil
@@ -587,7 +610,7 @@ struct AddCameraSheet: View {
     }
 
     private var brandList: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             CapsLabel("Camera")
             VStack(spacing: 0) {
                 row(nil)
@@ -606,29 +629,31 @@ struct AddCameraSheet: View {
         return Button {
             withAnimation(.snappy) { camera.setBrand(brand) }
         } label: {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
+            // A radio row (105): the ring on the left, an outlined badge after the name.
+            HStack(spacing: 14) {
+                Circle()
+                    .strokeBorder(on ? Theme.accent : Theme.tertiary, lineWidth: 2)
+                    .frame(width: 22, height: 22)
+                    .overlay { if on { Circle().fill(Theme.accent).frame(width: 10, height: 10) } }
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 8) {
                         Text(brand?.title ?? "Automatic")
-                            .font(.body.weight(.semibold))
+                            .font(.system(size: 16, weight: .medium))
                             .foregroundStyle(Theme.text)
                         if brand == nil {
-                            Text("Recommended").font(.caption2.weight(.bold)).foregroundStyle(Theme.accent)
+                            badge("Recommended", Theme.green)
                         } else if brand?.isBeta == true {
-                            Text("Beta").font(.caption2.weight(.bold)).foregroundStyle(Theme.accent)
+                            badge("Beta", Theme.accent)
                         }
                     }
                     Text(brand?.coverage ?? "Works out which camera it is from its Wi-Fi")
-                        .font(.footnote)
+                        .font(.system(size: 13))
                         .foregroundStyle(Theme.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 8)
-                Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(on ? Theme.accent : Theme.tertiary)
+                Spacer(minLength: 0)
             }
-            .padding(.vertical, 12)
+            .padding(.vertical, 8)
             .frame(minHeight: 60)
             .contentShape(.rect)
         }
@@ -637,9 +662,18 @@ struct AddCameraSheet: View {
         .sensoryFeedback(.selection, trigger: on)
     }
 
+    private func badge(_ text: String, _ color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium))
+            .tracking(0.8)
+            .foregroundStyle(color)
+            .padding(.horizontal, 7).padding(.vertical, 1)
+            .overlay(Capsule().stroke(color, lineWidth: 1))
+    }
+
     private var stepsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            CapsLabel("How to connect", color: Theme.accent)
+        VStack(alignment: .leading, spacing: 0) {
+            CapsLabel("How to connect").padding(.bottom, 8)
             ConnectView.stepRows(for: selection)
         }
         .padding(.vertical, 8)
@@ -693,15 +727,26 @@ struct AddCameraSheet: View {
                         }
                     }
                 } label: {
-                    Label("Scan the camera's QR code", systemImage: "qrcode.viewfinder")
-                        .frame(maxWidth: .infinity)
+                    // The accent card (105): the QR icon, the action, what it does.
+                    HStack(spacing: 14) {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: 24, weight: .medium))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Scan the camera's QR code").font(.system(size: 17, weight: .semibold))
+                            Text("Start the camera's smartphone connection so it shows a QR code. Shutterlink joins its Wi-Fi and connects.")
+                                .font(.system(size: 13))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(Theme.onAccent)
+                    .padding(.horizontal, 18).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, minHeight: 76, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.accent))
+                    .contentShape(.rect(cornerRadius: 20))
                 }
-                .buttonStyle(.accent)
+                .buttonStyle(.plain)
                 .disabled(camera.phase != .disconnected)
-                Text("Start the camera's smartphone connection so it shows a QR code. Shutterlink joins its Wi-Fi and connects.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
                 if let scanNote {
                     Text(scanNote)
                         .font(.footnote)
@@ -840,43 +885,53 @@ private struct ConnectErrorBanner: View {
     var body: some View {
         // Long explanations open on request, so the banner doesn't cover the form.
         let long = text.count > 140
+        // 107: a red outline on near-black, the message, "More" on the right; tap × to clear.
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "wifi.exclamationmark").foregroundStyle(Theme.red)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(text).lineLimit(expanded || !long ? nil : 3)
-                if long {
-                    Button(expanded ? "Less" : "More") { withAnimation(.snappy) { expanded.toggle() } }
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.accent)
-                }
+            Text(text)
+                .lineLimit(expanded || !long ? nil : 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if long {
+                Button(expanded ? "Less" : "More") { withAnimation(.snappy) { expanded.toggle() } }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .buttonStyle(.plain)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Button { withAnimation { dismiss() } } label: { Image(systemName: "xmark").foregroundStyle(Theme.secondary) }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Dismiss")
+            Button { withAnimation { dismiss() } } label: {
+                Image(systemName: "xmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
         }
-        .font(.callout)
+        .font(.system(size: 13))
+        .lineSpacing(2)
         .foregroundStyle(Theme.text)
-        .padding(14)
+        .padding(.horizontal, 14).padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.red.opacity(0.18)))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.red.opacity(0.5), lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.background.opacity(0.86)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.red, lineWidth: 1))
         .transition(.blurReplace)
     }
 }
 
 /// Pure black with a large, faint amber aperture breaking out of the top-right corner: the cover.
 private struct ConnectBackground: View {
+    /// First run: the picture itself across the top, fading to black (102). Otherwise blurred (103).
+    var firstRun = false
+
     var body: some View {
-        ZStack {
-            Theme.background
-            // A dusk glow behind the cameras, like the light in the live view.
-            LinearGradient(stops: [.init(color: Color(hex: 0x3B3566).opacity(0.55), location: 0),
-                                   .init(color: Color(hex: 0x6A4A6E).opacity(0.25), location: 0.35),
-                                   .init(color: Theme.background.opacity(0), location: 0.7)],
-                           startPoint: .top, endPoint: .bottom)
+        if firstRun {
+            ZStack(alignment: .top) {
+                Theme.background
+                DuskScene().frame(height: 560).frame(maxWidth: .infinity).clipped()
+                LinearGradient(stops: [.init(color: LiveBackdrop.wash.opacity(0.3), location: 0),
+                                       .init(color: LiveBackdrop.wash.opacity(0.35), location: 0.3),
+                                       .init(color: Theme.background, location: 0.62)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .ignoresSafeArea()
+        } else {
+            DuskBackdrop()
         }
-        .ignoresSafeArea()
     }
 }
 
@@ -911,17 +966,24 @@ private struct StepRow: View {
     let detail: String
 
     var body: some View {
+        // A numbered step (105): the first in an accent disc, the rest in an outlined ring.
         HStack(alignment: .top, spacing: 14) {
             Text("\(number)")
-                .font(.num(26))
-                .foregroundStyle(Theme.accent)
-                .frame(width: 28, alignment: .leading)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
-                Text(detail).font(.subheadline).foregroundStyle(Theme.secondary)
+                .font(.num(18))
+                .foregroundStyle(number == 1 ? Theme.onAccent : Theme.secondary)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(number == 1 ? Theme.accent : Color.clear))
+                .overlay(Circle().strokeBorder(number == 1 ? Color.clear : Theme.tertiary, lineWidth: 1.5))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 16, weight: .medium)).foregroundStyle(Theme.text)
+                Text(detail).font(.system(size: 13)).foregroundStyle(Theme.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.top, 4)
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) { Hairline() }
         // One VoiceOver stop per step; "▸" reads as "then".
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(number): \(title). \(detail.replacingOccurrences(of: " ▸ ", with: ", then "))")
@@ -951,6 +1013,121 @@ private struct CameraLineArt: View {
             ctx.stroke(Path(ellipseIn: CGRect(x: c.x - 26, y: c.y - 26, width: 52, height: 52)), with: .color(Theme.text.opacity(0.9)), style: line)
             ctx.fill(Path(ellipseIn: CGRect(x: c.x - 10, y: c.y - 10, width: 20, height: 20)), with: .color(Theme.accent))
             ctx.fill(Path(ellipseIn: CGRect(x: w * 0.82, y: h * 0.4, width: 7, height: 7)), with: .color(Theme.text.opacity(0.6)))
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// While connecting (104): the camera drawn in line with signal arcs, its name large, the current
+/// status in the accent, and three steps (Wi-Fi, finding it, reading it) that tick off as the app's
+/// own status lines move on.
+struct ConnectingView: View {
+    @Environment(CameraModel.self) private var camera
+    let name: String
+    var ssid: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Which of the three steps the status is on.
+    private var stage: Int {
+        let s = camera.status ?? ""
+        if s.hasPrefix("Waiting for the camera's Wi-Fi") { return 0 }
+        if s.hasPrefix("Joining") || s.hasPrefix("Looking") || s.hasPrefix("Finding") || s.contains("retrying")
+            || s.hasPrefix("Connecting") { return 1 }
+        return 2
+    }
+
+    var body: some View {
+        let status = camera.status ?? "Looking for the camera…"
+        VStack(alignment: .leading, spacing: 0) {
+            BrandLockup(markSize: 40).padding(.top, 20)
+            ConnectingArt(animating: !reduceMotion)
+                .frame(height: 300)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 10)
+            Text(name)
+                .font(.num(44))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1).minimumScaleFactor(0.6)
+            Text(status)
+                .font(.system(size: 17))
+                .foregroundStyle(Theme.accent)
+                .contentTransition(.interpolate)
+                .padding(.top, 6)
+            VStack(spacing: 0) {
+                step(1, "Waiting for the camera's Wi-Fi…")
+                step(2, stage == 1 ? status : (ssid.map { "Joining \($0)…" } ?? "Looking for the camera…"))
+                step(3, stage == 2 ? status : "Reading camera info…")
+            }
+            .overlay(alignment: .top) { Hairline() }
+            .padding(.top, 18)
+        }
+        .animation(.smooth, value: camera.status)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func step(_ n: Int, _ title: String) -> some View {
+        let state = n - 1 < stage ? 0 : (n - 1 == stage ? 1 : 2)   // done, now, to do
+        return HStack(spacing: 14) {
+            ZStack {
+                switch state {
+                case 0:
+                    Circle().fill(Theme.green)
+                    Image(systemName: "checkmark").font(.system(size: 14, weight: .heavy)).foregroundStyle(Theme.background)
+                case 1:
+                    Circle().fill(Theme.accent)
+                    Text("\(n)").font(.num(18)).foregroundStyle(Theme.background)
+                default:
+                    Circle().strokeBorder(Theme.tertiary, lineWidth: 1.5)
+                    Text("\(n)").font(.num(18)).foregroundStyle(Theme.secondary)
+                }
+            }
+            .frame(width: 30, height: 30)
+            Text(title).font(.system(size: 16, weight: .medium)).foregroundStyle(Theme.text)
+                .lineLimit(2)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) { Hairline() }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(state == 0 ? "Done" : (state == 1 ? "In progress" : "Not yet"))
+    }
+}
+
+/// The camera in line (104), with two arcs under it that pulse outward while connecting.
+private struct ConnectingArt: View {
+    let animating: Bool
+
+    var body: some View {
+        TimelineView(.animation(paused: !animating)) { context in
+            let t = animating ? context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6 : 0.5
+            Canvas { ctx, size in
+                // The design's 390 × 300 drawing, centred.
+                let k = min(size.width / 390, size.height / 300)
+                ctx.translateBy(x: (size.width - 390 * k) / 2, y: (size.height - 300 * k) / 2)
+                ctx.scaleBy(x: k, y: k)
+                let line = StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                let ink = GraphicsContext.Shading.color(Theme.text)
+                ctx.stroke(Path(roundedRect: CGRect(x: 95, y: 50, width: 200, height: 120), cornerRadius: 16), with: ink, style: line)
+                var hump = Path()
+                hump.move(to: CGPoint(x: 165, y: 50)); hump.addLine(to: CGPoint(x: 177, y: 28))
+                hump.addLine(to: CGPoint(x: 213, y: 28)); hump.addLine(to: CGPoint(x: 225, y: 50))
+                ctx.stroke(hump, with: ink, style: line)
+                ctx.stroke(Path(roundedRect: CGRect(x: 113, y: 38, width: 28, height: 12), cornerRadius: 3), with: ink, style: line)
+                ctx.stroke(Path(roundedRect: CGRect(x: 250, y: 36, width: 26, height: 14), cornerRadius: 3), with: ink, style: line)
+                ctx.stroke(Path(ellipseIn: CGRect(x: 149, y: 66, width: 92, height: 92)), with: ink, style: line)
+                ctx.stroke(Path(ellipseIn: CGRect(x: 164, y: 81, width: 62, height: 62)), with: ink, style: line)
+                ctx.fill(Path(ellipseIn: CGRect(x: 182, y: 99, width: 26, height: 26)), with: .color(Theme.accent))
+                // Two arcs: the near one, then the far one, brightening in turn.
+                for (i, r) in [(0, 50.0), (1, 90.0)] {
+                    var arc = Path()
+                    let cy = i == 0 ? 233.0 : 268.0
+                    arc.addArc(center: CGPoint(x: 195, y: cy - r), radius: r, startAngle: .degrees(150), endAngle: .degrees(30), clockwise: true)
+                    let phase = (t + Double(i) * 0.5).truncatingRemainder(dividingBy: 1)
+                    let base = i == 0 ? 0.4 : 0.7
+                    let alpha = animating ? 0.25 + 0.75 * (0.5 + 0.5 * sin(phase * 2 * .pi)) * base / 0.7 : base
+                    ctx.stroke(arc, with: .color(Theme.accent.opacity(alpha)), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                }
+            }
         }
         .accessibilityHidden(true)
     }

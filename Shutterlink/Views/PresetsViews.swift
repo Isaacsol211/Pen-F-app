@@ -24,11 +24,7 @@ struct PresetsPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("One tap.\nCamera set.")
-                .font(.num(54, relativeTo: .largeTitle))
-                // Set solid, as designed (line height about 1).
-                .lineSpacing(-12)
-                .fixedSize(horizontal: false, vertical: true)
+            SolidHeadline("One tap.\nCamera set.", size: 54)
                 .padding(.top, 4)
             if let undo = camera.presetUndo {
                 undoCard(undo)

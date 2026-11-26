@@ -31,36 +31,73 @@ struct QRScannerSheet: View {
     @State private var unreadable = false
 
     var body: some View {
-        NavigationStack {
-            ZStack(alignment: .bottom) {
-                QRScanner { text in
-                    if onCode(text) {
-                        dismiss()
-                    } else {
-                        withAnimation(.snappy) { unreadable = true }
-                    }
+        // A design screen (106): Cancel top right, a big heading, the camera feed in a framed square,
+        // and, when the code can't be read, a note and "Type It Instead".
+        VStack(alignment: .leading, spacing: 0) {
+            ScreenHeader("") { HeaderButton("Cancel") { dismiss() } }
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 8) {
+                SolidHeadline("Scan the camera's code", size: 40)
+                Text("Point at the QR code on the camera's screen.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.secondary)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            Spacer(minLength: 20)
+            QRScanner { text in
+                if onCode(text) {
+                    dismiss()
+                } else {
+                    withAnimation(.snappy) { unreadable = true }
                 }
-                .ignoresSafeArea()
-                Text(unreadable
-                     ? "Shutterlink can't read this camera's code yet. Close this and type the network name and password shown next to the code."
-                     : "Point at the QR code on the camera's screen.")
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(Theme.text)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
-                    .surface(.regular, in: .rect(cornerRadius: 18, style: .continuous))
-                    .padding(20)
             }
-            .navigationTitle("Scan the camera's code")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(unreadable ? "Type It Instead" : "Cancel") { dismiss() }
-                }.sharedBackgroundVisibility(.hidden)
+            .frame(width: 240, height: 240)
+            .clipShape(.rect(cornerRadius: 18, style: .continuous))
+            .overlay(ViewfinderCorners().stroke(Theme.accent, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)).padding(-20))
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Camera viewfinder")
+            Spacer(minLength: 20)
+            VStack(spacing: 12) {
+                if unreadable {
+                    Text("Shutterlink can't read this camera's code yet. Close this and type the network name and password shown next to the code.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.background.opacity(0.86)))
+                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.accent, lineWidth: 1))
+                        .transition(.blurReplace)
+                    Button("Type It Instead") { dismiss() }
+                        .buttonStyle(.outline)
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
         }
-        .tint(Theme.accent)
+        .background(Color(hex: 0x141412).ignoresSafeArea())
+    }
+}
+
+/// The four corner brackets round the scanner's square (106).
+private struct ViewfinderCorners: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let l: CGFloat = 34
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY + l)); p.addLine(to: CGPoint(x: rect.minX, y: rect.minY + 8))
+        p.addQuadCurve(to: CGPoint(x: rect.minX + 8, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.minX + l, y: rect.minY))
+        p.move(to: CGPoint(x: rect.maxX - l, y: rect.minY)); p.addLine(to: CGPoint(x: rect.maxX - 8, y: rect.minY))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + 8), control: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + l))
+        p.move(to: CGPoint(x: rect.maxX, y: rect.maxY - l)); p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - 8))
+        p.addQuadCurve(to: CGPoint(x: rect.maxX - 8, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX - l, y: rect.maxY))
+        p.move(to: CGPoint(x: rect.minX + l, y: rect.maxY)); p.addLine(to: CGPoint(x: rect.minX + 8, y: rect.maxY))
+        p.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - 8), control: CGPoint(x: rect.minX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - l))
+        return p
     }
 }
 
