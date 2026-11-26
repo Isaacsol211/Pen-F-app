@@ -420,14 +420,17 @@ struct PocketModeView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             ZStack {
                 Color.black.ignoresSafeArea()
-                VStack(spacing: 14) {
+                // 316: the time large in Barlow, dim red; what it is under it.
+                VStack(spacing: 6) {
                     Text(headline(at: context.date))
-                        .font(.system(size: 64, weight: .light, design: .rounded).monospacedDigit())
+                        .font(.num(120))
+                        .monospacedDigit()
+                        .lineLimit(1).minimumScaleFactor(0.5)
                     Text(detail(at: context.date))
-                        .font(.system(size: 17, weight: .medium, design: .rounded))
+                        .font(.system(size: 15))
                         .multilineTextAlignment(.center)
                 }
-                .foregroundStyle(red.opacity(0.55))
+                .foregroundStyle(red.opacity(0.7))
                 .padding(.horizontal, 30)
 
                 VStack {

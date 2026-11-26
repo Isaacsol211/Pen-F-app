@@ -87,11 +87,6 @@ struct RemoteView: View {
         .dPanel(isPresented: $showMore, title: camera.cameraName ?? "Camera") {
             moreSheet
         }
-        // The motion trigger keeps the picture above usable, so the box can be dragged into place (311).
-        .dPanel(isPresented: Binding(get: { !isWorkspace && openPanel == .motion }, set: { if !$0 { openPanel = nil } }),
-                title: SidePanel.motion.title, dimsBehind: false) {
-            MotionPanel().padding(.horizontal, 20).padding(.bottom, 12)
-        }
         .modifier(NightVision(enabled: nightMode))
         .overlay {
             ZStack {
@@ -184,13 +179,21 @@ struct RemoteView: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
                     VStack(spacing: 0) {
-                        if !showLoupe {
+                        if !showLoupe && openPanel != .motion {
                             SettingLine(active: dialBinding,
                                         aids: tools.filter { ["grid", "histogram", "peaking", "tap"].contains($0.id) }) { settingSheet = $0 }
                             ExposureStrip(active: dialBinding, selected: selected)
                                 .padding(.horizontal, 12)
                         }
-                        if showLoupe {
+                        if openPanel == .motion {
+                            // 311: the trigger's controls take the place of the remote's, under the picture
+                            // with its box.
+                            MotionPanel(close: { withAnimation(.snappy) { openPanel = nil } })
+                                .padding(.horizontal, 20)
+                                .padding(.top, 10)
+                                .padding(.bottom, 8)
+                                .transition(.opacity)
+                        } else if showLoupe {
                             // 213: the loupe's zoom and focus reading take the dial's place.
                             LoupeReadout()
                                 .padding(.top, 18)
@@ -212,9 +215,11 @@ struct RemoteView: View {
                     }
                     .frame(maxWidth: Self.controlsMaxWidth)
                 }
-                shutterRow
-                    .frame(maxWidth: Self.controlsMaxWidth)
-                    .padding(.bottom, 4)
+                if openPanel != .motion {
+                    shutterRow
+                        .frame(maxWidth: Self.controlsMaxWidth)
+                        .padding(.bottom, 4)
+                }
             }
         }
     }

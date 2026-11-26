@@ -487,49 +487,70 @@ struct MotionPanel: View {
 
     private static let sizes: [(String, Double)] = [("Small", 0.25), ("Medium", 0.4), ("Large", 0.6)]
 
+    /// Closes the trigger where it's shown in place of the remote's controls (311); nil in the inspector.
+    var close: (() -> Void)?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            card {
+        // 311: rows under the picture, Arm/Disarm at the bottom.
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
                 Text("Shoots when something moves inside the box on live view. Drag the box to move it.")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.secondary)
-                Text("Box").font(.headline)
-                Picker("Box", selection: Binding(
-                    get: { Self.sizes.min { abs($0.1 - camera.motion.region.width) < abs($1.1 - camera.motion.region.width) }?.1 ?? 0.4 },
-                    set: { camera.motion.resize(to: $0) })) {
-                    ForEach(Self.sizes, id: \.1) { Text($0.0).tag($0.1) }
+                    .font(.system(size: 15)).foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let close {
+                    Spacer(minLength: 8)
+                    HeaderButton("Done", action: close).padding(.top, -12)
                 }
-                .pickerStyle(.segmented)
-                Text("Sensitivity").font(.headline)
+            }
+            .padding(.bottom, 8)
+            SegRow(label: "Box", options: Self.sizes.map(\.1), selection: Binding(
+                get: { Self.sizes.min { abs($0.1 - camera.motion.region.width) < abs($1.1 - camera.motion.region.width) }?.1 ?? 0.4 },
+                set: { camera.motion.resize(to: $0) })) { size in Self.sizes.first { $0.1 == size }?.0 ?? "" }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Sensitivity").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                    Spacer()
+                    Text("Movement level").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                }
                 Slider(value: Binding(get: { camera.motion.sensitivity }, set: { camera.motion.sensitivity = $0 }), in: 0...1)
+                    .tint(Theme.green)
                 meter
-                Stepper(value: Binding(get: { camera.motion.cooldown }, set: { camera.motion.cooldown = $0 }), in: 1...60) {
-                    LabeledContent("Wait between shots", value: "\(Int(camera.motion.cooldown)) s")
+            }
+            .padding(.vertical, 12)
+            .overlay(alignment: .bottom) { Hairline() }
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Wait between shots").font(.system(size: 16, weight: .medium))
+                    Text("1 to 60 s").font(.system(size: 13)).foregroundStyle(Theme.secondary)
                 }
+                Spacer()
+                Stepper("Wait between shots", value: Binding(get: { camera.motion.cooldown }, set: { camera.motion.cooldown = $0 }), in: 1...60)
+                    .labelsHidden()
+                Text("\(Int(camera.motion.cooldown)) s").font(.num(22, weight: .semibold)).frame(minWidth: 40, alignment: .trailing)
             }
-            Button {
-                camera.armMotion(!camera.motion.armed)
-            } label: {
-                Label(camera.motion.armed ? "Disarm" : "Arm", systemImage: camera.motion.armed ? "stop.fill" : "figure.walk.motion")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.accent)
-            .disabled(camera.mode != .rec || !camera.liveViewRunning || (camera.isOpenEndedShutter && !camera.motion.armed))
-            if camera.isOpenEndedShutter && !camera.motion.armed {
-                Text("The motion trigger needs a timed shutter speed, not Bulb or a Live mode.")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.accent)
-            }
+            .frame(minHeight: 58)
+            .overlay(alignment: .bottom) { Hairline() }
             if camera.motion.armed || camera.motion.shots > 0 {
                 Text(camera.motion.armed ? "Armed · \(camera.motion.shots) shots so far" : "\(camera.motion.shots) shots")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(camera.motion.armed ? Theme.accent : Theme.secondary)
+                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(camera.motion.armed ? Theme.green : Theme.secondary)
+                    .padding(.vertical, 12)
             }
-            Text("Live view over Wi-Fi lags a little, so this suits birds at a feeder and slow subjects, not lightning. Keep Shutterlink open and the \(Platform.device) awake.")
-                .font(.footnote)
-                .foregroundStyle(Theme.secondary)
+            if camera.isOpenEndedShutter && !camera.motion.armed {
+                NoteRow("The motion trigger needs a timed shutter speed, not Bulb or a Live mode.", warning: true)
+            }
+            NoteRow("Live view over Wi-Fi lags a little, so this suits birds at a feeder and slow subjects, not lightning. Keep Shutterlink open and the \(Platform.device) awake.")
+            Spacer(minLength: 16)
+            Group {
+                if camera.motion.armed {
+                    Button("Disarm") { camera.armMotion(false) }.buttonStyle(.outline)
+                } else {
+                    Button("Arm") { camera.armMotion(true) }.buttonStyle(.accent)
+                }
+            }
+            .disabled(camera.mode != .rec || !camera.liveViewRunning || (camera.isOpenEndedShutter && !camera.motion.armed))
         }
+        .frame(maxHeight: .infinity, alignment: .top)
         .onAppear { camera.motion.editing = true }
         .onDisappear { camera.motion.editing = false }
     }
