@@ -125,6 +125,7 @@ struct AstroView: View {
             } else {
                 BigNumber(value: camera.hasLiveComposite ? "Live Composite" : "30 s series", caption: "Star trails",
                           size: 64, color: Theme.astroText, accent: Theme.astroAccent)
+                    .padding(.horizontal, 24)
             }
         } else {
             BigNumber(value: "\(Int(plan.maxSeconds.rounded())) s", caption: "The longest exposure that keeps stars round",
@@ -247,13 +248,14 @@ struct AstroSky: View {
         Canvas { ctx, size in
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.astroBackground))
             var rng = SeededRandom(seed: 7)
-            for _ in 0..<70 {
-                let x = rng.next() * size.width, y = rng.next() * size.height * 0.55
+            // Stars only in the sky band at the top, behind the header and the big number, never under rows.
+            for _ in 0..<38 {
+                let x = rng.next() * size.width, y = 40 + rng.next() * size.height * 0.2
                 let r = 0.5 + rng.next() * 1.1
                 ctx.fill(Path(ellipseIn: CGRect(x: x, y: y, width: r * 2, height: r * 2)),
                          with: .color(.white.opacity(0.35 + rng.next() * 0.5)))
             }
-            let moon = CGRect(x: size.width - 70, y: 132, width: 26, height: 26)
+            let moon = CGRect(x: size.width - 58, y: 112, width: 24, height: 24)
             ctx.fill(Path(ellipseIn: moon), with: .color(Color(hex: 0xEEF1F7)))
             ctx.fill(Path(ellipseIn: moon.offsetBy(dx: -7, dy: -4)), with: .color(Theme.astroBackground))
         }

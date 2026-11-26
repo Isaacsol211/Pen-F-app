@@ -37,7 +37,11 @@ struct QRScannerSheet: View {
             ScreenHeader("") { HeaderButton("Cancel") { dismiss() } }
                 .padding(.top, 4)
             VStack(alignment: .leading, spacing: 8) {
-                SolidHeadline("Scan the camera's code", size: 40)
+                Text("Scan the camera's code")
+                    .font(.num(40))
+                    .foregroundStyle(Theme.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
                 Text("Point at the QR code on the camera's screen.")
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.secondary)
@@ -45,17 +49,24 @@ struct QRScannerSheet: View {
             .padding(.horizontal, 20)
             .padding(.top, 8)
             Spacer(minLength: 20)
-            QRScanner { text in
-                if onCode(text) {
-                    dismiss()
-                } else {
-                    withAnimation(.snappy) { unreadable = true }
+            // A square: the feed inside, the accent corners just outside it (106).
+            ZStack {
+                QRScanner { text in
+                    if onCode(text) {
+                        dismiss()
+                    } else {
+                        withAnimation(.snappy) { unreadable = true }
+                    }
                 }
+                .frame(width: 220, height: 220)
+                .clipShape(.rect(cornerRadius: 14, style: .continuous))
+                ViewfinderCorners()
+                    .stroke(Theme.accent, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                    .frame(width: 260, height: 260)
             }
-            .frame(width: 240, height: 240)
-            .clipShape(.rect(cornerRadius: 18, style: .continuous))
-            .overlay(ViewfinderCorners().stroke(Theme.accent, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round)).padding(-20))
+            .frame(width: 260, height: 260)
             .frame(maxWidth: .infinity)
+            .accessibilityElement()
             .accessibilityLabel("Camera viewfinder")
             Spacer(minLength: 20)
             VStack(spacing: 12) {
@@ -69,9 +80,10 @@ struct QRScannerSheet: View {
                         .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.background.opacity(0.86)))
                         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.accent, lineWidth: 1))
                         .transition(.blurReplace)
-                    Button("Type It Instead") { dismiss() }
-                        .buttonStyle(.outline)
                 }
+                // Always there, as designed: back to typing the network's name and password.
+                Button("Type It Instead") { dismiss() }
+                    .buttonStyle(.outline)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 24)

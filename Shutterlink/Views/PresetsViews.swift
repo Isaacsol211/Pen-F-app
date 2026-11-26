@@ -424,18 +424,7 @@ struct NDPanel: View {
                 }
             }
             .sensoryFeedback(.selection, trigger: stops)
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Strength").font(.system(size: 16, weight: .medium))
-                    Text("1 to 20").font(.system(size: 13)).foregroundStyle(Theme.secondary)
-                }
-                Spacer()
-                Stepper("Strength", value: $stops, in: 1...20).labelsHidden()
-                Text("\(stops) stops").font(.num(22, weight: .semibold)).frame(minWidth: 70, alignment: .trailing)
-                    .contentTransition(.numericText())
-            }
-            .frame(minHeight: 58)
-            .overlay(alignment: .bottom) { Hairline() }
+            WheelValueRow(title: "Strength", subtitle: "1 to 20", values: Array(1...20), value: $stops) { "\($0) stops" }
             if let seconds, camera.ndShutter(seconds: seconds).timedByApp {
                 NoteRow("Longer than the camera's own speeds: the app runs Bulb and stops it. Keep Shutterlink open.")
             }
@@ -518,18 +507,8 @@ struct MotionPanel: View {
             }
             .padding(.vertical, 12)
             .overlay(alignment: .bottom) { Hairline() }
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Wait between shots").font(.system(size: 16, weight: .medium))
-                    Text("1 to 60 s").font(.system(size: 13)).foregroundStyle(Theme.secondary)
-                }
-                Spacer()
-                Stepper("Wait between shots", value: Binding(get: { camera.motion.cooldown }, set: { camera.motion.cooldown = $0 }), in: 1...60)
-                    .labelsHidden()
-                Text("\(Int(camera.motion.cooldown)) s").font(.num(22, weight: .semibold)).frame(minWidth: 40, alignment: .trailing)
-            }
-            .frame(minHeight: 58)
-            .overlay(alignment: .bottom) { Hairline() }
+            WheelValueRow(title: "Wait between shots", subtitle: "1 to 60 s", values: Array(1...60),
+                          value: Binding(get: { Int(camera.motion.cooldown) }, set: { camera.motion.cooldown = Double($0) })) { "\($0) s" }
             if camera.motion.armed || camera.motion.shots > 0 {
                 Text(camera.motion.armed ? "Armed · \(camera.motion.shots) shots so far" : "\(camera.motion.shots) shots")
                     .font(.system(size: 13, weight: .semibold).monospacedDigit())

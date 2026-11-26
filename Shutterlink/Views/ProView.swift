@@ -116,7 +116,8 @@ struct ProView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .transition(.blurReplace)
             }
-            if pro.purchased || pro.earlyUser || pro.testerUnlock {
+            // Unlocked other than by a trial (bought, early user, TestFlight, a developer build): just Done.
+            if pro.isUnlocked && !pro.inTrial {
                 Button("Done") { dismiss() }
                     .buttonStyle(.accent)
             } else {
@@ -174,7 +175,8 @@ struct ProView: View {
         .padding(.bottom, 8)
         .frame(maxWidth: 600)
         .frame(maxWidth: .infinity)
-        .background(LiveBackdrop.wash.opacity(0.94).ignoresSafeArea())
+        .background(Theme.background.ignoresSafeArea())
+        .overlay(alignment: .top) { Hairline() }
         .animation(.smooth, value: pro.message)
     }
 }

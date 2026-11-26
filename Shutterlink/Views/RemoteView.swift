@@ -862,7 +862,9 @@ struct LiveBackdrop: View {
                             .brightness(0.04)
                             .scaleEffect(1.2)
                             .blur(radius: 36, opaque: true)
-                            .opacity(style == .remote ? 0.9 : 0.7)
+                            // Toned down like the design's dusk: real scenes are much brighter.
+                            .brightness(-0.12)
+                            .opacity(style == .remote ? 0.85 : 0.7)
                     }
                     .clipped()
             }
@@ -870,8 +872,13 @@ struct LiveBackdrop: View {
             // the dial down.
             switch style {
             case .remote:
-                LinearGradient(stops: [.init(color: Self.wash.opacity(0), location: 0.44),
-                                       .init(color: Self.wash.opacity(0.96), location: 0.81)],
+                // Dark under the status line, a glow beside the picture, then near-black from just under
+                // the picture so the small line, values and dial read crisply over any scene.
+                LinearGradient(stops: [.init(color: Self.wash.opacity(0.72), location: 0),
+                                       .init(color: Self.wash.opacity(0.35), location: 0.1),
+                                       .init(color: Self.wash.opacity(0.3), location: 0.4),
+                                       .init(color: Self.wash.opacity(0.82), location: 0.5),
+                                       .init(color: Self.wash.opacity(0.96), location: 0.66)],
                                startPoint: .top, endPoint: .bottom)
             case .page:
                 LinearGradient(stops: [.init(color: Self.wash.opacity(0.25), location: 0),

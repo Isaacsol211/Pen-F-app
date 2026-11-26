@@ -213,7 +213,7 @@ struct ExposureStrip: View {
             Text(text)
                 .font(.num(valueSize, weight: isSelected ? .semibold : .medium))
                 .tracking(0.6)
-                .foregroundStyle(isSelected ? Theme.accent : (locked ? Theme.tertiary : Color(hex: 0xC9C5BA)))
+                .foregroundStyle(isSelected ? Theme.accent : (locked ? Theme.secondary : Color(hex: 0xC9C5BA)))
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
                 .padding(.horizontal, 4)

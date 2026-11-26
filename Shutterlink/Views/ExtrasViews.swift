@@ -98,18 +98,7 @@ struct BracketPanel: View {
             BigNumber(value: "\(focusFrames)", caption: "frames, from where you focused towards infinity", size: 104)
                 .padding(.bottom, 14)
             VStack(spacing: 0) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Frames").font(.system(size: 16, weight: .medium))
-                        Text("2 to 200").font(.system(size: 13)).foregroundStyle(Theme.secondary)
-                    }
-                    Spacer()
-                    Stepper("Frames", value: $focusFrames, in: 2...200).labelsHidden()
-                    Text("\(focusFrames)").font(.num(22, weight: .medium)).frame(minWidth: 36, alignment: .trailing)
-                        .contentTransition(.numericText())
-                }
-                .frame(minHeight: 58)
-                .overlay(alignment: .bottom) { Hairline() }
+                WheelValueRow(title: "Frames", subtitle: "2 to 200", values: Array(2...200), value: $focusFrames) { "\($0)" }
                 SegRow(label: "Step", options: FocusStepSize.allCases.map(\.rawValue), selection: $focusStepRaw) {
                     FocusStepSize(rawValue: $0)?.title ?? "\($0)"
                 }
@@ -553,6 +542,66 @@ struct RawImportBar: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 6)
             .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+}
+
+/// A hairline row with a whole-number value on the right in Barlow (310, 311, 305); tap it to change
+/// the value on a wheel in the bottom panel. VoiceOver can also swipe it up and down.
+struct WheelValueRow: View {
+    let title: String
+    var subtitle: String?
+    let values: [Int]
+    @Binding var value: Int
+    let format: (Int) -> String
+    @State private var editing = false
+    @State private var picked: Int?
+
+    var body: some View {
+        Button { picked = value; editing = true } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 16, weight: .medium)).foregroundStyle(Theme.text)
+                    if let subtitle { Text(subtitle).font(.system(size: 13)).foregroundStyle(Theme.secondary) }
+                }
+                Spacer()
+                Text(format(value)).font(.num(22, weight: .semibold)).foregroundStyle(Theme.text)
+                    .contentTransition(.numericText())
+            }
+            .frame(minHeight: 58)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) { Hairline() }
+        .accessibilityElement()
+        .accessibilityLabel(title)
+        .accessibilityValue(format(value))
+        .accessibilityHint("Changes it")
+        .accessibilityAdjustableAction { direction in
+            guard let i = values.firstIndex(of: value) else { return }
+            let next = direction == .increment ? i + 1 : i - 1
+            if values.indices.contains(next) { value = values[next] }
+        }
+        .dPanelCover(isPresented: $editing, title: title) {
+            VStack(spacing: 18) {
+                WheelColumn(values: values, unit: "", selection: $picked)
+                    .frame(height: 170)
+                    .overlay {
+                        VStack(spacing: 0) {
+                            Rectangle().fill(Theme.stroke).frame(height: 1)
+                            Spacer().frame(height: 46)
+                            Rectangle().fill(Theme.stroke).frame(height: 1)
+                        }
+                        .allowsHitTesting(false)
+                    }
+                Button("Set") {
+                    if let picked { value = picked }
+                    editing = false
+                }
+                .buttonStyle(.accent)
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
         }
     }
 }

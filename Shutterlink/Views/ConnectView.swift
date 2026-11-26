@@ -23,8 +23,13 @@ struct ConnectView: View {
             ScrollView {
                 if camera.phase == .connecting && !showAdd {
                     // 104: the whole screen says what's happening while it connects.
+                    // The camera being connected: the card tapped, else the last one of this brand, else the
+                    // network being joined, else the brand.
                     let saved = camera.savedCameras.first { $0.id == connectingID }
-                    ConnectingView(name: saved?.name ?? (camera.wifiSSID.isEmpty ? "Your camera" : camera.wifiSSID),
+                        ?? (camera.autoDetectBrand ? nil : camera.savedCameras.filter { $0.brand == camera.brand }
+                            .max { $0.lastUsed < $1.lastUsed })
+                    ConnectingView(name: saved?.name ?? (camera.wifiSSID.isEmpty
+                                                         ? (camera.autoDetectBrand ? "Camera" : camera.brand.shortTitle) : camera.wifiSSID),
                                    ssid: saved?.ssid ?? (camera.wifiSSID.isEmpty ? nil : camera.wifiSSID))
                         .frame(maxWidth: 560, alignment: .leading)
                         .frame(maxWidth: .infinity)
@@ -41,7 +46,10 @@ struct ConnectView: View {
                 }
             }
             .scrollEdgeEffectStyle(.soft, for: .top)
-            .safeAreaInset(edge: .bottom, spacing: 0) { footer(workspace: workspace) }
+            // While connecting (104) the screen is only the connecting view; no footer.
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !(camera.phase == .connecting && !showAdd) { footer(workspace: workspace) }
+            }
             .onAppear { isWorkspace = workspace }
             .onChange(of: workspace) { _, value in isWorkspace = value }
         }
@@ -529,9 +537,10 @@ struct ConnectView: View {
         .padding(.bottom, 8)
         .frame(maxWidth: workspace ? Self.workspaceMaxWidth + 64 : 600, alignment: workspace ? .leading : .center)
         .frame(maxWidth: .infinity)
-        // No bar: the line sits on the backdrop, as designed; a fade keeps it readable over the list.
-        .background(LinearGradient(colors: [Theme.background.opacity(0), Theme.background.opacity(0.9)],
-                                   startPoint: .top, endPoint: .init(x: 0.5, y: 0.35)).ignoresSafeArea())
+        // A short fade, then solid: the list scrolls clear under it.
+        .background(LinearGradient(stops: [.init(color: Theme.background.opacity(0), location: 0),
+                                           .init(color: Theme.background, location: 0.3)],
+                                   startPoint: .top, endPoint: .bottom).ignoresSafeArea())
     }
 
     /// A brand's setup steps, numbered, then its support note.
