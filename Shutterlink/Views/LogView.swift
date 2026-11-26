@@ -65,6 +65,19 @@ private struct LogRow: View {
     let entry: LogEntry
 
     var body: some View {
+        if entry.note {
+            // A line from the app itself (live view's frame rates): no status or time, and it wraps.
+            VStack(alignment: .leading, spacing: 4) {
+                Text(entry.method).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.accent)
+                Text(entry.path).font(.system(size: 13)).foregroundStyle(Theme.text).textSelection(.enabled)
+            }
+            .padding(.vertical, 2)
+        } else {
+            request
+        }
+    }
+
+    private var request: some View {
         // 407: status in Barlow (green, or red ERR), method, time, then the path, on one line.
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 12) {

@@ -532,6 +532,9 @@ final class CameraModel {
                 guard let self, self.focusPeaking else { return }
                 self.peakingOverlay = overlay.map { UIImage(cgImage: $0) }
             }
+            receiver.onSummary = { [weak self] line in
+                self?.appendLog(.note("LIVE", line))
+            }
             receiver.setPeaking(focusPeaking)
             do {
                 try receiver.start()
