@@ -65,18 +65,22 @@ struct ProView: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { actions }
             .background { AmbientBackground() }
-            .navigationTitle("Shutterlink Pro")
+            .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .principal) {
+                // 408: the mark and name on the left, Close on the right.
+                ToolbarItem(placement: .topBarLeading) {
                     HStack(spacing: 8) {
                         ApertureMark().frame(width: 22, height: 22)
                         Text("Shutterlink Pro").font(.system(size: 15, weight: .semibold))
                     }
+                    .fixedSize()
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isHeader)
                 }.sharedBackgroundVisibility(.hidden)
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Close") { dismiss() }.foregroundStyle(Theme.text)
                 }.sharedBackgroundVisibility(.hidden)
             }
         }
@@ -94,11 +98,8 @@ struct ProView: View {
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Theme.accent)
             }
-            Text(pro.isUnlocked ? "Pro is unlocked" : "The tools that do the work for you")
-                .font(.num(pro.isUnlocked ? 64 : 52, relativeTo: .largeTitle))
-                .lineSpacing(-6)
-                .foregroundStyle(pro.isUnlocked ? Theme.green : Theme.text)
-                .fixedSize(horizontal: false, vertical: true)
+            SolidHeadline(pro.isUnlocked ? "Pro is\nunlocked" : "The tools that do\nthe work for you",
+                          size: pro.isUnlocked ? 72 : 48, color: pro.isUnlocked ? Theme.green : Theme.text)
             Text(pro.isUnlocked ? pro.statusText : "One purchase for iPhone, iPad and Mac. Yours to keep, no subscription.")
                 .font(.subheadline)
                 .foregroundStyle(Theme.secondary)
