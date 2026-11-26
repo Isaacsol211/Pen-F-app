@@ -197,9 +197,29 @@ struct PropertyOptionsList: View {
             Text(current.settable ? "Drag to turn, tap a value to set it." : "This setting is locked in the current mode.")
                 .font(.footnote)
                 .foregroundStyle(Theme.tertiary)
-                .padding(.bottom, 16)
+            // 406: a light Done at the bottom: sets the value between the rules and goes back.
+            Button {
+                if current.settable, value != current.value {
+                    Task { await camera.setProperty(property.name, to: value) }
+                }
+                dismiss()
+            } label: {
+                Text("Done").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.background)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background(Capsule().fill(Theme.text))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 16)
         }
         .background { AmbientBackground() }
+        .navigationBarBackButtonHidden()
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Back") { dismiss() }.foregroundStyle(Theme.text)
+            }.sharedBackgroundVisibility(.hidden)
+        }
         .navigationTitle(PropertyFormat.title(for: property.name))
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -274,7 +294,8 @@ struct AllSettingsView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(PropertyFormat.title(for: property.name)).font(.system(size: 16, weight: .medium))
-                Text(property.options.isEmpty ? property.name : "\(property.name) · \(property.options.count) options")
+                // 405: "23 options"; the camera's own name for it is on the option screen ("camera code").
+                Text(property.options.isEmpty ? property.name : "\(property.options.count) options")
                     .font(.footnote).foregroundStyle(Theme.secondary)
             }
             Spacer()

@@ -75,17 +75,16 @@ struct GalleryView: View {
 
     /// The card's folders and thumbnails, or why there's nothing to show.
     @ViewBuilder private func browser(workspace: Bool) -> some View {
+        // 403: a state is a Barlow title and a line under it, centred.
         if camera.galleryLoading && camera.images.isEmpty {
-            ProgressView("Reading the card…")
+            GalleryState(title: "Reading the card…", busy: true)
         } else if let error = camera.galleryError, camera.images.isEmpty {
-            ContentUnavailableView("Couldn't read the card", systemImage: "sdcard",
-                                   description: Text(error))
+            GalleryState(title: "Couldn't read the card", detail: error)
         } else if camera.images.isEmpty && camera.cardFolders.isEmpty {
-            ContentUnavailableView("No photos", systemImage: "photo.on.rectangle",
-                                   description: Text("Nothing on the card yet."))
+            GalleryState(title: "No photos", detail: "Nothing on the card yet.")
         } else if starredOnly && starredCount == 0 {
-            ContentUnavailableView("No starred photos", systemImage: "star",
-                                   description: Text("\(Platform.isMac ? "Right-click" : "Tap and hold") a photo to star it, or use the star when viewing it."))
+            GalleryState(title: "No starred photos",
+                         detail: "\(Platform.isMac ? "Right-click" : "Tap and hold") a photo to star it, or use the star when viewing it.")
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14, pinnedViews: [.sectionHeaders]) {
@@ -368,6 +367,27 @@ struct GalleryView: View {
               }
             }
         }
+    }
+}
+
+/// A gallery state (403): an optional accent spinner, the title in Barlow, a line under it.
+private struct GalleryState: View {
+    let title: String
+    var detail: String?
+    var busy = false
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if busy { ProgressView().tint(Theme.accent).controlSize(.large) }
+            Text(title).font(.num(28)).foregroundStyle(Theme.text)
+            if let detail {
+                Text(detail).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .padding(.horizontal, 30)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 

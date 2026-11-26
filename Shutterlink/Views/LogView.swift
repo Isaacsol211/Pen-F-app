@@ -9,9 +9,10 @@ struct LogView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Camera") {
+                Section {
                     LabeledContent("Model", value: camera.cameraName ?? "–")
                     LabeledContent("Support", value: camera.profile?.support.rawValue ?? "Not in Shutterlink's model table")
+                        .foregroundStyle(Theme.text)
                     ForEach(camera.profile?.notes ?? [], id: \.self) { note in
                         Text(note).font(.footnote).foregroundStyle(Theme.secondary)
                     }
@@ -24,34 +25,39 @@ struct LogView: View {
                     NavigationLink("Settings (desclist)") {
                         RawTextView(title: "desclist", text: camera.rawDescList)
                     }
-                }
-                Section("Requests (newest first)") {
+                } header: { CapsLabel("Camera").padding(.top, 8) }
+                Section {
                     if camera.log.isEmpty {
                         Text("Nothing yet.").foregroundStyle(Theme.secondary)
                     }
                     ForEach(camera.log.reversed()) { entry in
                         LogRow(entry: entry)
                     }
-                }
+                } header: { CapsLabel("Requests (newest first)").padding(.top, 8) }
             }
+            .font(.system(size: 15))
             .listStyle(.plain)
             .listRowBackgroundClear()
             .navigationTitle("Camera log")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }.sharedBackgroundVisibility(.hidden)
+                // 407: "Copy log · Clear log" as plain text on the left.
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu {
+                    HStack(spacing: 4) {
                         Button("Copy log") {
                             UIPasteboard.general.string = camera.log.map(\.line).joined(separator: "\n")
                         }
-                        Button("Clear log", role: .destructive) { camera.clearLog() }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Text("·").foregroundStyle(Theme.tertiary)
+                        Button("Clear log") { camera.clearLog() }
                     }
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.secondary)
+                    .fixedSize()
                 }.sharedBackgroundVisibility(.hidden)
             }
         }
+        .tint(Theme.text)
     }
 }
 
@@ -59,18 +65,22 @@ private struct LogRow: View {
     let entry: LogEntry
 
     var body: some View {
+        // 407: status in Barlow (green, or red ERR), method, time, then the path, on one line.
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
+            HStack(spacing: 12) {
                 Text(entry.status.map(String.init) ?? "ERR")
-                    .font(.caption.monospaced().weight(.bold))
+                    .font(.num(16))
                     .foregroundStyle(entry.ok ? Theme.green : Theme.red)
-                Text(entry.method).font(.caption.monospaced()).foregroundStyle(Theme.secondary)
-                Spacer()
-                Text("\(entry.millis) ms").font(.caption2.monospaced()).foregroundStyle(Theme.secondary)
+                    .frame(width: 34, alignment: .leading)
+                Text(entry.method).font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                    .frame(width: 38, alignment: .leading)
+                Text("\(entry.millis) ms").font(.system(size: 13).monospacedDigit()).foregroundStyle(Theme.secondary)
+                    .frame(width: 50, alignment: .leading)
+                Text(entry.path)
+                    .font(.system(size: 13, weight: .semibold).monospaced())
+                    .lineLimit(1).truncationMode(.tail)
+                    .textSelection(.enabled)
             }
-            Text(entry.path)
-                .font(.caption.monospaced())
-                .textSelection(.enabled)
             if !entry.summary.isEmpty {
                 Text(entry.summary)
                     .font(.caption2.monospaced())
