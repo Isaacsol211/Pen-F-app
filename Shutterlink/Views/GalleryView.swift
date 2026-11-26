@@ -1,4 +1,5 @@
 import SwiftUI
+import Photos
 import UniformTypeIdentifiers
 
 /// Browses the SD card. The camera has to be in playback mode for this, so live view
@@ -12,6 +13,10 @@ struct GalleryView: View {
     @State private var selectedID: CameraImage.ID?
     /// Mac: the open panel that picks where the starred RAWs go.
     @State private var pickRawFolder = false
+    /// Select mode: tap frames to tick them, then save them or their RAWs together.
+    @State private var selecting = false
+    @State private var picked: Set<CameraImage.ID> = []
+    @State private var selectionProgress: (done: Int, total: Int)?
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 3)]
     /// Larger thumbnails where there's a large canvas to fill.
@@ -52,9 +57,13 @@ struct GalleryView: View {
                         }
                     }.sharedBackgroundVisibility(.hidden)
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("Reload") { Task { await camera.openGallery() } }
-                            .foregroundStyle(Theme.secondary)
-                            .disabled(camera.galleryLoading)
+                        if selecting {
+                            Button("Cancel") { withAnimation(.snappy) { selecting = false; picked = [] } }
+                        } else {
+                            Button("Reload") { Task { await camera.openGallery() } }
+                                .foregroundStyle(Theme.secondary)
+                                .disabled(camera.galleryLoading)
+                        }
                     }.sharedBackgroundVisibility(.hidden)
                 }
                 .animation(.smooth, value: camera.rawImport)
@@ -147,8 +156,82 @@ struct GalleryView: View {
         }
     }
 
+    /// Select mode's bar: how many are ticked, Save to Photos and RAWs for them.
+    private var selectionBar: some View {
+        let count = picked.count
+        let busy = selectionProgress != nil
+        return VStack(spacing: 8) {
+            RawImportBar()
+            HStack(spacing: 8) {
+                Text(busy ? "Saving \(selectionProgress!.done + 1) of \(selectionProgress!.total)…"
+                          : count == 0 ? "Tap photos to select them" : "\(count) selected")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Button("RAWs") { saveSelection(raws: true) }
+                    .buttonStyle(.surface)
+                    .disabled(count == 0 || busy || importing)
+                    .accessibilityLabel("Save the RAW files of the selected photos")
+                Button("Save to Photos") { saveSelection(raws: false) }
+                    .buttonStyle(.accent)
+                    .fixedSize()
+                    .disabled(count == 0 || busy || importing)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+        }
+        .background(Theme.background.ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) { Rectangle().fill(Theme.stroke).frame(height: 1) }
+    }
+
+    /// Saves the ticked photos (or their RAW files) to Photos one by one, with the same per-photo
+    /// functions the viewer's Save and the starred RAWs use.
+    private func saveSelection(raws: Bool) {
+        let images = camera.images.filter { picked.contains($0.id) && !(raws && $0.isVideo) }
+        guard !images.isEmpty else { return }
+        selectionProgress = (0, images.count)
+        Task {
+            if raws {
+                let access = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+                guard access == .authorized || access == .limited else {
+                    camera.rawImport = RawImportProgress(message: "Photos access is off. Turn it on in Settings ▸ Shutterlink ▸ Photos.")
+                    selectionProgress = nil
+                    return
+                }
+            }
+            var saved = 0, failed = 0, withoutRAW = 0
+            for (index, image) in images.enumerated() {
+                selectionProgress = (index, images.count)
+                do {
+                    if raws {
+                        guard let raw = camera.rawCompanion(of: image) else { withoutRAW += 1; continue }
+                        _ = try await camera.addToPhotos(try await camera.downloadOriginal(raw), for: raw)
+                    } else {
+                        _ = try await camera.saveOriginalToPhotos(image)
+                    }
+                    saved += 1
+                } catch {
+                    debugLog("save selection \(image.name): \(error.localizedDescription)")
+                    failed += 1
+                }
+            }
+            var message = saved > 0 ? "Saved \(saved) \(raws ? "RAW file" : "photo")\(saved == 1 ? "" : "s") to Photos." : "Nothing was saved."
+            if failed > 0 { message += " \(failed) couldn't be downloaded." }
+            if withoutRAW > 0 { message += " \(withoutRAW) \(withoutRAW == 1 ? "has" : "have") no RAW." }
+            camera.rawImport = RawImportProgress(done: saved, total: images.count, message: message)
+            selectionProgress = nil
+            withAnimation(.snappy) { selecting = false; picked = [] }
+        }
+    }
+
     /// Filter, and "download the RAWs of the photos I starred".
-    private var bottomBar: some View {
+    @ViewBuilder private var bottomBar: some View {
+        if selecting { selectionBar } else { filterBar }
+    }
+
+    private var filterBar: some View {
         VStack(spacing: 8) {
             RawImportBar()
             if !camera.images.isEmpty {
@@ -166,6 +249,11 @@ struct GalleryView: View {
                     .overlay(Capsule().stroke(Theme.outline, lineWidth: 1))
                     .sensoryFeedback(.selection, trigger: starredOnly)
                     Spacer(minLength: 0)
+                    Button("Select") { withAnimation(.snappy) { selecting = true } }
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.text)
+                        .frame(minHeight: Theme.target)
+                        .buttonStyle(.plain)
                     Button {
                         // On a Mac the RAWs go to a folder you pick (for Lightroom, Capture One…);
                         // on iPhone and iPad, to Photos.
@@ -231,6 +319,31 @@ struct GalleryView: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityAddTraits(selected ? .isSelected : [])
+                        } else if selecting {
+                            // Select mode: a tap ticks the frame.
+                            let on = picked.contains(image.id)
+                            Button {
+                                if on { picked.remove(image.id) } else { picked.insert(image.id) }
+                            } label: {
+                                ThumbnailCell(image: image)
+                                    .opacity(on ? 0.75 : 1)
+                                    .overlay(alignment: .bottomTrailing) {
+                                        Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 22, weight: .semibold))
+                                            .symbolRenderingMode(.palette)
+                                            .foregroundStyle(on ? Theme.background : Theme.text, on ? Theme.accent : Color.black.opacity(0.3))
+                                            .padding(5)
+                                    }
+                                    .overlay {
+                                        if on {
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Theme.accent, lineWidth: 2)
+                                        }
+                                    }
+                            }
+                            .buttonStyle(.plain)
+                            .sensoryFeedback(.selection, trigger: on)
+                            .accessibilityAddTraits(on ? .isSelected : [])
+                            .accessibilityHint("Selects it")
                         } else {
                             NavigationLink(value: image) {
                                 ThumbnailCell(image: image)
@@ -400,6 +513,7 @@ private struct ThumbnailCell: View {
 
 /// Swipe between photos; each one zooms with a pinch or a double tap.
 private struct PhotoPager: View {
+    @Environment(\.dismiss) private var dismiss
     /// The photos as they were when the pager opened, so unstarring one while the Starred filter
     /// is on doesn't pull it out from under you.
     @State private var images: [CameraImage]
@@ -420,8 +534,22 @@ private struct PhotoPager: View {
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         .background(Color.black.ignoresSafeArea())
-        .navigationTitle(current?.name ?? "")
+        // 404: "Done" on the left, "12 of 42" on the right; the name is on the card below.
+        .navigationBarBackButtonHidden()
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Done") { dismiss() }
+            }.sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .topBarTrailing) {
+                if let index = images.firstIndex(where: { $0.id == selection }) {
+                    Text("\(index + 1) of \(images.count)").font(.system(size: 13)).foregroundStyle(Theme.secondary)
+                }
+            }.sharedBackgroundVisibility(.hidden)
+        }
+        .navigationTitle("")
+        .toolbar(.hidden, for: .tabBar)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarTitleDisplayMode(.inline)
     }
 }
 
@@ -448,14 +576,15 @@ private struct PhotoPage: View {
             }
         }
         .safeAreaBar(edge: .bottom) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
+            // 404: the name and details with the star at the top right, then Save across the card.
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(image.name).font(.num(24))
                         Text(image.size == 0 && image.urls == nil
                              ? "From another camera"
                              : "\(image.date.formatted(date: .abbreviated, time: .shortened)) · \(ByteCountFormatter.string(fromByteCount: Int64(image.size), countStyle: .file))\(image.looksHighRes ? " · High Res" : "")")
-                            .font(.caption)
+                            .font(.system(size: 13))
                             .foregroundStyle(Theme.secondary)
                     }
                     Spacer()
@@ -463,32 +592,27 @@ private struct PhotoPage: View {
                         camera.toggleStar(image)
                     } label: {
                         Image(systemName: camera.isStarred(image) ? "star.fill" : "star")
-                            .foregroundStyle(camera.isStarred(image) ? Theme.accent : .white)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(camera.isStarred(image) ? Theme.accent : Theme.text)
                             .contentTransition(.symbolEffect(.replace))
+                            .frame(width: Theme.target, height: Theme.target)
                     }
-                    .buttonStyle(.surfaceCircle)
+                    .buttonStyle(.plain)
+                    .padding(.top, -8).padding(.trailing, -10)
                     .sensoryFeedback(.selection, trigger: camera.isStarred(image))
                     .accessibilityLabel(camera.isStarred(image) ? "Remove star" : "Star")
-                    Button {
-                        Task { await save() }
-                    } label: {
-                        if saving {
-                            ProgressView()
-                        } else {
-                            Label("Save", systemImage: "square.and.arrow.down")
-                        }
-                    }
-                    .buttonStyle(.accent)
-                    .tint(Theme.accent)
-                    .allowsHitTesting(!saving)
-                    #if targetEnvironment(macCatalyst)
-                    // The original as it came off the card, to a folder you pick.
-                    Button {
-                        Task { await saveAs() }
-                    } label: {
-                        Label("Save As…", systemImage: "folder")
-                    }
-                    .buttonStyle(.surface)
+                }
+                Button {
+                    Task { await save() }
+                } label: {
+                    if saving { ProgressView().tint(Theme.onAccent) } else { Text("Save") }
+                }
+                .buttonStyle(.accent)
+                .allowsHitTesting(!saving)
+                #if targetEnvironment(macCatalyst)
+                // The original as it came off the card, to a folder you pick.
+                Button("Save As…") { Task { await saveAs() } }
+                    .buttonStyle(.outline)
                     .allowsHitTesting(!saving)
                     .fileExporter(isPresented: $exporting, document: exportFile, contentType: .data,
                                   defaultFilename: image.name) { result in
@@ -498,15 +622,17 @@ private struct PhotoPage: View {
                         }
                         exportFile = nil
                     }
-                    #endif
-                }
+                #endif
                 if let saveMessage {
-                    Text(saveMessage).font(.footnote).foregroundStyle(Theme.secondary).transition(.blurReplace)
+                    Text(saveMessage).font(.system(size: 13))
+                        .foregroundStyle(saveMessage.hasPrefix("Saved") ? Theme.green : Theme.secondary)
+                        .transition(.blurReplace)
                 }
             }
-            .padding(14)
-            .surface(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-            .padding(.horizontal, 12)
+            .padding(18)
+            .background(RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.outline, lineWidth: 1))
+            .padding(.horizontal, 16)
             .padding(.bottom, 6)
             .animation(.smooth, value: saveMessage)
         }
