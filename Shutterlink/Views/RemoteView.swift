@@ -520,13 +520,22 @@ struct RemoteView: View {
                      hudTopInset: hudTopInset, loupeControlsBelow: loupeControlsBelow)
             .clipShape(.rect(cornerRadius: cornerRadius, style: .continuous))
             .overlay(alignment: .bottom) {
-                if let suggestion = camera.sceneSuggestion, !showLoupe {
+                if let suggestion = camera.sceneSuggestion, !showLoupe, !Self.evHasNoEffect(suggestion, camera) {
                     SceneSuggestionPill(suggestion: suggestion) { applySuggestion(suggestion) }
                         .padding(10)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .animation(.snappy, value: camera.sceneSuggestion?.id)
+    }
+
+    /// An EV suggestion in M with a fixed ISO: the camera takes the value but the picture doesn't change
+    /// (in M, EV only steers Auto ISO), so it isn't offered, the same as the EV dial explains (205).
+    static func evHasNoEffect(_ suggestion: SceneSuggestion, _ camera: CameraModel) -> Bool {
+        guard case .setting(let property, _) = suggestion.action, property == "expcomp",
+              camera.properties["takemode"]?.value.uppercased() == "M" else { return false }
+        let iso = camera.properties["isospeedvalue"]?.value.lowercased() ?? ""
+        return !iso.contains("auto")
     }
 
     /// Recipes and settings run straight away; ND and Motion open their panel, ready to go.
