@@ -284,6 +284,8 @@ struct RemoteView: View {
         // to spare, so give it to the histogram.
         let side = inspector(tileColumns: inspectorWidth >= 390 ? 5 : 4, histogramHeight: size.height >= 900 ? 132 : 76)
             .frame(width: inspectorWidth)
+            // A solid column beside the picture (design 502); the colour wash stays with the picture.
+            .background(Theme.background.ignoresSafeArea())
         return HStack(spacing: 0) {
             if inspectorOnLeading {
                 side
@@ -296,7 +298,7 @@ struct RemoteView: View {
                     .aspectRatio(4.0 / 3.0, contentMode: .fit)
                     .overlay(alignment: .top) { ErrorBanner().padding(.top, 10) }
                 Spacer(minLength: 0)
-                QuickAidStrip(tools: workspaceAids)
+                AidChips(tools: workspaceAids)
                     .frame(maxWidth: 520)
             }
             .padding(.horizontal, 12)
@@ -364,7 +366,7 @@ struct RemoteView: View {
     private var shootColumn: some View {
         VStack(spacing: 12) {
             HistogramCard(height: 72)
-            QuickAidStrip(tools: workspaceAids)
+            AidChips(tools: workspaceAids)
             Spacer(minLength: 0)
             shutterCluster
         }

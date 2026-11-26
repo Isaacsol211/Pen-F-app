@@ -199,6 +199,24 @@ struct AllSettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                // The exposure at a glance, as designed: the mode in the accent, then the values.
+                if !camera.properties.isEmpty {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        if camera.properties["takemode"] != nil {
+                            Text(ExposureStrip.text("takemode", camera: camera))
+                                .font(.num(60)).foregroundStyle(Theme.accent)
+                        }
+                        ForEach(["focalvalue", "shutspeedvalue", "isospeedvalue"].filter { camera.properties[$0] != nil }, id: \.self) {
+                            Text(ExposureStrip.text($0, camera: camera).replacingOccurrences(of: "ISO ", with: ""))
+                                .font(.num(36)).foregroundStyle(Theme.text)
+                        }
+                    }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .accessibilityElement(children: .combine)
+                }
                 let sorted = camera.properties.values.sorted {
                     PropertyFormat.title(for: $0.name).localizedCaseInsensitiveCompare(PropertyFormat.title(for: $1.name)) == .orderedAscending
                 }

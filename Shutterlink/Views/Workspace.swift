@@ -184,9 +184,41 @@ struct ToolTiles: View {
                 .padding(.leading, 2)
                 .padding(.top, 4)
             LazyVGrid(columns: grid, spacing: 8) {
-                ForEach(tools.filter(\.opens) + tools.filter { !$0.opens }) { ToolButton(item: $0) }
+                ForEach(tools.filter(\.opens) + tools.filter { !$0.opens }) { ToolTextTile(item: $0) }
             }
         }
+    }
+}
+
+/// A tool in the inspector (design 502): its name on a small tile, white when it is on; a lock for a
+/// locked Pro tool, ↗ for one that opens a panel.
+struct ToolTextTile: View {
+    let item: ToolItem
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        Button(action: item.action) {
+            Text(item.title)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .foregroundStyle(item.on ? Theme.background : Theme.text)
+                .padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, minHeight: Theme.target)
+                .background(shape.fill(item.on ? Theme.text : Color.clear))
+                .overlay(shape.stroke(item.on ? Color.clear : Theme.outline, lineWidth: 1))
+                .overlay(alignment: .topTrailing) {
+                    if item.locked {
+                        Image(systemName: "lock").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.accent).padding(4)
+                    }
+                }
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .sensoryFeedback(.selection, trigger: item.on)
+        .accessibilityLabel(item.title)
+        .accessibilityValue(item.opens ? "" : (item.on ? "On" : "Off"))
+        .accessibilityHint(item.locked ? "Part of Shutterlink Pro" : (item.opens ? "Opens \(item.title)" : ""))
     }
 }
 

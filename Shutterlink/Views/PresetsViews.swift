@@ -254,11 +254,43 @@ struct NDPanel: View {
 
     private var seconds: Double? { meter.map { CameraModel.ndSeconds(metered: $0.seconds, stops: stops) } }
 
+    /// The stops from the metered time to the filtered one as a row of dots (design 310), a few labelled.
+    private func stopScale(from start: Double, to end: Double) -> some View {
+        let count = min(16, max(2, stops + 1))
+        return VStack(spacing: 6) {
+            GeometryReader { geo in
+                let w = geo.size.width
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Theme.outline).frame(height: 1).frame(maxHeight: .infinity)
+                    ForEach(0..<count, id: \.self) { i in
+                        let ends = i == 0 || i == count - 1
+                        Circle()
+                            .fill(i == count - 1 ? Theme.accent : Theme.text)
+                            .frame(width: ends ? 10 : 6, height: ends ? 10 : 6)
+                            .position(x: 5 + (w - 10) * CGFloat(i) / CGFloat(count - 1), y: 6)
+                    }
+                }
+            }
+            .frame(height: 12)
+            HStack {
+                Text(shutterLabel(seconds: start)).foregroundStyle(Theme.text)
+                Spacer()
+                Text(shutterLabel(seconds: start * pow(2, Double(stops) / 2))).foregroundStyle(Theme.secondary)
+                Spacer()
+                Text(shutterLabel(seconds: end)).foregroundStyle(Theme.accent)
+            }
+            .font(.num(16, weight: .medium))
+        }
+        .padding(.vertical, 6)
+        .accessibilityHidden(true)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let seconds, let meter {
                 BigNumber(label: "With the filter on, expose for", value: shutterLabel(seconds: seconds),
-                          caption: "\(shutterLabel(seconds: meter.seconds)) → \(shutterLabel(seconds: seconds))", size: 96, color: Theme.accent)
+                          caption: "\(shutterLabel(seconds: meter.seconds)) → \(shutterLabel(seconds: seconds))", size: 104, color: Theme.accent)
+                stopScale(from: meter.seconds, to: seconds)
             } else {
                 BigNumber(label: "ND filter", value: "\(stops) stops", caption: "Meter without the filter first", size: 88)
             }
@@ -291,10 +323,10 @@ struct NDPanel: View {
                                 Text(name).font(.caption2).foregroundStyle(stops == value ? Theme.onAccent : Theme.secondary)
                             }
                             .foregroundStyle(stops == value ? Theme.onAccent : Theme.text)
-                            .frame(maxWidth: .infinity, minHeight: 48)
-                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .frame(maxWidth: .infinity, minHeight: 64)
+                            .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
                                 .fill(stops == value ? Theme.accent : Color.clear))
-                            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                                 .stroke(stops == value ? Color.clear : Theme.outline, lineWidth: 1))
                         }
                         .buttonStyle(.plain)

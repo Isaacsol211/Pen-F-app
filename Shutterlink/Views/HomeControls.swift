@@ -58,6 +58,23 @@ struct InfoBar<Trailing: View>: View {
     }
 }
 
+/// The aids under the picture in the workspace layouts (design 502): chips, white when on.
+struct AidChips: View {
+    let tools: [ToolItem]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(tools) { item in
+                Button(item.title, action: item.action)
+                    .buttonStyle(ChipStyle(selected: item.on))
+                    .accessibilityValue(item.on ? "On" : "Off")
+            }
+        }
+        .sensoryFeedback(.selection, trigger: tools.map(\.on))
+        .animation(.snappy, value: tools.map(\.on))
+    }
+}
+
 /// The shooting aids you toggle most (grid, histogram, peaking, loupe, night), one tap away under the
 /// readouts and drawn the same way: a small-caps label under each icon, amber when on.
 struct QuickAidStrip: View {

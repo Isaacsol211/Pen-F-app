@@ -365,7 +365,7 @@ struct CurvedDial: View {
                 let next = direction == .increment ? index + 1 : index - 1
                 guard options.indices.contains(next) else { return }
                 selection = options[next]
-                haptics.passed(options[next], major: isMajor(options[next]) || isAnchor(options[next]))
+                haptics.passed(options[next], major: firm(options[next]))
                 onCommit(selection)
             }
     }
@@ -461,6 +461,11 @@ struct CurvedDial: View {
         settle(from: current, velocity: 0, to: target)
     }
 
+    /// A firm tap on full stops and 0 EV; a dial with no stops (white balance, mode) only ticks.
+    private func firm(_ value: String) -> Bool {
+        isAnchor(value) || (isMajor(value) && options.contains { !isMajor($0) })
+    }
+
     private func rubber(_ over: Double) -> Double { 0.6 * (1 - 1 / (over * 0.8 + 1)) }
 
     /// Moves the ruler, with a haptic for each value it passes and the selection following.
@@ -472,7 +477,7 @@ struct CurvedDial: View {
         // One tick per value passed, even when a fast drag skips several in a frame.
         let range = now > before ? Array((before + 1)...now) : Array((now...(before - 1)).reversed())
         for i in range.suffix(3) where options.indices.contains(i) {
-            haptics.passed(options[i], major: isMajor(options[i]) || isAnchor(options[i]))
+            haptics.passed(options[i], major: firm(options[i]))
         }
         selection = options[now]
     }
