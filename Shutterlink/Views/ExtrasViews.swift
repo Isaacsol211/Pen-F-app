@@ -40,7 +40,7 @@ struct BracketPanel: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .animation(.smooth, value: camera.bracket.running)
-        .sensoryFeedback(.selection, trigger: focusMode)
+        .feedback(.select, trigger: focusMode)
     }
 
     @ViewBuilder private var setupCards: some View {
@@ -257,7 +257,7 @@ struct BulbTimerControl: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .sensoryFeedback(.selection, trigger: camera.bulbTimer)
+        .feedback(.select, trigger: camera.bulbTimer)
         .disabled(camera.isShooting)
         .dPanelCover(isPresented: $showCustom, title: "Stop the exposure after") {
             BulbTimerSheet(seconds: camera.bulbTimer, onSet: { camera.bulbTimer = $0 }, close: { showCustom = false })
@@ -373,7 +373,7 @@ struct WheelColumn: View {
             .contentMargins(.vertical, (geo.size.height - row) / 2, for: .scrollContent)
             .scrollTargetBehavior(.viewAligned)
             .scrollPosition(id: $selection, anchor: .center)
-            .sensoryFeedback(.selection, trigger: selection)
+            .feedback(.select, trigger: selection)
             .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.25),
                                          .init(color: .black, location: 0.75), .init(color: .clear, location: 1)],
                                  startPoint: .top, endPoint: .bottom))

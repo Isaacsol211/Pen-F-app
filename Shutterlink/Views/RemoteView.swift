@@ -103,7 +103,7 @@ struct RemoteView: View {
                                onCancel: { confirmPowerOff = false })
                 }
             }
-            .animation(.spring(duration: 0.28, bounce: 0), value: confirmDisconnect || confirmPowerOff)
+            .animation(Motion.shutter, value: confirmDisconnect || confirmPowerOff)
         }
         .overlay(alignment: .top) { ToastView() }
         // Design screens: full screen on a phone.
@@ -129,8 +129,6 @@ struct RemoteView: View {
         .onChange(of: toolsOpen) { _, open in
             if open { withAnimation(.snappy) { activeSetting = nil } }
         }
-        .sensoryFeedback(.success, trigger: camera.liveInfo.afState == 1)
-        .sensoryFeedback(.error, trigger: camera.lastError)
     }
 
     // MARK: - Layouts
@@ -785,7 +783,7 @@ struct LandscapeValues: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(.snappy, value: selected)
         .disabled(camera.isBusyExposing)
-        .sensoryFeedback(.selection, trigger: active)
+        .feedback(.select, trigger: active)
     }
 }
 
@@ -983,7 +981,7 @@ struct ToolButton: View {
         }
         .buttonStyle(.plain)
         .animation(.snappy(duration: 0.25), value: item.on)
-        .sensoryFeedback(.selection, trigger: item.on)
+        .feedback(.select, trigger: item.on)
         .accessibilityLabel(item.title)
         .accessibilityValue(item.opens ? "" : (item.on ? "On" : "Off"))
         .accessibilityHint(item.locked ? "Part of Shutterlink Pro" : (item.opens ? "Opens \(item.title)" : ""))
@@ -1156,7 +1154,6 @@ struct ShutterButton: View {
     @State private var pressed = false
     /// Between letting go and the camera confirming the shot (the Wi-Fi round trip): the blades show it.
     @State private var awaiting = false
-    @State private var haptics = ShutterHaptics()
 
     /// Interval or bracket progress, drawn as a ring around the shutter.
     private var sequenceProgress: CGFloat? {
@@ -1263,7 +1260,7 @@ struct ShutterButton: View {
             }
         }
         .frame(width: 104, height: 104)
-        .animation(.spring(duration: 0.18), value: pressed)
+        .animation(Motion.track, value: pressed)
         .animation(.snappy, value: camera.isShooting)
         .animation(.snappy, value: camera.isRecordingMovie)
         .contentShape(Circle())
@@ -1272,17 +1269,17 @@ struct ShutterButton: View {
                 .onChanged { _ in
                     guard enabled, !pressed else { return }
                     pressed = true
-                    haptics.prepare()
+                    Feedback.prepare()
                     if !camera.isOpenEndedShutter && !camera.isMovieMode {
                         // Half press: focus. The hand gets its answer now, not when the camera replies.
-                        haptics.focus()
+                        Feedback.play(.press)
                         Task { await camera.shutterPressed() }
                     }
                 }
                 .onEnded { _ in
                     guard pressed else { return }
                     pressed = false
-                    haptics.fire()
+                    Feedback.play(.shutter)
                     if camera.isMovieMode {
                         Task { await camera.toggleMovie() }
                     } else if camera.isOpenEndedShutter {
@@ -1297,13 +1294,12 @@ struct ShutterButton: View {
         .onChange(of: camera.shotCounter) { awaiting = false }
         .onChange(of: camera.exposureStartedAt) { awaiting = false }
         .onChange(of: camera.lastError) { _, error in
-            // The error pattern itself comes from the remote (it covers every refusal, not only the shutter).
+            // The error pattern itself comes from FeedbackObserver (it covers every refusal, not only the shutter).
             if error != nil { awaiting = false }
         }
         .opacity(enabled ? 1 : 0.4)
         .animation(.smooth, value: camera.exposureStartedAt)
-        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.28, bounce: 0), value: awaiting)
-        .sensoryFeedback(.start, trigger: camera.isRecordingMovie)
+        .animation(Motion.shutter, value: awaiting)
         .accessibilityElement()
         .accessibilityLabel(movie ? (camera.isRecordingMovie ? "Stop recording" : "Record movie") : "Shutter")
         .accessibilityAddTraits(.isButton)
@@ -1359,38 +1355,6 @@ struct ShutterBlades: View {
     }
 }
 
-/// The shutter's haptics (plan item 2): light on the half press (focus), firm on the full press (fire),
-/// both on touch; the error pattern if the camera refuses. Untested on a phone so far.
-@MainActor
-final class ShutterHaptics {
-    #if os(iOS)
-    private let light = UIImpactFeedbackGenerator(style: .light)
-    private let firm = UIImpactFeedbackGenerator(style: .heavy)
-    private let notice = UINotificationFeedbackGenerator()
-    #endif
-
-    func prepare() {
-        #if os(iOS)
-        light.prepare(); firm.prepare(); notice.prepare()
-        #endif
-    }
-    func focus() {
-        #if os(iOS)
-        light.impactOccurred()
-        #endif
-    }
-    func fire() {
-        #if os(iOS)
-        firm.impactOccurred()
-        #endif
-    }
-    func refused() {
-        #if os(iOS)
-        notice.notificationOccurred(.error)
-        #endif
-    }
-}
-
 /// Hands its content the edge where the system places its vertical bar (iOS 27.1), or nil where
 /// the system never places one (iPhones without one, earlier iOS).
 private struct VerticalBarEdgeReader<Content: View>: View {
@@ -1422,6 +1386,9 @@ private struct MoreSheet: View {
     let log: () -> Void
     let disconnect: () -> Void
     let powerOff: () -> Void
+    @AppStorage(Feedback.Key.haptics) private var haptics = true
+    @AppStorage(Feedback.Key.sounds) private var sounds = false
+    @AppStorage(Feedback.Key.quietOnTripod) private var quietOnTripod = true
 
     var body: some View {
         ScrollView {
@@ -1439,6 +1406,15 @@ private struct MoreSheet: View {
                 Button { Task { await camera.restartLiveView() } } label: { row("Restart live view") }
                 toggle("Scene suggestions", isOn: Binding(get: { camera.sceneAssistantOn }, set: { camera.sceneAssistantOn = $0 }))
                 toggle("Save new photos to Photos", isOn: Binding(get: { camera.autoSaveNewPhotos }, set: { camera.autoSaveNewPhotos = $0 }))
+                Spacer().frame(height: 14)
+                toggle("Haptics", isOn: $haptics)
+                toggle("Sounds", isOn: $sounds)
+                toggle("Quiet on tripod", isOn: $quietOnTripod)
+                Text("No vibration or sound from this \(Platform.device) while the shutter is open: Bulb, long exposures and each frame of a series. Sounds follow the Ring/Silent switch.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 10)
                 Button(action: openPro) {
                     row("Shutterlink Pro", value: ShutterlinkPro.shared.statusText, valueColor: Theme.accent, chevron: true)
                 }

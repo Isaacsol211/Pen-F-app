@@ -311,8 +311,8 @@ struct ChipStyle: ButtonStyle {
 ///
 /// Feel (docs/design/04-motion-sound-haptics.md, item 1): the ruler follows the finger 1:1, coasts on
 /// after a flick with the momentum projected from the release speed, and settles on a value with a
-/// spring that doesn't bounce (a slight bounce only after a flick). A selection tick for every value it
-/// passes, a firmer rigid tap on full stops and on 0 EV. With Reduce Motion it goes straight to the
+/// spring that doesn't bounce (Motion.mirror's response, critically damped). A tick on entering a value,
+/// a firmer click on full stops and on 0 EV (Feedback.dialTick / dialStop). With Reduce Motion it goes straight to the
 /// nearest value. The value is committed once the dial has settled. Tap a label to go to it.
 struct CurvedDial: View {
     /// The values, in order; `label` turns one into its text.
@@ -330,7 +330,6 @@ struct CurvedDial: View {
     @State private var position: Double?
     @State private var dragStart: Double?
     @State private var coast: Task<Void, Never>?
-    @State private var haptics = DialHaptics()
     @State private var canvasWidth: CGFloat?
 
     private let radius: CGFloat = 420
@@ -373,7 +372,7 @@ struct CurvedDial: View {
                 let next = direction == .increment ? index + 1 : index - 1
                 guard options.indices.contains(next) else { return }
                 selection = options[next]
-                haptics.passed(options[next], major: firm(options[next]))
+                Feedback.play(firm(options[next]) ? .dialStop : .dialTick)
                 onCommit(selection)
             }
     }
@@ -446,7 +445,7 @@ struct CurvedDial: View {
                 if dragStart == nil {
                     coast?.cancel()
                     dragStart = current
-                    haptics.prepare()
+                    Feedback.prepare()
                 }
                 var p = (dragStart ?? 0) - Double(drag.translation.width / pointsPerValue)
                 // Past either end the ruler gives a little, with resistance.
@@ -467,7 +466,7 @@ struct CurvedDial: View {
         let angle = atan2(dx, dy) * 180 / .pi
         let target = min(maxIndex, max(0, (current + angle / step).rounded()))
         guard target != current.rounded() else { return }
-        haptics.prepare()
+        Feedback.prepare()
         settle(from: current, velocity: 0, to: target)
     }
 
@@ -484,11 +483,10 @@ struct CurvedDial: View {
         position = p
         let now = Int(min(maxIndex, max(0, p)).rounded())
         guard now != before, options.indices.contains(now) else { return }
-        // One tick per value passed, even when a fast drag skips several in a frame.
+        // A click on entering a value (never while resting on it); the firmer one if a full stop or 0 EV
+        // was among the values passed. Feedback limits it to one per 60 ms.
         let range = now > before ? Array((before + 1)...now) : Array((now...(before - 1)).reversed())
-        for i in range.suffix(3) where options.indices.contains(i) {
-            haptics.passed(options[i], major: firm(options[i]))
-        }
+        Feedback.play(range.contains { options.indices.contains($0) && firm(options[$0]) } ? .dialStop : .dialTick)
         selection = options[now]
     }
 
@@ -506,10 +504,10 @@ struct CurvedDial: View {
             return
         }
         coast = Task { @MainActor in
-            // A spring from where the finger left it, at the finger's speed: critically damped,
-            // or a little under after a flick so it overshoots once and comes back.
-            let response = flick ? 0.55 : 0.32
-            let damping = flick ? 0.78 : 1.0
+            // A spring from where the finger left it, at the finger's speed, with Motion.mirror's response
+            // (longer after a flick) and critically damped: it settles without a bounce.
+            let response = flick ? Motion.mirrorToken.response * 1.5 : Motion.mirrorToken.response
+            let damping = 1.0
             let omega = 2 * Double.pi / response
             var x = start, v = velocity
             let dt = 1.0 / 120
@@ -531,39 +529,8 @@ struct CurvedDial: View {
     }
 
     private func commit() {
-        haptics.settled()
         onCommit(selection)
     }
-}
-
-/// The dial's haptics: a selection tick for each value, a rigid tap for full stops and 0 EV. Untested
-/// on a phone so far (the simulator has no Taptic Engine).
-@MainActor
-final class DialHaptics {
-    #if os(iOS)
-    private let tick = UISelectionFeedbackGenerator()
-    private let firm = UIImpactFeedbackGenerator(style: .rigid)
-    private var lastFired = Date.distantPast
-    #endif
-
-    func prepare() {
-        #if os(iOS)
-        tick.prepare(); firm.prepare()
-        #endif
-    }
-
-    func passed(_ value: String, major: Bool) {
-        #if os(iOS)
-        // The Taptic Engine blurs ticks closer than ~12 ms together; skip those rather than queue them.
-        let now = Date()
-        guard now.timeIntervalSince(lastFired) > 0.012 else { return }
-        lastFired = now
-        if major { firm.impactOccurred(intensity: 0.8) } else { tick.selectionChanged() }
-        tick.prepare()
-        #endif
-    }
-
-    func settled() {}
 }
 
 /// The big readout above the dial: the selected value's label in the accent and the value at 68 pt.
@@ -659,7 +626,7 @@ struct BottomPanel<Content: View>: View {
                     .onChanged { drag = max(0, $0.translation.height) }
                     .onEnded { value in
                         if value.translation.height > 90 || value.predictedEndTranslation.height > 220 { onClose() }
-                        withAnimation(.spring(duration: 0.3, bounce: 0)) { drag = 0 }
+                        withAnimation(Motion.mirror) { drag = 0 }
                     })
                 // As tall as the content, scrolling only when it can't fit.
                 ViewThatFits(in: .vertical) {
@@ -697,11 +664,11 @@ extension View {
             ZStack {
                 if isPresented.wrappedValue {
                     BottomPanel(title: title, dimsBehind: dimsBehind,
-                                onClose: { withAnimation(.spring(duration: 0.32, bounce: 0)) { isPresented.wrappedValue = false } },
+                                onClose: { withAnimation(Motion.shutter) { isPresented.wrappedValue = false } },
                                 content: content)
                 }
             }
-            .animation(.spring(duration: 0.32, bounce: 0), value: isPresented.wrappedValue)
+            .animation(Motion.shutter, value: isPresented.wrappedValue)
         }
     }
 
@@ -742,7 +709,7 @@ private struct PanelCoverHost<Content: View>: View {
                 BottomPanel(title: title, onClose: dismiss, content: content)
             }
         }
-        .animation(.spring(duration: 0.32, bounce: 0), value: shown)
+        .animation(Motion.shutter, value: shown)
         .onAppear { shown = true }
     }
 
@@ -980,7 +947,7 @@ struct SegRow<Value: Hashable>: View {
         }
         .frame(minHeight: 54)
         .overlay(alignment: .bottom) { Hairline() }
-        .sensoryFeedback(.selection, trigger: selection)
+        .feedback(.select, trigger: selection)
     }
 }
 

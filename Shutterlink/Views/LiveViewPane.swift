@@ -457,7 +457,7 @@ struct LoupeReadout: View {
             .accessibilityValue(reading.atPeak ? "Sharpest" : "\(Int(reading.fraction * 100)) percent of best")
         }
         .frame(maxWidth: .infinity)
-        .sensoryFeedback(.success, trigger: reading.atPeak) { _, new in new }
+        .feedback(.focusLock, trigger: reading.atPeak) { _, new in new }
     }
 }
 
@@ -510,7 +510,7 @@ private struct FocusMeter: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .surface(.regular, in: .rect(cornerRadius: 12, style: .continuous))
-        .sensoryFeedback(.success, trigger: atPeak) { _, new in new }
+        .feedback(.focusLock, trigger: atPeak) { _, new in new }
         .accessibilityElement()
         .accessibilityLabel("Focus meter")
         .accessibilityValue(atPeak ? "Sharpest" : "\(Int(fraction * 100)) percent of best")

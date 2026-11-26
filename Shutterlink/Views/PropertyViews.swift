@@ -181,7 +181,7 @@ struct PropertyOptionsList: View {
                             withAnimation(.snappy(duration: 0.2)) { position = nil }
                         }
                 )
-                .sensoryFeedback(.selection, trigger: centreIndex)
+                .feedback(.dialTick, trigger: centreIndex)
                 .animation(.snappy(duration: 0.15), value: centreIndex)
             }
             // The wheel under the header (406), its notes under it, Done at the bottom.

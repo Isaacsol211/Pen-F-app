@@ -173,7 +173,7 @@ struct ConnectView: View {
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
         .clipShape(.rect(cornerRadius: 24, style: .continuous))
         .animation(.smooth, value: brand)
-        .sensoryFeedback(.selection, trigger: brand)
+        .feedback(.select, trigger: brand)
     }
 
     private func guideChip(_ brand: CameraBrand?, selected: Bool) -> some View {
@@ -744,7 +744,7 @@ struct AddCameraSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(on ? .isSelected : [])
-        .sensoryFeedback(.selection, trigger: on)
+        .feedback(.select, trigger: on)
     }
 
     private func badge(_ text: String, _ color: Color) -> some View {

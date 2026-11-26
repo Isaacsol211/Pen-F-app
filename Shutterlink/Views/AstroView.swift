@@ -97,7 +97,7 @@ struct AstroView: View {
         }
         .tint(Theme.astroAccent)
         .environment(\.astroPalette, true)
-        .sensoryFeedback(.selection, trigger: trails)
+        .feedback(.select, trigger: trails)
     }
 
     private func pill(_ title: String, on: Bool, action: @escaping () -> Void) -> some View {
@@ -179,7 +179,7 @@ struct AstroView: View {
                 })
             }
             .frame(height: 52)
-            .sensoryFeedback(.selection, trigger: focalLength)
+            .feedback(.select, trigger: focalLength)
             .accessibilityElement()
             .accessibilityLabel("Lens focal length")
             .accessibilityValue("\(Int(focalLength)) millimetres")
@@ -228,7 +228,7 @@ struct AstroView: View {
             }
             .buttonStyle(AstroButtonStyle(fill: astroOn ? Theme.green : Theme.astroText))
             .disabled(camera.presetRunning || camera.mode != .rec)
-            .sensoryFeedback(.success, trigger: astroOn)
+            .feedback(.select, trigger: astroOn)
         }
         .padding(.horizontal, 20)
         .padding(.top, 10)

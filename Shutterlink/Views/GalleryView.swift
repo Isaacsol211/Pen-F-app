@@ -247,7 +247,7 @@ struct GalleryView: View {
                         }
                     }
                     .overlay(Capsule().stroke(Theme.outline, lineWidth: 1))
-                    .sensoryFeedback(.selection, trigger: starredOnly)
+                    .feedback(.select, trigger: starredOnly)
                     Spacer(minLength: 0)
                     if !split {
                         Button("Select") { withAnimation(.snappy) { selecting = true } }
@@ -343,7 +343,7 @@ struct GalleryView: View {
                                     }
                             }
                             .buttonStyle(.plain)
-                            .sensoryFeedback(.selection, trigger: on)
+                            .feedback(.select, trigger: on)
                             .accessibilityAddTraits(on ? .isSelected : [])
                             .accessibilityHint("Selects it")
                         } else {
@@ -622,7 +622,7 @@ private struct PhotoPage: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.top, -8).padding(.trailing, -10)
-                    .sensoryFeedback(.selection, trigger: camera.isStarred(image))
+                    .feedback(.select, trigger: camera.isStarred(image))
                     .accessibilityLabel(camera.isStarred(image) ? "Remove star" : "Star")
                 }
                 Button {
@@ -711,7 +711,7 @@ private struct ZoomableImage: View {
                     .onChanged { value in scale = min(8, max(1, lastScale * value.magnification)) }
                     .onEnded { _ in
                         lastScale = scale
-                        if scale <= 1 { withAnimation(.smooth) { reset() } }
+                        if scale <= 1 { withAnimation(Motion.mirror) { reset() } }
                     }
             )
             // Panning only while zoomed in. At 1× the drag must not claim the touch, or the pager
@@ -726,7 +726,7 @@ private struct ZoomableImage: View {
                 including: scale > 1 ? .all : .subviews
             )
             .onTapGesture(count: 2) {
-                withAnimation(.bouncy(duration: 0.35)) {
+                withAnimation(Motion.shutter) {
                     if scale > 1 { reset() } else { scale = 3; lastScale = 3 }
                 }
             }

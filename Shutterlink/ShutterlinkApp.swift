@@ -9,6 +9,7 @@ struct ShutterlinkApp: App {
 
     init() {
         ShutterlinkPro.shared.start()
+        Feedback.registerDefaults()
         #if targetEnvironment(macCatalyst)
         // Start finding out which interface is Wi-Fi (not always en0 on a Mac).
         _ = WiFiInterface.shared
@@ -43,7 +44,8 @@ struct RootView: View {
                 RemoteView()
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: camera.phase)
+        .animation(Motion.develop, value: camera.phase)
+        .modifier(FeedbackObserver())
         .background(Theme.background.ignoresSafeArea())
         .overlay { LaunchHandoff() }
         .onChange(of: scenePhase) { camera.scenePhaseChanged($1) }

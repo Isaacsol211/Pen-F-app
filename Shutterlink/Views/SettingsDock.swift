@@ -227,7 +227,7 @@ struct OptionGrid: View {
             }
         }
         .padding(1)
-        .sensoryFeedback(.selection, trigger: property.value)
+        .feedback(.select, trigger: property.value)
     }
 }
 
@@ -273,7 +273,7 @@ struct ShutterOptions: View {
                         .accessibilityAddTraits(on ? .isSelected : [])
                     }
                 }
-                .sensoryFeedback(.selection, trigger: current)
+                .feedback(.select, trigger: current)
             }
             if current == "timed" {
                 ValueDial(property: property, readoutLabel: "Shutter") { value in

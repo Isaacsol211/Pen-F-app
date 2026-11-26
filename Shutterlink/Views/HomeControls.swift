@@ -74,7 +74,7 @@ struct AidChips: View {
                     .accessibilityValue(item.on ? "On" : "Off")
             }
         }
-        .sensoryFeedback(.selection, trigger: tools.map(\.on))
+        .feedback(.select, trigger: tools.map(\.on))
         .animation(.snappy, value: tools.map(\.on))
     }
 }
@@ -110,7 +110,7 @@ struct QuickAidStrip: View {
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .sensoryFeedback(.selection, trigger: item.on)
+                .feedback(.select, trigger: item.on)
                 .accessibilityLabel(item.title)
                 .accessibilityValue(item.on ? "On" : "Off")
             }
@@ -171,7 +171,7 @@ struct ExposureStrip: View {
         }
         .animation(.snappy, value: selected)
         .disabled(camera.isBusyExposing)
-        .sensoryFeedback(.selection, trigger: active)
+        .feedback(.select, trigger: active)
     }
 
     private func row(spacing: CGFloat, flexible: Bool) -> some View {
@@ -389,7 +389,7 @@ struct ModeCarousel: View {
         .frame(width: axis == .horizontal ? nil : 84, height: axis == .horizontal ? Theme.target : nil)
         .disabled(camera.isBusyExposing || camera.properties["takemode"]?.settable != true)
         // Every mode is a hard detent, like the mode dial on the camera.
-        .sensoryFeedback(.impact(weight: .heavy, intensity: 1.0), trigger: centered)
+        .feedback(.dialStop, trigger: centered)
         .accessibilityElement()
         .accessibilityLabel("Mode")
         .accessibilityValue(Self.title(current))

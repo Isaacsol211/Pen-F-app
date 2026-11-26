@@ -54,7 +54,7 @@ struct ExposureGrid: View {
         .animation(.snappy, value: active)
         .animation(.smooth, value: items)
         .disabled(camera.isBusyExposing)
-        .sensoryFeedback(.selection, trigger: active)
+        .feedback(.select, trigger: active)
     }
 
     private func cell(_ name: String) -> some View {
@@ -217,7 +217,7 @@ struct ToolTextTile: View {
                 .contentShape(shape)
         }
         .buttonStyle(.plain)
-        .sensoryFeedback(.selection, trigger: item.on)
+        .feedback(.select, trigger: item.on)
         .accessibilityLabel(item.title)
         .accessibilityValue(item.opens ? "" : (item.on ? "On" : "Off"))
         .accessibilityHint(item.locked ? "Part of Shutterlink Pro" : (item.opens ? "Opens \(item.title)" : ""))

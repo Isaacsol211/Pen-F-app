@@ -423,7 +423,7 @@ struct NDPanel: View {
                     .accessibilityAddTraits(on ? .isSelected : [])
                 }
             }
-            .sensoryFeedback(.selection, trigger: stops)
+            .feedback(.select, trigger: stops)
             WheelValueRow(title: "Strength", subtitle: "1 to 20", values: Array(1...20), value: $stops) { "\($0) stops" }
             if let seconds, camera.ndShutter(seconds: seconds).timedByApp {
                 NoteRow("Longer than the camera's own speeds: the app runs Bulb and stops it. Keep Shutterlink open.")
