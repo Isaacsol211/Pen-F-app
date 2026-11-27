@@ -67,15 +67,28 @@ struct AidChips: View {
     let tools: [ToolItem]
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(tools) { item in
-                Button(item.title, action: item.action)
-                    .buttonStyle(ChipStyle(selected: item.on))
-                    .accessibilityValue(item.on ? "On" : "Off")
+        // One row where it fits; in a narrow column (an iPad's portrait side column) two rows of two,
+        // rather than squeezing "Peaking" onto two lines.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                ForEach(tools) { chip($0, fill: false) }
+            }
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                ForEach(tools) { chip($0, fill: true) }
             }
         }
         .feedback(.select, trigger: tools.map(\.on))
         .animation(.snappy, value: tools.map(\.on))
+    }
+
+    private func chip(_ item: ToolItem, fill: Bool) -> some View {
+        Button(action: item.action) {
+            Text(item.title)
+                .lineLimit(1)
+                .frame(maxWidth: fill ? .infinity : nil)
+        }
+        .buttonStyle(ChipStyle(selected: item.on))
+        .accessibilityValue(item.on ? "On" : "Off")
     }
 }
 

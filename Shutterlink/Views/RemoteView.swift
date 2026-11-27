@@ -59,8 +59,11 @@ struct RemoteView: View {
                     }
                     .transition(.opacity)
                 } else {
-                    portraitLayout(height: geo.size.height)
-                        .transition(.opacity)
+                    VerticalBarEdgeReader { barEdge in
+                        portraitLayout(height: geo.size.height,
+                                       barColumn: Self.barColumn(edge: barEdge, insets: geo.safeAreaInsets))
+                    }
+                    .transition(.opacity)
                 }
             }
             .animation(.smooth(duration: 0.35), value: landscape)
@@ -155,9 +158,32 @@ struct RemoteView: View {
         #endif
     }
 
+    /// The system's vertical bar beside a portrait layout (a folded iPhone Duo: camera, clock and Wi-Fi
+    /// in a column down one edge), when it leaves room for our buttons under them: which edge, how wide.
+    static func barColumn(edge: HorizontalEdge?, insets: EdgeInsets) -> (edge: HorizontalEdge, width: CGFloat)? {
+        guard let edge else { return nil }
+        let width = edge == .leading ? insets.leading : insets.trailing
+        return width >= 60 ? (edge, width) : nil
+    }
+
+    /// Tools, the shutter and the last shot stacked at the foot of the vertical bar, under the thumb, in
+    /// place of the shutter row. The shutter shrinks to the column's width but keeps everything it does.
+    private func barColumnControls(width: CGFloat) -> some View {
+        let scale = min(1, (width - 8) / 90)
+        return VStack(spacing: 18) {
+            ToolsButton(open: $toolsOpen)
+            ShutterButton(elapsedBadge: false)
+                .scaleEffect(scale)
+                .frame(width: 90 * scale, height: 90 * scale)
+            LastShotButton { showGallery = true }
+        }
+        .frame(width: width)
+    }
+
     /// Portrait: the whole live view near the top over a blurred copy of itself, a small line (white
-    /// balance, drive, quality), the row of values, one big readout with a curved dial, then the shutter row.
-    private func portraitLayout(height: CGFloat) -> some View {
+    /// balance, drive, quality), the row of values, one big readout with a curved dial, then the shutter row
+    /// (or, beside a vertical bar, the shutter in the bar's column).
+    private func portraitLayout(height: CGFloat, barColumn: (edge: HorizontalEdge, width: CGFloat)?) -> some View {
         let names = ExposureStrip.items(camera)
         let selected = names.contains(activeSetting ?? "") || ["wbvalue"].contains(activeSetting ?? "")
             ? activeSetting!
@@ -223,11 +249,18 @@ struct RemoteView: View {
                     }
                     .frame(maxWidth: Self.controlsMaxWidth)
                 }
-                if openPanel != .motion {
+                if openPanel != .motion && barColumn == nil {
                     shutterRow
                         .frame(maxWidth: Self.controlsMaxWidth)
                         .padding(.bottom, 4)
                 }
+            }
+            if let barColumn, openPanel != .motion {
+                barColumnControls(width: barColumn.width)
+                    .padding(.bottom, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: barColumn.edge == .trailing ? .bottomTrailing : .bottomLeading)
+                    .ignoresSafeArea(.container, edges: .horizontal)
             }
         }
     }
@@ -246,6 +279,16 @@ struct RemoteView: View {
                     .overlay { liveView(cornerRadius: 0, hudTopInset: 50).aspectRatio(4.0 / 3.0, contentMode: .fill) }
                     .clipped()
                     .ignoresSafeArea()
+                if !showLoupe {
+                    // The dark band behind the values, out to the screen's edges like the picture (under
+                    // the unfolded Duo's vertical bar and the home indicator too).
+                    LinearGradient(colors: [LiveBackdrop.wash.opacity(0), LiveBackdrop.wash.opacity(0.85)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: 130)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
                 VStack(spacing: 8) {
                     HStack {
                         StatusPill(showsName: true)
@@ -275,14 +318,6 @@ struct RemoteView: View {
             LandscapeValues(active: $activeSetting)
         }
         .frame(maxWidth: .infinity)
-        .background(alignment: .bottom) {
-            LinearGradient(colors: [LiveBackdrop.wash.opacity(0), LiveBackdrop.wash.opacity(0.85)],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: 110)
-                .padding(.horizontal, -16)
-                .ignoresSafeArea(edges: .bottom)
-                .allowsHitTesting(false)
-        }
     }
 
     private var landscapeRail: some View {
