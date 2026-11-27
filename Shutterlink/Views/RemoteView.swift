@@ -4,6 +4,7 @@ struct RemoteView: View {
     @Environment(CameraModel.self) private var camera
     @State private var showGallery = false
     @State private var showLog = false
+    @State private var showReport = false
     @State private var showAllSettings = false
     @State private var showAstro = false
     /// The Pro screen, with the locked tool that opened it.
@@ -76,6 +77,7 @@ struct RemoteView: View {
         .overlay(alignment: .top) { ToastView() }
         .sheet(isPresented: $showAllSettings) { AllSettingsView() }
         .sheet(isPresented: $showLog) { LogView() }
+        .sheet(isPresented: $showReport) { ReportProblemView() }
         .sheet(isPresented: $showAstro) { AstroView() }
         .sheet(item: $proPrompt) { ProView(feature: $0.feature) }
         // A tool's sheet is only for the phone layouts; in the workspace the same state opens its panel.
@@ -562,6 +564,9 @@ struct RemoteView: View {
                 }
                 Button { showLog = true } label: {
                     Label("Request log", systemImage: "list.bullet.rectangle")
+                }
+                Button { showReport = true } label: {
+                    Label("Report a problem", systemImage: "exclamationmark.bubble")
                 }
             }
             Section {

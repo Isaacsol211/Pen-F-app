@@ -16,6 +16,7 @@ struct ConnectView: View {
     @State private var guidePicked = false
     @State private var showScanner = false
     @State private var scanNote: String?
+    @State private var showReport = false
 
     var body: some View {
         GeometryReader { geo in
@@ -40,6 +41,10 @@ struct ConnectView: View {
         .background { ConnectBackground() }
         .sheet(isPresented: $showAdd) {
             AddCameraSheet(twoColumns: isWorkspace)
+                .environment(camera)
+        }
+        .sheet(isPresented: $showReport) {
+            ReportProblemView()
                 .environment(camera)
         }
         #if !targetEnvironment(macCatalyst)
@@ -412,7 +417,7 @@ struct ConnectView: View {
     private func footer(workspace: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if let error = camera.lastError, !showAdd {
-                ConnectErrorBanner(text: error) { camera.lastError = nil }
+                ConnectErrorBanner(text: error, report: { showReport = true }) { camera.lastError = nil }
             }
             TimelineView(.periodic(from: .now, by: 2)) { _ in
                 WifiStatusRow(address: NetworkInfo.wifiAddress(), host: camera.host)
@@ -516,6 +521,7 @@ struct AddCameraSheet: View {
     @State private var sheetWidth: CGFloat = 0
     @State private var showScanner = false
     @State private var scanNote: String?
+    @State private var showReport = false
 
     private var selection: CameraBrand? { camera.autoDetectBrand ? nil : camera.brand }
     private var sideBySide: Bool { twoColumns && sheetWidth >= 660 }
@@ -569,6 +575,10 @@ struct AddCameraSheet: View {
                     .disabled(camera.phase == .connecting)
                 }
             }
+        }
+        .sheet(isPresented: $showReport) {
+            ReportProblemView()
+                .environment(camera)
         }
         #if !targetEnvironment(macCatalyst)
         .sheet(isPresented: $showScanner) {
@@ -653,7 +663,7 @@ struct AddCameraSheet: View {
         let connecting = camera.phase == .connecting
         return VStack(alignment: .leading, spacing: 10) {
             if let error = camera.lastError {
-                ConnectErrorBanner(text: error) { camera.lastError = nil }
+                ConnectErrorBanner(text: error, report: { showReport = true }) { camera.lastError = nil }
             }
             TimelineView(.periodic(from: .now, by: 2)) { _ in
                 WifiStatusRow(address: NetworkInfo.wifiAddress(), host: camera.host)
@@ -837,6 +847,7 @@ struct AddCameraSheet: View {
 
 private struct ConnectErrorBanner: View {
     let text: String
+    var report: () -> Void
     var dismiss: () -> Void
     @State private var expanded = false
 
@@ -847,11 +858,14 @@ private struct ConnectErrorBanner: View {
             Image(systemName: "wifi.exclamationmark").foregroundStyle(.red)
             VStack(alignment: .leading, spacing: 6) {
                 Text(text).lineLimit(expanded || !long ? nil : 3)
-                if long {
-                    Button(expanded ? "Less" : "More") { withAnimation(.snappy) { expanded.toggle() } }
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(Theme.accent)
+                HStack(spacing: 16) {
+                    if long {
+                        Button(expanded ? "Less" : "More") { withAnimation(.snappy) { expanded.toggle() } }
+                    }
+                    Button("Report this", action: report)
                 }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Theme.accent)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Button { withAnimation { dismiss() } } label: { Image(systemName: "xmark").foregroundStyle(Theme.secondary) }
