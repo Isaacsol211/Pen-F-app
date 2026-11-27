@@ -18,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.net.ConnectException
@@ -91,11 +92,18 @@ class CameraModel private constructor(val context: Context) {
     var wifiPassword by mutableStateOf("")
     /** The camera network Shutterlink joined for this connection, saved with the camera once it connects. */
     var joinedNetwork: WifiCredentials? = null
+    /** The home-screen camera being reconnected to, to tell whether a different one answered. */
+    var connectingTo: SavedCamera? = null
     var status by mutableStateOf<String?>(null)
     var lastError by mutableStateOf<String?>(null)
     var cameraName by mutableStateOf<String?>(null)
     var commands = CommandList()
     var rawCommandList by mutableStateOf("")
+    /**
+     * What the camera said about itself at connect (LUMIX: capability, lens, state, then its settings
+     * as first read), for checking a new body against. Belongs in a copied Request log.
+     */
+    var rawDescList by mutableStateOf("")
     var mode by mutableStateOf(CameraMode.UNKNOWN)
     var isSwitchingMode by mutableStateOf(false)
 
@@ -281,16 +289,37 @@ class CameraModel private constructor(val context: Context) {
         prefs.edit().putFloat("bulbTimer", seconds.toFloat()).apply()
     }
 
-    /** Switches camera family (null = auto-detect), moving the address to its default unless customised. */
+    /**
+     * Switches camera family (null = auto-detect). A typed address belongs to the brand it was typed for:
+     * it stays with that brand, and the new brand gets its own (or its usual one) back, rather than
+     * trying Nikon's port on a Canon.
+     */
     fun selectBrand(newBrand: CameraBrand?) {
         if (phase != ConnectionPhase.DISCONNECTED) return
-        if (host.isEmpty() || CameraBrand.entries.any { it.defaultHost == host }) host = newBrand?.defaultHost ?: ""
-        if (newBrand != null) brand = newBrand
-        autoDetectBrand = newBrand == null
+        val hostIsDefault = host.isEmpty() || CameraBrand.entries.any { it.defaultHost == host }
+        val typed = typedHosts().toMutableMap()
+        if (!autoDetectBrand) {
+            if (hostIsDefault) typed.remove(brand.id) else typed[brand.id] = host
+        }
+        prefs.edit().putString("hostByBrand", JSONObject(typed).toString()).apply()
+        if (newBrand != null) {
+            host = typed[newBrand.id] ?: newBrand.defaultHost
+            brand = newBrand
+            autoDetectBrand = false
+        } else {
+            if (hostIsDefault) host = ""
+            autoDetectBrand = true
+        }
         capabilities = brand.defaultCapabilities
         fitLiveViewQualityToBrand()
         saveSettings()
     }
+
+    /** Addresses typed for each brand (brand id → address). */
+    private fun typedHosts(): Map<String, String> = runCatching {
+        val o = JSONObject(prefs.getString("hostByBrand", null) ?: return emptyMap())
+        o.keys().asSequence().associateWith { o.getString(it) }
+    }.getOrDefault(emptyMap())
 
     /** An HTTP client for the camera whose requests show up in the Request log. */
     fun makeHttpClient(userAgent: String, allowedStatus: IntRange = 200..202): CameraHttpClient =
@@ -308,7 +337,10 @@ class CameraModel private constructor(val context: Context) {
     fun dialOptions(property: CameraProperty): CameraProperty {
         val range = liveInfo.apertureRange
         if (property.name != "focalvalue" || range == null) return property
-        val options = property.options.filter { o -> o.toDoubleOrNull()?.let { it in range } ?: true }
+        // Labels are rounded ("2.8" for a lens that says F2.83), so allow a little either side; the next
+        // third stop is 12 % away.
+        val lens = (range.start * 0.97)..(range.endInclusive * 1.03)
+        val options = property.options.filter { o -> o.toDoubleOrNull()?.let { it in lens } ?: true }
         if (options.isEmpty()) return property
         // The camera can report a value the lens can't do (e.g. "1.0"); show the nearest real stop.
         val current = property.value.toDoubleOrNull()
@@ -396,6 +428,7 @@ class CameraModel private constructor(val context: Context) {
             phase = ConnectionPhase.CONNECTED
             prefs.edit().putBoolean("hasConnected", true).apply()
             rememberConnectedCamera()
+            restorePresetUndo()
             status = null
             enterRecMode()
         } catch (e: CancellationException) {
@@ -445,6 +478,7 @@ class CameraModel private constructor(val context: Context) {
         activeHost = null
         profile = null
         cameraNote = null
+        rawDescList = ""
         stopInterval()
         cancelBracket()
         // Undo and the motion trigger belong to this camera's session.
@@ -498,6 +532,7 @@ class CameraModel private constructor(val context: Context) {
                 if (sharpness != null) updateFocusMeter(sharpness)
             }
             r.onPeaking = { overlay -> if (focusPeaking) peakingOverlay = overlay?.asImageBitmap() }
+            r.onSummary = { line -> appendLog(LogEntry.note("LIVE", line)) }
             r.peakingOn = focusPeaking
             try {
                 r.start()

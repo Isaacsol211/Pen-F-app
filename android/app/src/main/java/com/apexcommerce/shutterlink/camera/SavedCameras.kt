@@ -3,6 +3,7 @@ package com.apexcommerce.shutterlink.camera
 import android.content.SharedPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -43,15 +44,35 @@ object SavedCameras {
     }
 }
 
-/** Called once a connection succeeds: adds the camera to the home screen, or moves it to the top. */
-fun CameraModel.rememberConnectedCamera() {
+/**
+ * Called once a connection succeeds: adds the camera to the home screen, or moves it to the top, with
+ * the Wi-Fi network it's on.
+ */
+suspend fun CameraModel.rememberConnectedCamera() {
     val name = cameraName?.takeIf { it.isNotEmpty() } ?: brand.title
     val address = activeHost ?: host
-    val network = joinedNetwork
-    // The Keystore can take a second or two: not on the main thread.
-    if (network != null) scope.launch(Dispatchers.IO) { CameraWifiPasswords.save(this@rememberConnectedCamera, network.password, network.ssid) }
-    val saved = SavedCamera(brand, name, if (address == brand.defaultHost) "" else address, System.currentTimeMillis())
-        .let { s -> s.copy(ssid = network?.ssid ?: savedCameras.firstOrNull { it.id == s.id }?.ssid) }
+    val base = SavedCamera(brand, name, if (address == brand.defaultHost) "" else address, System.currentTimeMillis())
+    // `joinedNetwork` is the last network Shutterlink joined, but the phone may have moved to another
+    // camera's network in Settings since. It belongs to this camera only if the phone is on it now or,
+    // when Android won't say (no location permission), if this is the camera it was joined for.
+    val current = CameraNetwork.wifiSsid()
+    val joined = joinedNetwork?.takeIf { network ->
+        if (current != null) current == network.ssid else connectingTo?.let { it.id == base.id } ?: true
+    }
+    val ssid = when {
+        joined != null -> {
+            // The Keystore can take a second or two: not on the main thread.
+            scope.launch(Dispatchers.IO) { CameraWifiPasswords.save(this@rememberConnectedCamera, joined.password, joined.ssid) }
+            joined.ssid
+        }
+        current != null -> {
+            // Joined in Settings: Shutterlink can rejoin it if it's open or the password is known.
+            val known = withContext(Dispatchers.IO) { CameraWifiPasswords.password(this@rememberConnectedCamera, current) } != null
+            current.takeIf { known || CameraNetwork.wifiIsOpen() == true }
+        }
+        else -> savedCameras.firstOrNull { it.id == base.id }?.ssid
+    }
+    val saved = base.copy(ssid = ssid)
     val list = listOf(saved) + savedCameras.filter { it.id != saved.id }
     savedCameras = list
     SavedCameras.save(prefs, list)
@@ -74,5 +95,15 @@ suspend fun CameraModel.connect(saved: SavedCamera) {
     autoDetectBrand = false
     host = saved.host.ifEmpty { saved.brand.defaultHost }
     capabilities = saved.brand.defaultCapabilities
-    joinAndConnect(savedNetwork(saved))
+    connectingTo = saved
+    try {
+        joinAndConnect(savedNetwork(saved))
+    } finally {
+        connectingTo = null
+    }
+    // Without a network to join, whichever camera of that brand the phone is on answers.
+    val other = savedCameras.firstOrNull()
+    if (phase == ConnectionPhase.CONNECTED && other != null && other.id != saved.id) {
+        showToast("This is the ${other.name}, not the ${saved.name}")
+    }
 }

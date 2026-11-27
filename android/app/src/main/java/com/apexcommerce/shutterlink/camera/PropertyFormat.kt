@@ -1,7 +1,23 @@
 package com.apexcommerce.shutterlink.camera
 
+/**
+ * Names the connected camera gives its own settings and values. LUMIX menus carry an English name for
+ * every option; these are checked before the built-in tables.
+ */
+data class CameraText(
+    val titles: Map<String, String> = emptyMap(),
+    val values: Map<String, Map<String, String>> = emptyMap(),
+)
+
 /** Human-readable labels for the camera's raw property values (port of PropertyFormat.swift). */
 object PropertyFormat {
+    @Volatile private var cameraText = CameraText()
+
+    /** Replaces the connected camera's own names (empty when it disconnects). */
+    fun setCameraText(text: CameraText) {
+        cameraText = text
+    }
+
     val featured: List<Pair<String, String>> = listOf(
         "takemode" to "Mode",
         "focalvalue" to "Aperture",
@@ -15,7 +31,7 @@ object PropertyFormat {
         "colorphase" to "Hue (CRT)",
     )
 
-    fun title(name: String): String = featured.firstOrNull { it.first == name }?.second ?: name
+    fun title(name: String): String = cameraText.titles[name] ?: featured.firstOrNull { it.first == name }?.second ?: name
 
     /** Exposure time in seconds for a shutter value: `60"` → 60, `250` → 1/250, `1.3` → 1/1.3. */
     fun seconds(fromShutter: String): Double? {
@@ -27,7 +43,7 @@ object PropertyFormat {
     /** Live Composite, Live Time, Live Bulb and Bulb run until stopped. */
     fun isOpenEnded(shutter: String): Boolean = shutter.lowercase().let { it.startsWith("live") || it == "bulb" || it == "time" }
 
-    fun display(name: String, value: String): String = when (name) {
+    fun display(name: String, value: String): String = cameraText.values[name]?.get(value) ?: when (name) {
         "takemode" -> when (value.lowercase()) {
             "iauto" -> "iAUTO"
             "movie" -> "Movie"
@@ -64,6 +80,8 @@ object PropertyFormat {
         "35" to "Fluorescent", "64" to "Underwater", "23" to "Flash",
         "256" to "One-touch 1", "257" to "One-touch 2", "258" to "One-touch 3", "259" to "One-touch 4",
         "512" to "Custom K",
+        // Canon's two auto modes
+        "awb_white" to "Auto (white priority)", "awb_ambience" to "Auto (ambience priority)",
     )
 
     private fun drive(value: String): String {

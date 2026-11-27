@@ -75,11 +75,20 @@ data class LogEntry(
     val status: Int?,
     val millis: Long,
     val summary: String,
+    /** A line from the app itself (e.g. live view's frame rate), not a request: `method` is its kind, `path` its text. */
+    val note: Boolean = false,
 ) {
     val ok: Boolean get() = status != null && status in 200..204
 
     /** `%tT`: the local time as HH:MM:SS. */
-    val line: String get() = "${fmt("%tT", date)} $method $path → ${status?.toString() ?: "ERR"} ($millis ms) $summary"
+    val line: String
+        get() = if (note) "${fmt("%tT", date)} $method $path"
+        else "${fmt("%tT", date)} $method $path → ${status?.toString() ?: "ERR"} ($millis ms) $summary"
+
+    companion object {
+        /** A note in the Request log, e.g. `note("LIVE", "320×240 · 24.1 frames/s…")`. */
+        fun note(kind: String, text: String) = LogEntry(System.currentTimeMillis(), kind, text, 200, 0, "", note = true)
+    }
 }
 
 /** An error the app explains in its own words. */
@@ -121,6 +130,8 @@ data class BracketState(
     val total: Int = 0,
     /** What the frame being shot is set to, e.g. "−1 EV · 1/500". */
     val label: String? = null,
+    /** The run is a focus stack (which shares this state), not an exposure bracket. */
+    val isFocusStack: Boolean = false,
 )
 
 /** The settings a bracket will shoot, worked out before it starts. */
@@ -148,8 +159,11 @@ data class PresetStep(
     val value: String?,
     /** Why the step can't run on this camera, shown when `value` is null. */
     val unavailable: String = "Not offered by the camera over Wi-Fi",
-    /** Added to "The camera refused …" when the likely cause is a setting the app can't see. */
-    val hint: String? = null,
+    /**
+     * What to set on the camera when the phone can't (a dial, the mode): if the camera doesn't take the
+     * value, the step says this instead of "refused".
+     */
+    val onCamera: String? = null,
     val state: State = State.Pending,
 ) {
     sealed class State {
@@ -167,7 +181,7 @@ data class AstroPlan(
     /** 300 rule (pin-sharp on a 20 MP sensor) instead of the classic 500 rule. */
     val strict: Boolean = true,
     val iso: Int = 1600,
-    /** Star trails with Live Composite instead of single exposures. */
+    /** Star trails: Live Composite where the camera has it, else a series of 30 s frames to stack. */
     val trails: Boolean = false,
     /** The sensor's crop factor: 2 for Micro Four Thirds, about 1.5 for APS-C, 1 for full frame. */
     val cropFactor: Double = 2.0,
@@ -191,8 +205,13 @@ enum class FocusDriveResult {
     END_OF_TRAVEL,
 }
 
-/** The settings before a preset changed them, so Undo can put them back. */
-data class SettingsSnapshot(val title: String, val values: Map<String, String>)
+/** The settings before a preset changed them, so turning it off (Undo) can put them back. */
+data class SettingsSnapshot(
+    /** The setup that's on (a recipe's id, or a saved preset's). */
+    val id: String,
+    val title: String,
+    val values: Map<String, String>,
+)
 
 /** Settings the user saved under a name, for the camera brand they were saved on. */
 data class SavedPreset(

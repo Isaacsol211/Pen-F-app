@@ -2,6 +2,7 @@ package com.apexcommerce.shutterlink.camera
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -80,15 +81,25 @@ fun bracketOffsets(frames: Int, thirds: Int): List<Int> = List(maxOf(frames, 1))
 
 /** What a plan would shoot, or why it can't run with the current settings. */
 fun CameraModel.bracketSet(plan: BracketPlan): Result<BracketSet> {
-    val name = bracketProperty(plan.target)
+    val inM = properties["takemode"]?.value?.uppercase() == "M"
+    var name = bracketProperty(plan.target)
+    // Automatic: when that one can't be changed (a compact with a fixed shutter), use the other.
+    if (plan.target == BracketTarget.AUTO && properties[name]?.settable != true) {
+        val other = if (name == "expcomp") "shutspeedvalue" else "expcomp"
+        if (properties[other]?.settable == true) name = other
+    }
     val isEv = name == "expcomp"
     val property = properties[name] ?: return Result.failure(CameraException(
         "This camera doesn't offer ${if (isEv) "exposure compensation" else "shutter speed"} over Wi-Fi."))
     if (!property.settable) {
         val mode = PropertyFormat.display("takemode", properties["takemode"]?.value ?: "")
-        return Result.failure(CameraException(if (isEv)
-            "Exposure compensation is locked in $mode. Use P, A or S, or bracket the shutter in M."
-        else "The shutter speed is locked in $mode. Use S or M, or bracket EV instead."))
+        val noMode = inM || mode.isEmpty()
+        return Result.failure(CameraException(when {
+            isEv && noMode -> "Exposure compensation can't be changed from the phone here. Bracket the shutter instead."
+            isEv -> "Exposure compensation is locked in $mode. Use P, A or S, or bracket the shutter in M."
+            noMode -> "This camera doesn't let the phone change the shutter speed. Bracket EV instead."
+            else -> "The shutter speed is locked in $mode. Use S or M, or bracket EV instead."
+        }))
     }
     val offsets = bracketOffsets(plan.frames, plan.thirds)
     val number: (String) -> Double? = if (isEv) String::toDoubleOrNull else PropertyFormat::seconds
@@ -127,13 +138,14 @@ fun CameraModel.startBracket(plan: BracketPlan) {
     val original = properties[name]?.value
     bracket = BracketState(running = true, done = 0, total = set.values.size)
     bracketJob = scope.launch {
+        var completed = false
         try {
             for ((index, value) in set.values.withIndex()) {
                 if (!isActive) break
                 val offset = "${offsetLabel(set.offsets[index])} EV"
                 bracket = bracket.copy(label = if (name == "expcomp") offset else "$offset · ${PropertyFormat.display(name, value)}")
                 if (properties[name]?.value != value) {
-                    if (!setProperty(name, value, reportErrors = true)) break
+                    if (!setPropertyWhenReady(name, value)) break
                     delay(250)
                 }
                 if (!isActive) break
@@ -142,20 +154,38 @@ fun CameraModel.startBracket(plan: BracketPlan) {
                 while (isShooting && isActive) delay(100)
                 bracket = bracket.copy(done = index + 1)
             }
+            completed = isActive && bracket.done == set.values.size
         } catch (ignored: CancellationException) {
         } finally {
             withContext(NonCancellable) {
                 val finished = bracket.done
                 // Put the setting back, even after Cancel.
                 if (original != null && phase == ConnectionPhase.CONNECTED && properties[name]?.value != original) {
-                    setProperty(name, original, reportErrors = false)
+                    setPropertyWhenReady(name, original, reportErrors = false)
                 }
-                bracket = BracketState()
+                // Finished: the final count stays (not running) so feedback can tell complete from stopped.
+                bracket = if (completed) BracketState(done = finished, total = set.values.size) else BracketState()
                 bracketJob = null
                 if (finished > 0) showToast("Bracket: $finished of ${set.values.size} frames")
             }
         }
     }
+}
+
+/**
+ * Sets a property between the frames of a series. Right after a shot the camera is still exposing or
+ * writing the file and refuses changes (an Olympus answers HTTP 520), so this waits and tries again for
+ * a few seconds before giving up. Only the last refusal is shown.
+ */
+suspend fun CameraModel.setPropertyWhenReady(name: String, value: String, reportErrors: Boolean = true): Boolean {
+    val attempts = 12
+    for (attempt in 1..attempts) {
+        val last = attempt == attempts
+        if (setProperty(name, value, reportErrors && last)) return true
+        if (last || !currentCoroutineContext().isActive || phase != ConnectionPhase.CONNECTED) break
+        delay(500)
+    }
+    return false
 }
 
 // MARK: - Focus stacking
@@ -186,7 +216,7 @@ val CameraModel.canFocusStack: Boolean get() = capabilities.focusDrive && canBra
 fun CameraModel.startFocusStack(frames: Int, step: FocusStepSize) {
     val driver = driver ?: return
     if (!canFocusStack || frames <= 0) return
-    bracket = BracketState(running = true, done = 0, total = frames)
+    bracket = BracketState(running = true, done = 0, total = frames, isFocusStack = true)
     bracketJob = scope.launch {
         var reachedEnd = false
         var failure: String? = null
@@ -221,7 +251,10 @@ fun CameraModel.startFocusStack(frames: Int, step: FocusStepSize) {
         } catch (ignored: CancellationException) {
         } finally {
             val shot = bracket.done
-            bracket = BracketState()
+            // Finished (every frame, or focus reached infinity): the final count stays (not running) so
+            // feedback can tell complete from stopped. Cancelled or failed: cleared.
+            val completed = failure == null && isActive && shot > 0 && (shot == frames || reachedEnd)
+            bracket = if (completed) BracketState(done = shot, total = frames, isFocusStack = true) else BracketState()
             bracketJob = null
             when {
                 failure != null -> lastError = if (shot > 0) "Focus stack stopped after $shot frames: $failure" else failure
@@ -327,14 +360,36 @@ fun CameraModel.stripValue(name: String, property: CameraProperty?): String {
         }
         "isospeedvalue" -> info.iso?.let { return it.replace("ISO ", "").replace(" A", "") }
         "expcomp" -> info.expComp?.let { return it }
+        "drivemode" -> return driveShort(property?.value ?: "")
         "wbvalue" -> {
             val raw = property?.value ?: return "–"
             // Short enough for a strip cell, without cutting a word off mid-way ("Fluore").
             val short = mapOf("0" to "AWB", "20" to "Incand.", "35" to "Fluor.", "64" to "Underw.", "256" to "OT 1",
-                "257" to "OT 2", "258" to "OT 3", "259" to "OT 4", "512" to "Kelvin")
+                "257" to "OT 2", "258" to "OT 3", "259" to "OT 4", "512" to "Kelvin", "awb_white" to "AWB W", "awb_ambience" to "AWB A")
             return short[raw] ?: PropertyFormat.whiteBalance[raw] ?: raw
         }
     }
     if (property == null) return "–"
     return PropertyFormat.display(name, property.value)
+}
+
+/** Drive in a strip cell: "Single", "Anti-shock", "Cont H", "Burst H", "Timer 2s"… */
+fun driveShort(value: String): String {
+    val parts = value.split("|", limit = 2)
+    if (parts.size == 2) {   // LUMIX: "burst|h", "selftimer|2sec"…
+        return when (parts[0]) {
+            "burst" -> "Burst ${parts[1].uppercase()}"
+            "selftimer" -> "Timer " + parts[1].replace("sec3shot", "s×3").replace("sec", "s")
+            "4k_photo" -> "4K"
+            "autobracket" -> "Bracket"
+            "stopmotion_interval" -> if (parts[1] == "interval") "Interval" else "Stop mo."
+            else -> PropertyFormat.display("drivemode", value)
+        }
+    }
+    // Olympus: "lowvib-normal", "silent-continuous-H", "customselftimer"…
+    val words = mapOf("normal" to "Single", "lowvib" to "Anti-shock", "silent" to "Silent",
+        "continuous" to "Cont", "selftimer" to "Timer", "customselftimer" to "Timer C")
+    val tokens = value.split("-").filter { it.isNotEmpty() }.map { words[it] ?: it }.toMutableList()
+    if (tokens.size > 1 && tokens.last() == "Single") tokens.removeAt(tokens.size - 1)   // "Anti-shock Single" → "Anti-shock"
+    return if (tokens.isEmpty()) "–" else tokens.joinToString(" ")
 }

@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge(SystemBarStyle.dark(Color.BLACK), SystemBarStyle.dark(Color.BLACK))
+        enableEdgeToEdge(SystemBarStyle.dark(0xFF0A0A0A.toInt()), SystemBarStyle.dark(0xFF0A0A0A.toInt()))
         camera = CameraModel.get(this)
 
         // Live view stops while the app is in the background and resumes when it's back.
@@ -99,7 +99,15 @@ fun App(camera: CameraModel) {
         view.keepScreenOn = connected
         onDispose { view.keepScreenOn = false }
     }
+    // Haptics and sounds for what the camera does (connected, lost contact, exposures, series…).
+    com.apexcommerce.shutterlink.ui.FeedbackObserver(camera)
+    // The remote "develops" in when the camera connects (Motion.develop on iOS), and back out on disconnect.
     Box(Modifier.fillMaxSize().background(Theme.background)) {
-        if (connected) RemoteScreen(camera) else ConnectScreen(camera)
+        androidx.compose.animation.Crossfade(connected, Modifier.fillMaxSize(),
+            animationSpec = androidx.compose.animation.core.tween(450), label = "screen") { isConnected ->
+            if (isConnected) RemoteScreen(camera) else ConnectScreen(camera)
+        }
+        // The launch (101): the mark on black, handing over to the first screen.
+        com.apexcommerce.shutterlink.ui.LaunchHandoff()
     }
 }

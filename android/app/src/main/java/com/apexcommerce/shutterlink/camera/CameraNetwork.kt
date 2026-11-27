@@ -6,8 +6,10 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
+import android.os.Build
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.Inet4Address
@@ -65,6 +67,21 @@ object CameraNetwork {
         val ssid = runCatching { wifi.connectionInfo?.ssid }.getOrNull() ?: return null
         if (ssid == WifiManager.UNKNOWN_SSID || ssid.isBlank()) return null
         return ssid.removeSurrounding("\"")
+    }
+
+    /**
+     * Whether the Wi-Fi network `wifiSsid` names has no password: true or false where Android says
+     * (Android 12 and later, for a network joined in Settings), else null.
+     */
+    @Suppress("DEPRECATION")
+    fun wifiIsOpen(): Boolean? {
+        if (joinedSsid != null) return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val type = runCatching { wifi.connectionInfo?.currentSecurityType }.getOrNull() ?: return null
+            if (type == WifiInfo.SECURITY_TYPE_UNKNOWN) return null
+            return type == WifiInfo.SECURITY_TYPE_OPEN
+        }
+        return null
     }
 
     /**

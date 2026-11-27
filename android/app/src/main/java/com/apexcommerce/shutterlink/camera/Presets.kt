@@ -66,8 +66,14 @@ fun CameraModel.presetStep(
 ): PresetStep {
     // The camera offers it now, or will once it's in `mode`.
     val available = settableProperty(name) != null || (mode != null && inMode && modeAllows(mode, name) && name in properties)
-    val hint = if (mode != null && !inMode && name in setOf("focalvalue", "shutspeedvalue", "expcomp")) "Is the camera's mode dial on $mode?" else null
-    return PresetStep(title, detail, name, if (available) value else null, unavailable = unavailable, hint = hint)
+    val onCamera = when {
+        mode != null && !inMode && name in setOf("focalvalue", "shutspeedvalue", "expcomp") ->
+            "Turn the camera's mode dial to $mode, then apply again."
+        // Several bodies have a drive dial the phone can't turn (or say OK and ignore the change).
+        name == "drivemode" -> unavailable
+        else -> null
+    }
+    return PresetStep(title, detail, name, if (available) value else null, unavailable = unavailable, onCamera = onCamera)
 }
 
 // MARK: - Values
@@ -98,9 +104,22 @@ fun CameraModel.option(name: String, preferred: List<String>): String? {
     return preferred.firstOrNull { it in options }
 }
 
-fun CameraModel.antiShockStep(
-    detail: String = "Avoids shutter-shock blur on a tripod", unavailable: String = "Use the camera's electronic shutter if it has one",
-): PresetStep = presetStep("Anti-shock drive", detail, "drivemode", option("drivemode", listOf("lowvib-normal")), unavailable = unavailable)
+/**
+ * Keeps a tripod shot steady: anti-shock drive where the camera has it, else a 2 s self-timer, else
+ * what to set on the camera, so the step never just says "not offered".
+ */
+fun CameraModel.antiShockStep(detail: String = "Avoids shutter-shock blur on a tripod"): PresetStep {
+    val onCamera = if (brand == CameraBrand.PANASONIC)
+        "Set it on the camera: turn the drive dial to the self-timer and choose 2 s in MENU ▸ Rec ▸ Self Timer, " +
+            "or choose ESHTR (electronic shutter) in MENU ▸ Rec ▸ Shutter Type."
+    else "Set it on the camera: a 2 s self-timer, or the electronic (silent) shutter."
+    val antiShock = option("drivemode", listOf("lowvib-normal"))
+    val timer = option("drivemode", listOf("selftimer|2sec"))
+    val step = if (timer != null && antiShock == null)
+        presetStep("2 s self-timer", "$detail: the camera waits 2 s after the press", "drivemode", timer)
+    else presetStep("Anti-shock drive", detail, "drivemode", antiShock, unavailable = onCamera)
+    return step.copy(onCamera = onCamera)
+}
 
 /**
  * Runs steps in order and records what the camera accepted. They're worked out again before each one,
@@ -121,7 +140,7 @@ suspend fun CameraModel.runPreset(id: String, title: String, make: () -> List<Pr
             fun update(f: (PresetStep) -> PresetStep) {
                 presetSteps = presetSteps.toMutableList().also { it[index] = f(it[index]) }
             }
-            update { it.copy(value = fresh[index].value, unavailable = fresh[index].unavailable, hint = fresh[index].hint) }
+            update { it.copy(value = fresh[index].value, unavailable = fresh[index].unavailable, onCamera = fresh[index].onCamera) }
             val step = presetSteps[index]
             val value = step.value
             val property = properties[step.property]
@@ -134,23 +153,62 @@ suspend fun CameraModel.runPreset(id: String, title: String, make: () -> List<Pr
                 continue
             }
             update { it.copy(state = PresetStep.State.Running) }
+            val onCamera = step.onCamera
             if (setProperty(step.property, value, reportErrors = false)) {
                 changed = true
                 update { it.copy(state = PresetStep.State.Done) }
+            } else if (onCamera != null) {
+                // A dial or mode the phone can't turn: say what to do, not "refused".
+                update { it.copy(state = PresetStep.State.Skipped("Couldn't set ${PropertyFormat.display(step.property, value)} from the phone. $onCamera")) }
             } else {
-                var refused = "The camera refused ${PropertyFormat.display(step.property, value)}"
-                step.hint?.let { refused += ". $it" }
-                update { it.copy(state = PresetStep.State.Failed(refused)) }
+                update { it.copy(state = PresetStep.State.Failed("The camera refused ${PropertyFormat.display(step.property, value)}")) }
             }
         }
-        if (changed) presetUndo = SettingsSnapshot(title, before)
-        return presetSteps.none { it.state is PresetStep.State.Failed }
+        val failed = presetSteps.any { it.state is PresetStep.State.Failed }
+        // The setup stays on (even when the camera was already set that way) until it's turned off,
+        // which puts back the settings from just before it.
+        if (changed || !failed) {
+            presetUndo = SettingsSnapshot(id, title, before)
+            savePresetUndo()
+        }
+        return !failed
     } finally {
         presetRunning = false
     }
 }
 
-/** Puts back the settings from before the last preset: the mode first, then whatever it lets the app set. */
+/** The setup (recipe or saved preset) is on: applied, and not yet turned off. */
+fun CameraModel.isPresetOn(id: String): Boolean = presetUndo?.id == id
+
+/** A setup that's on is kept per camera, so after a restart it still shows and can be turned off. */
+private val CameraModel.presetUndoKey: String? get() = savedCameras.firstOrNull()?.let { "presetOn.${it.id}" }
+
+fun CameraModel.savePresetUndo() {
+    val key = presetUndoKey ?: return
+    val snapshot = presetUndo
+    if (snapshot == null) {
+        prefs.edit().remove(key).apply()
+        return
+    }
+    val json = JSONObject().put("id", snapshot.id).put("title", snapshot.title).put("values", JSONObject(snapshot.values))
+    prefs.edit().putString(key, json.toString()).apply()
+}
+
+/** After connecting: the setup that was on for this camera, so it can still be turned off. */
+fun CameraModel.restorePresetUndo() {
+    val key = presetUndoKey ?: return
+    val text = prefs.getString(key, null) ?: return
+    presetUndo = runCatching {
+        val o = JSONObject(text)
+        val values = o.getJSONObject("values")
+        SettingsSnapshot(o.getString("id"), o.getString("title"), values.keys().asSequence().associateWith { values.getString(it) })
+    }.getOrNull()
+}
+
+/**
+ * Turns the setup off: puts back the settings from before it, the mode first, then whatever it lets
+ * the app set (in A, for example, the camera picks the shutter itself again).
+ */
 suspend fun CameraModel.undoPreset() {
     val snapshot = presetUndo ?: return
     if (presetRunning) return
@@ -167,6 +225,7 @@ suspend fun CameraModel.undoPreset() {
         presetRunning = false
     }
     presetUndo = null
+    savePresetUndo()
     presetSteps = emptyList()
     presetResultsFor = null
     if (missed.isEmpty()) showToast("Settings from before ${snapshot.title} are back")
@@ -199,7 +258,8 @@ fun cropFactor(brand: CameraBrand, model: String): Double {
         CameraBrand.CANON -> {
             val name = m.replace("CANON", "").replace("EOS", "")
             when {
-                name in setOf("R", "RP", "R1", "R3", "R5", "R5II", "R5MARKII", "R6", "R6II", "R6MARKII", "R8") ||
+                // Full frame: R, RP, and R1, R3, R5 (II, C), R6 (II, "R6m2"), R8, but not R10, R50, R100 or R7.
+                name in setOf("R", "RP") || Regex("^R[13568](?![0-9])").containsMatchIn(name) ||
                     name.startsWith("5D") || name.startsWith("6D") || name.startsWith("1D") -> 1.0
                 name.startsWith("POWERSHOT") || name.startsWith("G") || name.startsWith("SX") -> 2.7
                 else -> 1.6
@@ -212,16 +272,38 @@ fun cropFactor(brand: CameraBrand, model: String): Double {
             when {
                 listOf("ILCE7", "ILCE9", "ILCE1", "A7", "A9", "A1", "DSCRX1", "RX1").any { name.startsWith(it) } && !rx10 -> 1.0
                 rx10 -> 2.7
+                // ZV-E1 is full frame, ZV-E10 APS-C.
+                name.startsWith("ZVE1") && !name.startsWith("ZVE10") -> 1.0
                 else -> 1.5
             }
         }
     }
 }
 
-/** Slowest available shutter that still keeps stars round (or Live Composite for trails). */
-fun CameraModel.astroShutter(plan: AstroPlan): String? =
-    if (plan.trails) properties["shutspeedvalue"]?.options?.firstOrNull { it.lowercase() == "livecomp" }
-    else timedShutters.filter { it.second <= plan.maxSeconds }.maxByOrNull { it.second }?.first
+/**
+ * Slowest available shutter that still keeps stars round. For trails, Live Composite where the camera
+ * has it, else 30 s frames for the interval timer to shoot back to back.
+ */
+fun CameraModel.astroShutter(plan: AstroPlan): String? {
+    if (plan.trails && hasLiveComposite) return properties["shutspeedvalue"]?.options?.firstOrNull { it.lowercase() == "livecomp" }
+    val longest = if (plan.trails) 30.0 else plan.maxSeconds
+    return timedShutters.filter { it.second <= longest }.maxByOrNull { it.second }?.first
+}
+
+/** Star trails without Live Composite: about an hour of back-to-back frames, to stack afterwards. */
+fun CameraModel.trailsSeries(plan: AstroPlan): IntervalPlan? {
+    if (!plan.trails || hasLiveComposite) return null
+    val frame = astroShutter(plan)?.let { PropertyFormat.seconds(it) } ?: 30.0
+    val every = Math.rint(frame + 3)   // a few seconds to save each frame
+    return IntervalPlan(count = Math.round(3600 / every).toInt(), seconds = every)
+}
+
+/** Starts the star-trail series, and leaves the same plan in the Interval panel. */
+fun CameraModel.startTrailsSeries(series: IntervalPlan) {
+    prefs.edit().putInt("interval.count", series.count).putFloat("interval.seconds", series.seconds.toFloat())
+        .putBoolean("interval.ramp", false).apply()
+    startInterval(series)
+}
 
 val CameraModel.widestAperture: String? get() = apertures.minByOrNull { it.second }?.first
 
@@ -233,19 +315,13 @@ val CameraModel.hasLiveComposite: Boolean
     get() = properties["shutspeedvalue"]?.options?.any { it.lowercase() == "livecomp" } == true
 
 fun CameraModel.astroSteps(plan: AstroPlan): List<PresetStep> {
-    val mode = settableProperty("takemode")?.options?.firstOrNull { it.uppercase() == "M" }
-    val modeOnCamera = properties["takemode"]?.value?.uppercase() == "M"
     // In A, S or P the camera locks aperture or shutter; once the preset has switched to M they open up.
-    val willBeManual = mode != null || modeOnCamera
-    fun exposure(name: String) = settableProperty(name) ?: if (willBeManual) properties[name] else null
-    val modeStep = PresetStep("Manual mode", "So aperture and shutter can be set", "takemode",
-        mode ?: if (modeOnCamera) "M" else null,
-        unavailable = "Turn the camera's mode dial to M: the app can't change the mode on this camera")
-    val shutterDetail = if (plan.trails) "Live Composite: stacks only new light, so stars draw trails"
-    else fmt("Longest that keeps stars sharp at %d mm (≤ %.1f s)", plan.focalLength.toInt(), plan.maxSeconds)
-    val shutterUnavailable = if (plan.trails && !hasLiveComposite)
-        "Live Composite is an Olympus / OM System feature. For trails here, use the interval timer and stack the frames"
-    else "Not offered by the camera over Wi-Fi"
+    val (mode, inM) = modeStep("M", "So aperture and shutter can be set")
+    val shutterDetail = when {
+        !plan.trails -> fmt("Longest that keeps stars sharp at %d mm (≤ %.1f s)", plan.focalLength.toInt(), plan.maxSeconds)
+        hasLiveComposite -> "Live Composite: stacks only new light, so stars draw trails"
+        else -> "One frame of the series: the interval timer shoots them back to back, then stack them"
+    }
     // About 4000 K keeps the night sky a neutral blue. Fluorescent is the nearest preset on most bodies;
     // LUMIX has none, so it falls back to Incandescent (about 3200 K, a cooler blue).
     val wbOptions = settableProperty("wbvalue")?.options ?: emptyList()
@@ -256,17 +332,13 @@ fun CameraModel.astroSteps(plan: AstroPlan): List<PresetStep> {
         else -> PresetStep("White balance ≈ 4000 K", "Neutral-blue night sky", "wbvalue", null,
             unavailable = "Set about 4000 K on the camera, or shoot RAW and set it afterwards")
     }
-    // In A, S or P the camera picks aperture or shutter itself; the mode dial is the likely cause.
-    val hint = if (!willBeManual) "Is the camera's mode dial on M?" else null
     return listOf(
-        modeStep,
-        PresetStep("Widest aperture", "Gather as much starlight as possible", "focalvalue",
-            if (exposure("focalvalue") == null) null else widestAperture, hint = hint),
-        PresetStep("Shutter", shutterDetail, "shutspeedvalue", if (exposure("shutspeedvalue") == null) null else astroShutter(plan),
-            unavailable = shutterUnavailable, hint = hint),
+        mode,
+        presetStep("Widest aperture", "Gather as much starlight as possible", "focalvalue", widestAperture, "M", inM),
+        presetStep("Shutter", shutterDetail, "shutspeedvalue", astroShutter(plan), "M", inM),
         presetStep("ISO", "Bright enough for faint stars without too much noise", "isospeedvalue", nearestIso(plan.iso)),
         wbStep,
-        antiShockStep(unavailable = "Use the camera's electronic shutter or a 2 s self-timer instead"),
+        antiShockStep(),
     )
 }
 

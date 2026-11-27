@@ -8,11 +8,15 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Process
 import java.io.ByteArrayOutputStream
-import java.net.DatagramPacket
-import java.net.DatagramSocket
+import java.io.Closeable
 import java.net.InetSocketAddress
-import java.net.SocketTimeoutException
+import java.net.StandardSocketOptions
+import java.nio.ByteBuffer
+import java.nio.channels.DatagramChannel
+import java.nio.channels.SelectionKey
+import java.nio.channels.Selector
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
 
@@ -176,60 +180,197 @@ fun jpegInDatagram(p: ByteArray, n: Int): ByteArray? {
 }
 
 /**
+ * Live-view counters (port of LiveViewStats in LiveView.swift): a detailed line to logcat every couple
+ * of seconds, summed into a plain-language line for the Request log. Times are `now()`, in ms.
+ */
+class LiveViewStats(var since: Long = System.nanoTime() / 1_000_000) {
+    var packets = 0
+    var completed = 0
+    var dropped = 0
+    var skippedByUI = 0
+    /** Frames passed over because a newer one was already waiting behind them. */
+    var stale = 0
+    var jpegBytes = 0L
+    var frameWidth = 0
+    var frameHeight = 0
+    var largestDatagram = 0
+
+    fun summary(until: Long = now()): String {
+        val seconds = maxOf((until - since) / 1000.0, 0.001)
+        val avgKB = if (completed > 0) jpegBytes / completed / 1024 else 0L
+        return fmt("LV %.1fs: completed %.1f/s, dropped %.1f/s, skippedByUI %.1f/s, stale %.1f/s, packets %.0f/s, avg %d KB, frame %dx%d, largest datagram %d bytes",
+            seconds, completed / seconds, dropped / seconds, skippedByUI / seconds, stale / seconds, packets / seconds,
+            avgKB, frameWidth, frameHeight, largestDatagram)
+    }
+
+    fun add(other: LiveViewStats) {
+        // Time counts from the first frame, not from when the receiver opened.
+        if (packets == 0) since = other.since
+        packets += other.packets
+        completed += other.completed
+        dropped += other.dropped
+        skippedByUI += other.skippedByUI
+        stale += other.stale
+        jpegBytes += other.jpegBytes
+        largestDatagram = maxOf(largestDatagram, other.largestDatagram)
+        if (other.frameWidth != 0) {
+            frameWidth = other.frameWidth
+            frameHeight = other.frameHeight
+        }
+    }
+
+    /**
+     * For the Request log, e.g. "320×240 · 24.1 frames/s from the camera, 23.9/s shown, 0 unreadable,
+     * 0 stale, 9 KB each (last 15 s)".
+     */
+    fun plainSummary(until: Long): String {
+        val seconds = maxOf((until - since) / 1000.0, 0.001)
+        fun rate(n: Int) = fmt("%.1f", n / seconds)
+        val size = if (frameWidth == 0) "no picture" else "$frameWidth×$frameHeight"
+        val kb = if (completed > 0) jpegBytes / completed / 1024 else 0L
+        return "$size · ${rate(completed + stale)} frames/s from the camera, ${rate(completed - skippedByUI)}/s shown, " +
+            "$dropped unreadable, $stale stale, $kb KB each (last ${Math.round(seconds)} s)"
+    }
+
+    companion object {
+        /** A clock in ms that doesn't jump when the phone's time is set. */
+        fun now(): Long = System.nanoTime() / 1_000_000
+    }
+}
+
+/**
+ * Receives datagrams on a non-blocking channel. Java's DatagramSocket can only wait for the next
+ * datagram, not ask whether more are already queued, which the newest-frame skipping below needs.
+ */
+class DatagramReader(private val channel: DatagramChannel) : Closeable {
+    private val selector: Selector = Selector.open()
+    /** The datagram the last `receive` returned. */
+    var buffer: ByteBuffer = ByteBuffer.allocate(65_536)
+        private set
+    private var spare: ByteBuffer = ByteBuffer.allocate(65_536)
+    /** How many waiting datagrams the last `receive(newest = true)` passed over. */
+    var skipped = 0
+        private set
+
+    init {
+        try {
+            channel.configureBlocking(false)
+            channel.register(selector, SelectionKey.OP_READ)
+        } catch (e: Exception) {
+            runCatching { selector.close() }
+            throw e
+        }
+    }
+
+    /**
+     * Waits up to `timeoutMs` for a datagram and returns its length (0 when none came); the bytes are
+     * in `buffer`. With `newest`, it then reads every datagram already waiting and keeps only the last.
+     */
+    fun receive(timeoutMs: Long, newest: Boolean): Int {
+        skipped = 0
+        var count = take(buffer)
+        if (count < 0) {
+            selector.select(timeoutMs)
+            selector.selectedKeys().clear()
+            count = take(buffer)
+            if (count < 0) return 0
+        }
+        if (newest && count > 0) {
+            while (true) {
+                val next = take(spare)
+                if (next <= 0) break
+                val older = buffer
+                buffer = spare
+                spare = older
+                count = next
+                skipped++
+            }
+        }
+        return count
+    }
+
+    /** Ends a `receive` that is waiting. */
+    fun wakeup() {
+        runCatching { selector.wakeup() }
+    }
+
+    /** One waiting datagram into `into`: its length, or -1 when none is waiting. */
+    private fun take(into: ByteBuffer): Int {
+        into.clear()
+        return if (channel.receive(into) == null) -1 else into.position()
+    }
+
+    override fun close() {
+        runCatching { selector.close() }
+        runCatching { channel.close() }
+    }
+}
+
+/**
  * Listens on a UDP port for the whole connection and hands decoded frames to the main thread.
- * Frames that arrive while the UI is still busy with the previous one are dropped.
+ * Frames that arrive while the UI is still busy with the previous one are dropped, and a LUMIX
+ * frame is skipped when a newer one is already waiting, so live view never runs late.
  */
 class LiveViewReceiver(val port: Int, val format: LiveViewFormat) {
     /** Called on the main thread: frame (null for metadata only), new metadata, histogram, sharpness. */
     var onFrame: ((Bitmap?, LiveInfo?, FloatArray?, Double?) -> Unit)? = null
     /** Focus-peaking overlays (null clears), on the main thread. */
     var onPeaking: ((Bitmap?) -> Unit)? = null
+    /**
+     * A plain-language summary while frames are arriving (after 5 s, then every 15 s), on the main
+     * thread, so a copied Request log shows how live view ran.
+     */
+    var onSummary: ((String) -> Unit)? = null
 
     @Volatile private var running = false
     @Volatile var peakingOn = false
     /** Normalised area to measure sharpness in (the loupe's view), or null when the loupe is closed. */
     @Volatile var meterRegion: RectF? = null
 
-    private var socket: DatagramSocket? = null
+    private var reader: DatagramReader? = null
     private val deliveryPending = AtomicBoolean(false)
     private var info = LiveInfo()
     private var framesSinceHistogram = 0
     private val main = Handler(Looper.getMainLooper())
-    private val pushQueue = Executors.newSingleThreadExecutor { r -> Thread(r, "Shutterlink live view (pushed)") }
+    /** Pushed frames are decoded one at a time here, like the UDP thread does for its own. */
+    private val pushQueue = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "Shutterlink live view (pushed)") }
     private val peaker = FocusPeaker()
 
-    private var statsSince = System.currentTimeMillis()
-    private var statsPackets = 0
-    private var statsCompleted = 0
-    private var statsDropped = 0
-    private var statsSkipped = 0
-    private var statsMaxBytes = 0
+    // The counters belong to the thread that receives: the UDP thread, or pushQueue for pushed formats.
+    private var stats = LiveViewStats()
+    private var logWindow = LiveViewStats()
+    private var logWindowEnd = LiveViewStats.now()
+    private var summariesSent = 0
 
     fun start() {
         if (format == LiveViewFormat.PUSHED) {
             running = true
+            // The UDP thread checks the counters on every pass; pushed frames need a clock of their own
+            // so a pause in frames closes the window instead of stretching it.
+            pushQueue.scheduleWithFixedDelay({ if (running) reportStats() }, 1, 1, TimeUnit.SECONDS)
             return
         }
-        val s = DatagramSocket(null)
-        try {
-            s.reuseAddress = true
-            s.receiveBufferSize = 2 * 1024 * 1024
-            s.soTimeout = 300
-            s.bind(InetSocketAddress(port))
+        val channel = DatagramChannel.open()
+        val r = try {
+            channel.setOption(StandardSocketOptions.SO_REUSEADDR, true)
+            channel.setOption(StandardSocketOptions.SO_RCVBUF, 2 * 1024 * 1024)
+            channel.bind(InetSocketAddress(port))
+            DatagramReader(channel)
         } catch (e: Exception) {
-            s.close()
+            runCatching { channel.close() }
             throw CameraException("Couldn't listen on UDP port $port (${e.message}).")
         }
-        socket = s
+        reader = r
         running = true
         Thread({
             Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY)
-            run(s)
+            run(r)
         }, "Shutterlink live view").start()
     }
 
     fun stop() {
         running = false
+        reader?.wakeup()
         pushQueue.shutdownNow()
         peaker.shutdown()
     }
@@ -242,8 +383,9 @@ class LiveViewReceiver(val port: Int, val format: LiveViewFormat) {
         val frame = if (start == 0) jpeg else jpeg.copyOfRange(start, jpeg.size)
         try {
             pushQueue.execute {
-                statsPackets++
-                statsCompleted++
+                stats.packets++
+                stats.completed++
+                stats.jpegBytes += frame.size
                 deliver(frame, null)
             }
         } catch (ignored: Exception) {
@@ -251,60 +393,82 @@ class LiveViewReceiver(val port: Int, val format: LiveViewFormat) {
         }
     }
 
-    private fun run(s: DatagramSocket) {
-        val buffer = ByteArray(65_536)
-        val packet = DatagramPacket(buffer, buffer.size)
-        val assembler = RtpFrameAssembler()
-        while (running) {
-            val count = try {
-                packet.length = buffer.size
-                s.receive(packet)
-                packet.length
-            } catch (ignored: SocketTimeoutException) {
-                0
-            } catch (e: Exception) {
-                if (running) debugLog("live view socket: $e")
-                break
-            }
-            if (count > statsMaxBytes) statsMaxBytes = count
-            if (count > 0 && format == LiveViewFormat.JPEG_PER_DATAGRAM) {
-                statsPackets++
-                val jpeg = jpegInDatagram(buffer, count)
-                if (jpeg != null) {
-                    statsCompleted++
-                    deliver(jpeg, null)
-                } else {
-                    statsDropped++
-                }
-            } else if (count > 0) {
-                statsPackets++
-                when (val out = assembler.push(buffer, count)) {
-                    is RtpFrameAssembler.Output.Frame -> {
-                        statsCompleted++
-                        deliver(out.jpeg, out.ext)
-                    }
-                    is RtpFrameAssembler.Output.InfoOnly -> deliver(null, out.ext)
-                    RtpFrameAssembler.Output.Dropped -> statsDropped++
-                    null -> {}
-                }
-            }
-            val now = System.currentTimeMillis()
-            if (now - statsSince >= 2000) {
-                if (statsPackets > 0) {
-                    val secs = (now - statsSince) / 1000.0
-                    debugLog(fmt("LV %.1fs: completed %.1f/s, dropped %.1f/s, skippedByUI %.1f/s, packets %.0f/s, largest datagram %d bytes",
-                        secs, statsCompleted / secs, statsDropped / secs, statsSkipped / secs, statsPackets / secs, statsMaxBytes))
-                }
-                statsSince = now
-                statsPackets = 0; statsCompleted = 0; statsDropped = 0; statsSkipped = 0; statsMaxBytes = 0
-            }
+    /** Every 2 s: the detailed line to logcat, and the totals towards the Request log line. */
+    private fun reportStats() {
+        val now = LiveViewStats.now()
+        if (now - stats.since < 2000) return
+        val idle = stats.packets == 0
+        if (!idle) {
+            debugLog(stats.summary(now))
+            logWindow.add(stats)
+            logWindowEnd = now
         }
-        s.close()
+        stats = LiveViewStats(now)
+        if (logWindow.packets == 0) {
+            logWindow = LiveViewStats(now)
+        } else if (idle || now - logWindow.since >= (if (summariesSent == 0) 5000 else 15000)) {
+            // Also when frames stop (live view paused, gallery open), so the rates only cover streaming.
+            // A frame or two on their own (a single preview fetch) isn't live view: no line for those.
+            val window = logWindow
+            logWindow = LiveViewStats(now)
+            if (window.completed + window.stale < 5) return
+            val line = window.plainSummary(logWindowEnd)
+            debugLog("LIVE $line")
+            summariesSent++
+            main.post { onSummary?.invoke(line) }
+        }
+    }
+
+    private fun run(r: DatagramReader) {
+        val assembler = RtpFrameAssembler()
+        // One JPEG per datagram (LUMIX): if more are already waiting, this one is old news.
+        val newest = format == LiveViewFormat.JPEG_PER_DATAGRAM
+        try {
+            while (running) {
+                val count = try {
+                    r.receive(300, newest)
+                } catch (e: Exception) {
+                    if (running) debugLog("live view socket: $e")
+                    break
+                }
+                val buffer = r.buffer.array()
+                if (count > stats.largestDatagram) stats.largestDatagram = count
+                if (count > 0 && newest) {
+                    // Show the newest so the picture never falls behind the camera (slow bodies like the
+                    // GM1, the first seconds after connecting, busy moments); the rest count as stale.
+                    stats.packets += 1 + r.skipped
+                    stats.stale += r.skipped
+                    val jpeg = jpegInDatagram(buffer, count)
+                    if (jpeg != null) {
+                        stats.completed++
+                        stats.jpegBytes += jpeg.size
+                        deliver(jpeg, null)
+                    } else {
+                        stats.dropped++
+                    }
+                } else if (count > 0) {
+                    stats.packets++
+                    when (val out = assembler.push(buffer, count)) {
+                        is RtpFrameAssembler.Output.Frame -> {
+                            stats.completed++
+                            stats.jpegBytes += out.jpeg.size
+                            deliver(out.jpeg, out.ext)
+                        }
+                        is RtpFrameAssembler.Output.InfoOnly -> deliver(null, out.ext)
+                        RtpFrameAssembler.Output.Dropped -> stats.dropped++
+                        null -> {}
+                    }
+                }
+                reportStats()
+            }
+        } finally {
+            r.close()
+        }
     }
 
     private fun deliver(jpeg: ByteArray?, ext: ByteArray?) {
         if (!deliveryPending.compareAndSet(false, true)) {
-            statsSkipped++
+            stats.skippedByUI++
             return
         }
         var newInfo: LiveInfo? = null
@@ -314,6 +478,10 @@ class LiveViewReceiver(val port: Int, val format: LiveViewFormat) {
         }
         val image = jpeg?.let { runCatching { BitmapFactory.decodeByteArray(it, 0, it.size) }.getOrNull() }
         image?.prepareToDraw()
+        if (image != null) {
+            stats.frameWidth = image.width
+            stats.frameHeight = image.height
+        }
 
         var histogram: FloatArray? = null
         framesSinceHistogram++

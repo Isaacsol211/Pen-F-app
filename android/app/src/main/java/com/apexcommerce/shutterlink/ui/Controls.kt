@@ -58,6 +58,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
@@ -75,6 +76,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.apexcommerce.shutterlink.R
 import com.apexcommerce.shutterlink.camera.CameraMode
 import com.apexcommerce.shutterlink.camera.CameraModel
 import com.apexcommerce.shutterlink.camera.PropertyFormat
@@ -120,14 +122,17 @@ fun CameraStatusRow(camera: CameraModel, color: Color = Theme.secondary) {
     }
 }
 
-/** The top of the live screen: what's connected and how it's doing; the menu sits at the end. */
+/** The top of the live screen: what's connected and how it's doing, like the info line on a camera's rear screen. */
 @Composable
 fun InfoBar(camera: CameraModel, trailing: @Composable () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(start = 18.dp, end = 10.dp),
+    Row(Modifier.fillMaxWidth().heightIn(min = Theme.target).padding(start = 20.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        LiveDot(camera.liveViewRunning)
-        Text((camera.cameraName ?: camera.brand.shortTitle).uppercase(), color = Color.White, fontSize = 15.sp,
-            fontWeight = FontWeight.Black, letterSpacing = 1.2.sp, maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+        Row(Modifier.weight(1f, fill = false).semantics(mergeDescendants = true) {
+            contentDescription = "${camera.cameraName ?: "Camera"}, ${if (camera.liveViewRunning) "live" else "live view off"}"
+        }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LiveDot(camera.liveViewRunning)
+            Text(camera.cameraName ?: camera.brand.shortTitle, color = Theme.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
         Spacer(Modifier.weight(1f))
         CameraStatusRow(camera)
         trailing()
@@ -136,80 +141,125 @@ fun InfoBar(camera: CameraModel, trailing: @Composable () -> Unit) {
 
 @Composable
 fun LiveDot(live: Boolean) {
-    Box(Modifier.size(8.dp).background(if (live) Theme.green else Theme.orange, CircleShape))
+    Box(Modifier.size(7.dp).background(if (live) Theme.green else Theme.accent, CircleShape))
 }
 
-/** Live dot, battery and shots left, as a pill over the image (landscape). */
+/** Live dot, the camera's name (landscape) and the status, as a pill over the image. */
 @Composable
-fun StatusPill(camera: CameraModel) {
+fun StatusPill(camera: CameraModel, showsName: Boolean = false) {
     Row(Modifier.heightIn(min = 36.dp).surface(Pill).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         LiveDot(camera.liveViewRunning)
-        CameraStatusRow(camera, Color.White)
+        if (showsName) Text(camera.cameraName ?: camera.brand.shortTitle, color = Theme.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        CameraStatusRow(camera)
     }
 }
 
 // MARK: - Exposure strip
 
-private fun stripLabel(name: String) = when (name) {
-    "focalvalue" -> "F-stop"
-    "shutspeedvalue" -> "Shutter"
-    "isospeedvalue" -> "ISO"
-    "expcomp" -> "EV"
-    "wbvalue" -> "WB"
-    "drivemode" -> "Drive"
-    "exposemovie" -> "Video"
-    else -> name
+/** Where to change the mode on a body whose mode dial the phone can't turn. */
+const val MODE_DIAL_HINT = "Turn the mode dial on the camera to change the mode."
+
+/** The values that get a place in the row under the picture; white balance, drive and quality are the small line. */
+fun stripItems(camera: CameraModel): List<String> = buildList {
+    addAll(listOf("takemode", "focalvalue", "shutspeedvalue", "isospeedvalue", "expcomp"))
+    if (camera.isMovieMode) add("exposemovie")
+}.filter { camera.properties[it] != null }
+
+/** What the row shows for a value: f/5.6, ISO 400, the mode's short name… */
+fun stripText(name: String, camera: CameraModel): String {
+    val property = camera.properties[name]?.let { camera.dialOptions(it) }
+    val raw = camera.stripValue(name, property)
+    return when (name) {
+        "focalvalue" -> when {
+            raw.firstOrNull()?.isDigit() == true -> "f/$raw"
+            // Live view reports "F1.8": written the design's way, f/1.8.
+            raw.startsWith("F") && raw.drop(1).firstOrNull()?.isDigit() == true -> "f/" + raw.drop(1)
+            else -> raw
+        }
+        "isospeedvalue" -> if (raw.firstOrNull()?.isDigit() == true) "ISO $raw" else raw
+        "takemode" -> modeTitle(property?.value ?: raw)
+        else -> raw
+    }
+}
+
+private val valueGrey = Color(0xFFC9C5BA)
+
+/**
+ * The row of values under the picture (mode, aperture, shutter, ISO, EV): what the camera is actually
+ * using, in Barlow, the selected one in the accent. Tap one and the dial below becomes its dial.
+ * Centred with even gaps, as designed; it only narrows when the values don't fit.
+ */
+@Composable
+fun ExposureStrip(camera: CameraModel, selected: String?, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
+    val view = androidx.compose.ui.platform.LocalView.current
+    val names = stripItems(camera)
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val style = Theme.num(20.sp)
+    BoxWithConstraints(modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+        val texts = names.map { stripText(it, camera) }
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val natural = with(density) {
+            texts.sumOf { measurer.measure(it, style).size.width + 8.dp.roundToPx() } + (22.dp * (names.size - 1).coerceAtLeast(0)).roundToPx()
+        }
+        val fits = natural <= constraints.maxWidth
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = if (fits) Arrangement.spacedBy(22.dp, Alignment.CenterHorizontally) else Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically) {
+            names.forEachIndexed { i, name ->
+                val property = camera.properties[name]?.let { camera.dialOptions(it) }
+                val locked = property?.settable != true
+                val isSelected = selected == name
+                val cell = (if (fits) Modifier else Modifier.weight(1f)).heightIn(min = Theme.target)
+                val color = if (isSelected) Theme.accent else if (locked) Theme.secondary else valueGrey
+                val textStyle = Theme.num(20.sp, medium = !isSelected).copy(letterSpacing = 0.6.sp)
+                if (name == "takemode" && locked) {
+                    // A body with a physical mode dial the phone can't turn (LUMIX): a plain label; a tap says where to change it.
+                    Box(cell.clickable { camera.showToast(MODE_DIAL_HINT) }.padding(horizontal = 4.dp)
+                        .semantics { contentDescription = "Mode: ${texts[i]}. $MODE_DIAL_HINT" }, contentAlignment = Alignment.Center) {
+                        AutoFitText(texts[i], textStyle, Theme.secondary)
+                    }
+                } else {
+                    Box(cell.clickable(enabled = !camera.isBusyExposing) {
+                        Feedback.play(Feedback.Moment.SELECT, view)
+                        onSelect(name)
+                    }.padding(horizontal = 4.dp)
+                        .semantics { contentDescription = "${SettingSpec.spec(name)?.title ?: name}: ${texts[i]}" },
+                        contentAlignment = Alignment.Center) {
+                        AutoFitText(texts[i], textStyle, color)
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
- * The readouts: one cell per value that matters, a small-caps label over a big monospaced value,
- * showing what the camera is actually using (AUTO when the camera chooses it). Tap a cell for its dial.
+ * The small line under the picture: white balance, drive and quality. White balance picks its dial;
+ * drive and quality open a panel of options. Above it, the aids that are on ("Grid on"…), tap to turn off (212).
  */
 @Composable
-fun ExposureStrip(camera: CameraModel, active: String?, onSelect: (String?) -> Unit, compact: Boolean = false) {
-    val haptics = LocalHapticFeedback.current
-    val names = buildList {
-        addAll(listOf("focalvalue", "shutspeedvalue", "isospeedvalue", "expcomp", "wbvalue", "drivemode"))
-        if (camera.isMovieMode) add("exposemovie")
-    }.filter { camera.properties[it] != null }
-    if (names.isEmpty()) {
-        Box(Modifier.fillMaxWidth().heightIn(min = if (compact) 50.dp else 58.dp).surface(RoundedCornerShape(18.dp), overImage = compact),
-            contentAlignment = Alignment.Center) {
-            Text(if (camera.mode == CameraMode.REC && !camera.isSwitchingMode) "Reading camera settings…" else "–",
-                color = Theme.tertiary, fontSize = 13.sp)
+fun SettingLine(camera: CameraModel, active: String?, aids: List<ToolItem>, onSelect: (String) -> Unit, openSheet: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        val on = aids.filter { it.on }
+        if (on.isNotEmpty()) {
+            Row(Modifier.height(22.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (on.size <= 3) on.forEach { item ->
+                    Text("${item.title} on", color = Theme.text.copy(alpha = 0.85f), fontSize = 12.sp, maxLines = 1,
+                        modifier = Modifier.clickable(onClick = item.action).semantics { contentDescription = "${item.title} on. Turns it off" })
+                } else Text("${on.size} aids on", color = Theme.secondary, fontSize = 13.sp)
+            }
         }
-        return
-    }
-    Row(Modifier.fillMaxWidth().surface(RoundedCornerShape(18.dp), overImage = compact).padding(4.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        names.forEachIndexed { index, name ->
-            if (index > 0) Hairline(Modifier.width(1.dp).height(26.dp))
-            val property = camera.properties[name]?.let { camera.dialOptions(it) }
-            val locked = property?.settable != true
-            val selected = active == name
-            val auto = locked && name != "drivemode"
-            Column(
-                Modifier.weight(1f).heightIn(min = if (compact) 50.dp else 58.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (selected) Theme.accent.copy(alpha = 0.16f) else Color.Transparent)
-                    .clickable(enabled = !camera.isBusyExposing) {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSelect(if (selected) null else name)
-                    }
-                    .padding(horizontal = 4.dp)
-                    .semantics { contentDescription = "${SettingSpec.spec(name)?.title ?: name}: ${camera.stripValue(name, property)}${if (auto) ", automatic" else ""}" },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                CapsLabel(if (auto) "Auto" else stripLabel(name),
-                    color = if (selected) Theme.accent else if (auto) Theme.accent.copy(alpha = 0.85f) else Theme.tertiary, size = 10.sp)
-                val tint = if (selected) Theme.accent else if (auto) Theme.secondary else Color.White
-                if (name == "drivemode") {
-                    Icon(SettingSpec.optionIcon(name, property?.value ?: "") ?: Icons.Filled.GridView, null, Modifier.size(18.dp), tint = tint)
-                } else {
-                    AutoSizeText(camera.stripValue(name, property), tint, if (compact) 16 else 18)
-                }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            listOf("wbvalue", "drivemode", "quality").filter { camera.properties[it] != null }.forEach { name ->
+                val property = camera.properties[name]?.let { camera.dialOptions(it) }
+                val isOn = active == name
+                val value = camera.stripValue(name, property)
+                Text((if (name == "wbvalue") "WB " else "") + value, color = if (isOn) Theme.accent else Theme.secondary, fontSize = 13.sp,
+                    fontWeight = if (isOn) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1,
+                    modifier = Modifier.heightIn(min = 30.dp).clickable(enabled = !camera.isBusyExposing) {
+                        if (name == "wbvalue") onSelect(name) else openSheet(name)
+                    }.padding(horizontal = 10.dp, vertical = 6.dp)
+                        .semantics { contentDescription = "${SettingSpec.spec(name)?.title ?: name}: $value" })
             }
         }
     }
@@ -227,7 +277,7 @@ fun AutoSizeText(text: String, color: Color, maxSp: Int) {
 
 // MARK: - Mode carousel
 
-private fun modeTitle(mode: String) = when (mode.lowercase()) {
+fun modeTitle(mode: String) = when (mode.lowercase()) {
     "iauto" -> "AUTO"
     "movie" -> "VIDEO"
     else -> mode.uppercase()
@@ -247,6 +297,8 @@ fun ModeCarousel(camera: CameraModel, vertical: Boolean = false) {
     var committed by remember { mutableStateOf(current) }
     val itemSize = if (vertical) Theme.target else 70.dp
     val centered by remember(options) { derivedStateOf { state.itemAtCenter() } }
+    // Every mode is a hard detent, like the mode dial on the camera.
+    FeedbackOnChange(Feedback.Moment.DIAL_STOP, centered)
     fun commit(mode: String) {
         if (mode == committed || mode == current) return
         committed = mode
@@ -314,29 +366,54 @@ data class ToolItem(
     val action: () -> Unit,
 )
 
+/** The design's drawn line icon for a tool (converted from the iOS asset catalog), or null. */
+fun toolIcon(id: String): Int? = when (id) {
+    "presets" -> R.drawable.tool_presets
+    "astro" -> R.drawable.tool_astro
+    "interval" -> R.drawable.tool_interval
+    "bracket" -> R.drawable.tool_bracket
+    "focusstack" -> R.drawable.tool_focusstack
+    "nd" -> R.drawable.tool_nd
+    "motion" -> R.drawable.tool_motion
+    "highres" -> R.drawable.tool_highres
+    "pocket" -> R.drawable.tool_pocket
+    "video" -> R.drawable.tool_video
+    "loupe" -> R.drawable.tool_loupe
+    "night" -> R.drawable.tool_night
+    "histogram" -> R.drawable.tool_histogram
+    "grid" -> R.drawable.tool_grid
+    "peaking" -> R.drawable.tool_peaking
+    "geotag" -> R.drawable.tool_geotag
+    "tap", "touchshutter" -> R.drawable.tool_tap
+    else -> null
+}
+
+/** A tool in the Tools panel: a rounded tile, filled with the accent when on; ↗ on tools that open a screen. */
 @Composable
 fun ToolButton(item: ToolItem) {
-    val haptics = LocalHapticFeedback.current
-    val shape = RoundedCornerShape(14.dp)
+    val view = androidx.compose.ui.platform.LocalView.current
+    val shape = RoundedCornerShape(18.dp)
+    val tint = if (item.on) Theme.onAccent else Theme.text
     Box(
-        Modifier.fillMaxWidth().heightIn(min = 66.dp).clip(shape)
-            .background(if (item.on) Theme.accent.copy(alpha = 0.14f) else Theme.surfaceRaised, shape)
-            .border(if (item.on) 1.5.dp else 1.dp, if (item.on) Theme.accent.copy(alpha = 0.85f) else Theme.stroke, shape)
+        Modifier.fillMaxWidth().heightIn(min = 78.dp).clip(shape)
+            .background(if (item.on) Theme.accent else Theme.surface.copy(alpha = 0.9f), shape)
+            .then(if (item.on) Modifier else Modifier.border(1.dp, Theme.outline, shape))
             .clickable {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                Feedback.play(Feedback.Moment.SELECT, view)
                 item.action()
             }
-            .semantics { contentDescription = item.title + if (item.opens) "" else if (item.on) ", on" else ", off" },
+            .semantics { contentDescription = item.title + if (item.opens) ". Opens ${item.title}" else if (item.on) ", on" else ", off" },
         contentAlignment = Alignment.Center,
     ) {
-        val tint = if (item.on) Theme.accent else Color.White
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Icon(item.icon, null, Modifier.size(22.dp), tint = tint)
+        Column(Modifier.padding(vertical = 6.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val drawn = toolIcon(item.id)
+            if (drawn != null) Icon(androidx.compose.ui.res.painterResource(drawn), null, Modifier.size(26.dp), tint = tint)
+            else Icon(item.icon, null, Modifier.size(24.dp), tint = tint)
             Text(item.title, color = tint, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
         if (item.opens) {
-            Icon(Icons.Filled.NorthEast, null, Modifier.align(Alignment.TopEnd).padding(7.dp).size(10.dp),
-                tint = if (item.on) Theme.accent else Theme.tertiary)
+            Text("↗", color = if (item.on) Theme.onAccent else Theme.secondary, fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 8.dp))
         }
     }
 }
@@ -344,10 +421,10 @@ fun ToolButton(item: ToolItem) {
 /** Every tool, in two groups: shooting tools that open their own screen, and switches. */
 @Composable
 fun ToolsTray(tools: List<ToolItem>, columns: Int = 4) {
-    Column(Modifier.fillMaxWidth().surface(RoundedCornerShape(24.dp)).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for ((title, items) in listOf("Shooting" to tools.filter { it.opens }, "Switches" to tools.filter { !it.opens })) {
             if (items.isEmpty()) continue
-            CapsLabel(title, color = Theme.tertiary, modifier = Modifier.padding(start = 2.dp))
+            CapsLabel(title, color = Theme.secondary, modifier = Modifier.padding(start = 4.dp, top = 14.dp))
             items.chunked(columns).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     row.forEach { Box(Modifier.weight(1f)) { ToolButton(it) } }
@@ -358,39 +435,19 @@ fun ToolsTray(tools: List<ToolItem>, columns: Int = 4) {
     }
 }
 
-/** The aids you toggle most (grid, histogram, peaking, loupe, night), one tap away under the readouts. */
-@Composable
-fun QuickAidStrip(tools: List<ToolItem>) {
-    Row(Modifier.fillMaxWidth().surface(RoundedCornerShape(18.dp)).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        tools.forEachIndexed { index, item ->
-            if (index > 0) Hairline(Modifier.width(1.dp).height(22.dp))
-            val tint = if (item.on) Theme.accent else Color.White
-            Column(
-                Modifier.weight(1f).heightIn(min = 52.dp).clickable { item.action() }
-                    .semantics { contentDescription = item.title + if (item.on) ", on" else ", off" },
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-            ) {
-                Icon(item.icon, null, Modifier.size(19.dp), tint = tint)
-                CapsLabel(if (item.id == "histogram") "Histo" else item.title, color = if (item.on) Theme.accent else Theme.tertiary, size = 10.sp)
-                Box(Modifier.padding(top = 2.dp).width(18.dp).height(3.dp).background(if (item.on) Theme.accent else Color.Transparent, Pill))
-            }
-        }
-    }
-}
-
-/** Round button next to the shutter that opens the tools tray (and shows interval progress). */
+/** Round button next to the shutter that opens the tools (and shows interval progress). */
 @Composable
 fun ToolsButton(camera: CameraModel, open: Boolean, onToggle: () -> Unit) {
-    Box(
-        Modifier.size(58.dp).surface(CircleShape, tint = if (open) Theme.accent.copy(alpha = 0.22f) else null).clickable(onClick = onToggle)
-            .semantics { contentDescription = if (open) "Close tools" else "Tools" },
-        contentAlignment = Alignment.Center,
-    ) {
-        if (camera.interval.running) {
-            Text(if (camera.interval.total == 0) "${camera.interval.done}" else "${camera.interval.done}/${camera.interval.total}",
-                color = Theme.accent, style = monoStyle(11.sp, FontWeight.Bold))
-        } else {
-            Icon(if (open) Icons.Filled.Close else Icons.Filled.GridView, null, Modifier.size(22.dp))
+    Box(Modifier.size(58.dp).clickable(onClick = onToggle).semantics { contentDescription = if (open) "Close tools" else "Tools" },
+        contentAlignment = Alignment.Center) {
+        Box(Modifier.size(48.dp).border(1.dp, if (camera.interval.running) Theme.accent else Theme.text.copy(alpha = 0.4f), CircleShape),
+            contentAlignment = Alignment.Center) {
+            if (camera.interval.running) {
+                Text(if (camera.interval.total == 0) "${camera.interval.done}" else "${camera.interval.done}/${camera.interval.total}",
+                    color = Theme.accent, style = Theme.num(16.sp), maxLines = 1)
+            } else {
+                Icon(if (open) Icons.Filled.Close else Icons.Filled.Tune, null, Modifier.size(22.dp), tint = Theme.text)
+            }
         }
     }
 }
@@ -399,17 +456,16 @@ fun ToolsButton(camera: CameraModel, open: Boolean, onToggle: () -> Unit) {
 @Composable
 fun LastShotButton(camera: CameraModel, onClick: () -> Unit) {
     val enabled = !camera.isBusyExposing && !camera.interval.running && camera.capabilities.cardBrowser
+    val shape = RoundedCornerShape(12.dp)
     Box(
-        Modifier.size(58.dp).surface(RoundedCornerShape(17.dp)).clickable(enabled = enabled, onClick = onClick)
-            .alpha(if (enabled) 1f else 0.4f).padding(3.dp)
+        Modifier.size(58.dp).clickable(enabled = enabled, onClick = onClick).alpha(if (enabled) 1f else 0.4f)
             .semantics { contentDescription = if (camera.lastShot == null) "Card" else "Last photo. Opens the card." },
         contentAlignment = Alignment.Center,
     ) {
-        val shot = camera.lastShot
-        if (shot != null) {
-            Image(shot, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp)))
-        } else {
-            Icon(Icons.Filled.PhotoLibrary, null, Modifier.size(24.dp))
+        Box(Modifier.size(48.dp).clip(shape).border(1.dp, Theme.text.copy(alpha = 0.4f), shape), contentAlignment = Alignment.Center) {
+            val shot = camera.lastShot
+            if (shot != null) Image(shot, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            else Icon(Icons.Filled.PhotoLibrary, null, Modifier.size(22.dp), tint = Theme.text)
         }
     }
 }
@@ -447,10 +503,8 @@ fun ShutterButton(camera: CameraModel) {
     val duration = camera.exposureDuration
     val openRunning = camera.isShooting && camera.isOpenEndedShutter
     val now = rememberNow(started != null || camera.isRecordingMovie, if (started != null && duration == null) 33 else 250)
-    val innerSize by animateDpAsState(if (pressed) 58.dp else 68.dp, label = "shutter")
-    LaunchedEffect(camera.shotCounter) {
-        if (camera.shotCounter > 0) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-    }
+    val innerSize by animateDpAsState(if (pressed) 50.dp else 58.dp, label = "shutter")
+    val view = androidx.compose.ui.platform.LocalView.current
 
     val progress: Float? = when {
         camera.interval.running && camera.interval.total > 0 -> camera.interval.done / camera.interval.total.toFloat()
@@ -459,7 +513,7 @@ fun ShutterButton(camera: CameraModel) {
     }
 
     Box(Modifier.size(104.dp), contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(102.dp)) {
+        Canvas(Modifier.size(90.dp)) {
             val stroke = 5.dp.toPx()
             if (progress != null) {
                 drawArc(Theme.accent, -90f, 360f * progress, false, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
@@ -474,7 +528,7 @@ fun ShutterButton(camera: CameraModel) {
             }
         }
         Box(
-            Modifier.size(90.dp).border(4.dp, Color.White.copy(alpha = 0.9f), CircleShape)
+            Modifier.size(74.dp).border(if (pressed) 4.5.dp else 3.dp, Theme.text, CircleShape)
                 .alpha(if (enabled) 1f else 0.4f)
                 .semantics { contentDescription = if (movie) (if (camera.isRecordingMovie) "Stop recording" else "Record movie") else "Shutter" }
                 .pointerInput(enabled, movie, camera.isOpenEndedShutter) {
@@ -484,13 +538,19 @@ fun ShutterButton(camera: CameraModel) {
                         pressed = true
                         val openEnded = camera.isOpenEndedShutter
                         val isMovie = camera.isMovieMode
-                        if (!openEnded && !isMovie) scope.launch { camera.shutterPressed() }
+                        if (!openEnded && !isMovie) {
+                            Feedback.play(Feedback.Moment.PRESS, view)
+                            scope.launch { camera.shutterPressed() }
+                        }
                         waitForUpOrCancellation()
                         pressed = false
                         when {
                             isMovie -> scope.launch { camera.toggleMovie() }
                             openEnded -> scope.launch { camera.toggleOpenExposure() }
-                            else -> scope.launch { camera.shutterReleased() }
+                            else -> {
+                                Feedback.play(Feedback.Moment.SHUTTER, view)
+                                scope.launch { camera.shutterReleased() }
+                            }
                         }
                     }
                 },
@@ -508,7 +568,7 @@ fun ShutterButton(camera: CameraModel) {
                 openRunning || camera.isRecordingMovie ->
                     Box(Modifier.size(if (pressed) 26.dp else 30.dp).background(Theme.red, RoundedCornerShape(8.dp)))
                 else -> Box(Modifier.size(innerSize).background(
-                    if (movie) Theme.red else if (camera.isShooting) Theme.accent else Color.White, CircleShape))
+                    if (movie) Theme.red else if (camera.isShooting) Theme.accent else Theme.text, CircleShape))
             }
         }
         val clockStart = if (camera.isRecordingMovie) camera.movieStartedAt else if (openRunning) started else null

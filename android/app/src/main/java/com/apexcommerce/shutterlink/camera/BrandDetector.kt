@@ -96,18 +96,21 @@ object BrandDetector {
         Http.probe.newCall(request).execute().use { r ->
             if (r.code >= 500) null else r.body?.string()?.take(4000)
         }
-    }.getOrNull()
+    }.onFailure { noAnswer(url, it) }.getOrNull()
 
     private fun post(url: String, json: String): String? = runCatching {
         val request = Request.Builder().url(url).post(json.toRequestBody("application/json".toMediaType())).build()
         Http.probe.newCall(request).execute().use { r -> r.body?.string()?.take(4000) }
-    }.getOrNull()
+    }.onFailure { noAnswer(url, it) }.getOrNull()
 
     /** Whether a TCP connection opens within 3 s (and then closes it again without sending anything). */
     fun tcpOpens(host: String, port: Int): Boolean = runCatching {
         Socket().use { it.connect(InetSocketAddress(host, port), 3000) }
         true
-    }.getOrDefault(false)
+    }.onFailure { noAnswer("tcp://$host:$port", it) }.getOrDefault(false)
+
+    /** Why a camera didn't answer a probe (no route, refused, timed out…), for logcat. */
+    private fun noAnswer(address: String, error: Throwable) = debugLog("probe $address: $error")
 }
 
 /** "192.168.1.1" → (host, default), "127.0.0.1:15741" → (127.0.0.1, 15741). */

@@ -2,11 +2,15 @@ package com.apexcommerce.shutterlink.camera
 
 import android.graphics.Bitmap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -64,6 +68,21 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
     private var apertureCodes: Map<String, Int> = emptyMap()
     private var shutterCodes: Map<String, Int> = emptyMap()
     private var whiteBalanceCodes: Map<String, String> = emptyMap()
+    /** The extra settings the camera's menu offers (drive, Photo Style, AF mode…) and colour temperature. */
+    private var settings: List<LumixSetting> = emptyList()
+    private var kelvin: LumixKelvin? = null
+    /**
+     * Their current values, merged into the properties on every refresh. Read again after one of them
+     * changes, or when the last reading is more than a few seconds old.
+     */
+    private var settingProperties: Map<String, CameraProperty> = emptyMap()
+    /** When they were last read (ms since 1970); null to read them on the next refresh. */
+    private var settingsReadAt: Long? = null
+    /** What the app last set, for settings the camera won't report back. */
+    private val lastSet = HashMap<String, String>()
+    private var loggedSettings = false
+    /** Whether getsetting&type=recmode answers (asked once; bodies differ). */
+    private var recmodeReadable = true
     private var contentDirectory: String? = null
     private var lastStreamKick = 0L
     /** The camera stops streaming unless it hears from the app regularly. */
@@ -150,6 +169,25 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             return parts.firstOrNull() ?: 0.0
         }
 
+        /** LUMIX Rec Mode → the app's mode names; others (C1, Creative Control…) as the camera says them. */
+        fun lumixMode(value: String): String? = when (value) {
+            "" -> null
+            "program_ae" -> "P"
+            "aperture_ae" -> "A"
+            "shutter_ae" -> "S"
+            "manual_exposure" -> "M"
+            "intelligent_auto", "iauto" -> "iAuto"
+            "creative_movie" -> "movie"
+            else -> LumixMenu.words(value)
+        }
+
+        /** The option a reading stands for: "burst" + "h" → "burst|h". */
+        fun optionKey(value: String, detail: String?, options: List<String>): String {
+            if (detail != null && "$value|$detail" in options) return "$value|$detail"
+            if (value in options) return value
+            return if (detail != null) "$value|$detail" else value
+        }
+
         fun lumixDate(text: String): Long? {
             runCatching { return OffsetDateTime.parse(text).toInstant().toEpochMilli() }
             runCatching { return LocalDateTime.parse(text).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() }
@@ -173,6 +211,7 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
     override fun teardown() {
         keepAlive?.cancel()
         keepAlive = null
+        PropertyFormat.setCameraText(CameraText())
     }
 
     // MARK: - Commands
@@ -194,6 +233,14 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
         val uuid = uuid
         lens = LumixLens()
         menu = emptyMap()
+        settings = emptyList()
+        kelvin = null
+        settingProperties = emptyMap()
+        settingsReadAt = null
+        lastSet.clear()
+        loggedSettings = false
+        recmodeReadable = true
+        PropertyFormat.setCameraText(CameraText())
         // Newer bodies (S5IIX, G9II…) say in their UPnP description that they want the newer pairing.
         val description = readDeviceDescription()
         camera.profile = ModelProfiles.find(CameraBrand.PANASONIC, description.model)
@@ -243,23 +290,54 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
         }
 
         camera.status = "Reading camera info…"
-        runCatching { lumixCommand(listOf("mode" to "setsetting", "type" to "device_name", "value" to DEVICE_NAME)) }
-        runCatching { lumixCommand(listOf("mode" to "getinfo", "type" to "capability")) }.getOrNull()?.let { capability ->
-            if (camera.profile == null) {
-                MiniXml.parse(capability)?.firstDescendant("model_name")?.trimmedText?.let {
-                    camera.profile = ModelProfiles.find(CameraBrand.PANASONIC, it)
-                }
+        attempt { lumixCommand(listOf("mode" to "setsetting", "type" to "device_name", "value" to DEVICE_NAME)) }
+        val info = StringBuilder()
+        var model = description.model
+        attempt { lumixCommand(listOf("mode" to "getinfo", "type" to "capability")) }?.let { capability ->
+            info.append("CAPABILITY\n$capability\n\n")
+            // The G7 says <modelname>, newer bodies <model_name>.
+            MiniXml.parse(capability)?.firstDescendant("model_name", "modelname")?.trimmedText?.takeIf { it.isNotEmpty() }?.let { name ->
+                model = name
+                if (camera.profile == null) camera.profile = ModelProfiles.find(CameraBrand.PANASONIC, name)
             }
         }
-        runCatching { lumixCommand(listOf("mode" to "getinfo", "type" to "lens")) }.getOrNull()?.let { applyLumixLens(it) }
-        runCatching { lumixCommand(listOf("mode" to "getinfo", "type" to "allmenu"), timeout = 15.0) }.getOrNull()?.let {
+        attempt { lumixCommand(listOf("mode" to "getinfo", "type" to "lens")) }?.let {
+            info.append("LENS\n$it\n\n")
+            applyLumixLens(it)
+        }
+        var version: String? = null
+        attempt { lumixCommand(listOf("mode" to "getstate")) }?.let { state ->
+            info.append("STATE\n$state\n")
+            applyLumixState(state)
+            version = MiniXml.parse(state)?.firstDescendant("version")?.trimmedText?.takeIf { it.isNotEmpty() }
+        }
+        lumixMenu(model, version)?.let {
             camera.rawCommandList = it
             parseLumixMenu(it)
         }
-        runCatching { lumixCommand(listOf("mode" to "getstate")) }.getOrNull()?.let { applyLumixState(it) }
+        camera.rawDescList = info.toString()
+        debugLog("LUMIX connected: ${camera.cameraName ?: "?"}\n$info")
         camera.profile?.name?.let { camera.cameraName = it }
         if (camera.cameraName == null) camera.cameraName = "LUMIX"
         startKeepAlive()
+    }
+
+    /**
+     * getinfo&type=allmenu: about 150 KB on a G7, which can take over 20 s on the camera's Wi-Fi. It only
+     * changes with firmware, so a copy is kept per model and version.
+     */
+    private suspend fun lumixMenu(model: String?, version: String?): String? {
+        val key = listOfNotNull(model, version).joinToString("-").replace(Regex("[^A-Za-z0-9.-]"), "_")
+        val file = if (key.isEmpty()) null else File(camera.context.cacheDir, "lumix-allmenu-$key.xml")
+        if (file != null) {
+            withContext(Dispatchers.IO) { runCatching { file.takeIf { it.exists() }?.readText() }.getOrNull() }?.let { return it }
+        }
+        camera.status = "Reading the camera's menus (first time only)…"
+        val menu = attempt { lumixCommand(listOf("mode" to "getinfo", "type" to "allmenu"), timeout = 60.0) } ?: return null
+        if (file != null && menu.contains("<menuset")) {
+            withContext(Dispatchers.IO) { runCatching { file.writeText(menu) } }
+        }
+        return menu
     }
 
     private data class Description(val udn: String?, val encrypted: Boolean, val model: String?)
@@ -345,17 +423,153 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
         camera.liveInfo = info
     }
 
-    private fun parseLumixMenu(xml: String) {
-        val root = MiniXml.parse(xml) ?: return
-        val result = LinkedHashMap<String, MutableList<String>>()
-        for (item in root.descendants("item")) {
-            val type = item.attributes["cmd_type"] ?: continue
-            val value = item.attributes["cmd_value"] ?: continue
-            val list = result.getOrPut(type) { mutableListOf() }
-            if (value !in list) list.add(value)
-        }
+    private suspend fun parseLumixMenu(xml: String) {
+        // A G7's menu is about 150 KB: parse it off the main thread.
+        val (result, parsed) = withContext(Dispatchers.Default) {
+            val root = MiniXml.parse(xml) ?: return@withContext null
+            val result = LinkedHashMap<String, MutableList<String>>()
+            for (item in root.descendants("item")) {
+                val type = item.attributes["cmd_type"] ?: continue
+                val value = item.attributes["cmd_value"] ?: continue
+                val list = result.getOrPut(type) { mutableListOf() }
+                if (value !in list) list.add(value)
+            }
+            result to LumixMenu.parse(root)
+        } ?: return
         menu = result
         debugLog("LUMIX menu types: ${result.keys.sorted()}")
+
+        // The extra settings, named the way the camera names them.
+        settings = parsed.settings
+        kelvin = parsed.kelvin
+        val titles = HashMap<String, String>()
+        val values = HashMap<String, Map<String, String>>()
+        for (setting in parsed.settings) {
+            titles[setting.name] = setting.title
+            values[setting.name] = mapOf("" to "–") + setting.labels
+        }
+        parsed.kelvin?.let { k ->
+            titles[LumixMenu.KELVIN_NAME] = LumixMenu.KELVIN_TITLE
+            values[LumixMenu.KELVIN_NAME] = k.options.associateWith { "$it K" } + ("" to "Off")
+        }
+        PropertyFormat.setCameraText(CameraText(titles, values))
+        debugLog("LUMIX extra settings: " + parsed.settings.joinToString(", ") { "${it.type} (${it.options.size})" } +
+            (parsed.kelvin?.let { ", colour temperature ${it.min}–${it.max} K" } ?: ""))
+    }
+
+    private class Reading(val value: String?, val detail: String?, val raw: String?)
+
+    /**
+     * Reads the extra settings: their current values (getsetting) and what the camera allows right now
+     * (curmenu: options greyed out in this mode are left out, and a heading that is switched off locks
+     * its setting).
+     */
+    private suspend fun readLumixSettings() {
+        settingsReadAt = System.currentTimeMillis()
+        val dump = StringBuilder()
+        var menuState: Map<String, LumixMenuState> = emptyMap()
+        attempt { lumixCommand(listOf("mode" to "getinfo", "type" to "curmenu"), log = false) }?.let { reply ->
+            MiniXml.parse(reply)?.let { root ->
+                menuState = LumixMenu.parseState(root)
+                if (!loggedSettings) dump.append("CURMENU\n$reply\n\n")
+            }
+        }
+        fun enabled(ids: List<String>) = ids.all { menuState[it]?.enabled ?: true }
+
+        val properties = LinkedHashMap<String, CameraProperty>()
+        for (setting in settings) {
+            val reading = readLumixSetting(setting.type)
+            if (!loggedSettings) dump.append("GETSETTING ${setting.type}: ${reading.raw ?: "no answer"}\n")
+            val current = reading.value
+            val value = if (current != null) optionKey(current, reading.detail, setting.options)
+            else setting.headingItems.firstNotNullOfOrNull { menuState[it]?.value }?.let { optionKey(it, null, setting.options) }
+                ?: lastSet[setting.name] ?: ""
+            val options = setting.options.filter { enabled(setting.optionItems[it] ?: emptyList()) || it == value }.toMutableList()
+            if (value.isNotEmpty() && value !in options) options.add(0, value)
+            val usable = enabled(setting.headingItems) && options.any { it != value }
+            if (options.isEmpty()) options.add(value)
+            properties[setting.name] = CameraProperty(setting.name, usable, value, options)
+        }
+        kelvin?.let { k ->
+            val reading = readLumixSetting("whitebalance")
+            val value = if (reading.value == "color_temp") reading.detail ?: lastSet[LumixMenu.KELVIN_NAME] ?: "" else ""
+            properties[LumixMenu.KELVIN_NAME] = CameraProperty(LumixMenu.KELVIN_NAME, enabled(listOfNotNull(k.itemId)), value, k.options)
+        }
+        // The mode dial can't be turned from an app, but showing it tells the user (and the presets) which
+        // of aperture and shutter the camera is choosing. curmenu has it on some bodies,
+        // getsetting&type=recmode on others.
+        var dial = menuState["menu_item_id_recmode"]?.value
+        if (dial == null && recmodeReadable) {
+            val reading = readLumixSetting("recmode")
+            if (!loggedSettings) dump.append("GETSETTING recmode: ${reading.raw ?: "no answer"}\n")
+            dial = reading.value
+            recmodeReadable = reading.raw != null
+        }
+        dial?.let(::lumixMode)?.let { mode -> properties["takemode"] = CameraProperty("takemode", false, mode, listOf(mode)) }
+        settingProperties = properties
+        debugLog("LUMIX settings: " + properties.values.sortedBy { it.name }
+            .joinToString(" ") { "${it.name}=${it.value}${if (it.settable) "" else " (locked)"}" })
+        if (dump.isNotEmpty()) {
+            // Kept with the connection info (rawDescList) to check a new body against.
+            camera.rawDescList += "\n$dump"
+            loggedSettings = true
+        }
+    }
+
+    /** getsetting: `<settingvalue drivemode="burst">h</settingvalue>`. The text, when there is one, is the second part of the value. */
+    private suspend fun readLumixSetting(type: String): Reading {
+        val reply = attempt { lumixCommand(listOf("mode" to "getsetting", "type" to type), log = false) } ?: return Reading(null, null, null)
+        val node = MiniXml.parse(reply)?.firstDescendant("settingvalue")
+        return Reading(node?.attributes?.get(type), node?.trimmedText?.takeIf { it.isNotEmpty() }, reply)
+    }
+
+    private suspend fun setLumixSetting(setting: LumixSetting, key: String, reportErrors: Boolean): Boolean {
+        val parts = key.split("|", limit = 2).filter { it.isNotEmpty() }
+        val base = parts.firstOrNull() ?: return false
+        val params = mutableListOf("mode" to "setsetting", "type" to setting.type, "value" to base)
+        if (parts.size > 1) params.add("value2" to parts[1])
+        val previous = camera.properties[setting.name]?.value
+        camera.updateValue(setting.name, key)
+        try {
+            lumixCommand(params)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (previous != null) camera.updateValue(setting.name, previous)
+            if (reportErrors) camera.report(e)
+            settingsReadAt = null
+            refreshProperties()
+            return false
+        }
+        lastSet[setting.name] = key
+        // Read it back: some bodies answer ok to a drive mode change and keep the old one.
+        settingsReadAt = null
+        refreshProperties()
+        val now = camera.properties[setting.name]?.value
+        if (now.isNullOrEmpty() || now == key) return true
+        // The choice without its second part ("burst" for "burst|h"): the camera doesn't say which.
+        if ("|" !in now && now == base) return true
+        if (reportErrors) {
+            camera.lastError = "The camera said OK but stayed on ${PropertyFormat.display(setting.name, now)}. " +
+                "Change ${setting.title.lowercase()} on the camera."
+        }
+        return false
+    }
+
+    private suspend fun setLumixKelvin(value: String, reportErrors: Boolean): Boolean {
+        if (value.isEmpty()) return false
+        try {
+            lumixCommand(listOf("mode" to "setsetting", "type" to "whitebalance", "value" to "color_temp", "value2" to value))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (reportErrors) camera.report(e)
+            return false
+        }
+        lastSet[LumixMenu.KELVIN_NAME] = value
+        settingsReadAt = null
+        refreshProperties()
+        return true
     }
 
     fun applyLumixState(reply: String) {
@@ -468,7 +682,8 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             result["expcomp"] = CameraProperty("expcomp", true, ExposureText.ev((lumixFraction(raw) * 3).roundToInt()), options)
         }
         current("whitebalance")?.let { raw ->
-            val names = menu["whitebalance"] ?: whiteBalanceFallback
+            // Colour temperature has its own setting (it needs a Kelvin value).
+            val names = (menu["whitebalance"] ?: whiteBalanceFallback).filter { kelvin == null || it != "color_temp" }
             val codes = LinkedHashMap<String, String>()
             val options = mutableListOf<String>()
             for (name in names + raw) {
@@ -488,10 +703,19 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             if (profile.noExposureComp) lock("expcomp")
             if (profile.noISO) lock("isospeedvalue")
         }
+        if (settingsReadAt.let { it == null || System.currentTimeMillis() - it > 15_000 }) readLumixSettings()
+        for ((name, property) in settingProperties) if (name !in result) result[name] = property
+        // The dial decides which of these the camera sets itself.
+        result["takemode"]?.value?.let { mode ->
+            if (mode in setOf("P", "iAuto", "A")) result["shutspeedvalue"]?.let { result["shutspeedvalue"] = it.copy(settable = false) }
+            if (mode in setOf("P", "iAuto", "S")) result["focalvalue"]?.let { result["focalvalue"] = it.copy(settable = false) }
+        }
         camera.properties = result
     }
 
     override suspend fun setProperty(name: String, value: String, reportErrors: Boolean): Boolean {
+        settings.firstOrNull { it.name == name }?.let { return setLumixSetting(it, value, reportErrors) }
+        if (name == LumixMenu.KELVIN_NAME && kelvin != null) return setLumixKelvin(value, reportErrors)
         val setting: Pair<String, String>? = when (name) {
             "focalvalue" -> apertureCodes[value]?.let { "focal" to "$it/256" }
             "shutspeedvalue" -> if (value == "bulb") "shtrspeed" to "$BULB_CODE/256" else shutterCodes[value]?.let { "shtrspeed" to "$it/256" }
@@ -508,7 +732,13 @@ class PanasonicDriver(private val camera: CameraModel) : CameraDriver {
             return false
         }
         return applySetting(camera, name, value, reportErrors) {
-            lumixCommand(listOf("mode" to "setsetting", "type" to setting.first, "value" to setting.second))
+            try {
+                lumixCommand(listOf("mode" to "setsetting", "type" to setting.first, "value" to setting.second))
+            } catch (e: InterruptedIOException) {
+                // A G7 doesn't answer at all when the mode dial doesn't allow the change.
+                if (setting.first !in setOf("focal", "shtrspeed")) throw e
+                throw CameraException("The camera didn't take it. Is the mode dial on ${if (setting.first == "focal") "A or M" else "S or M"}?")
+            }
         }
     }
 

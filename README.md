@@ -411,6 +411,20 @@ adb logcat -s Shutterlink | grep SELFTEST
 `--es qr "<code text>"` (with `--es host …`) acts like scanning that QR code: `WIFI:S:AndroidWifi;T:nopass;;` makes
 the emulator join its own Wi-Fi through the same "Connect to device" prompt a camera network gets.
 
+**The look is the iPhone app's redesign (direction D, `docs/design/` in the redesign worktree):** near-black, one warm
+accent, Barlow Condensed (bundled, OFL) for every number, hairlines instead of cards. The remote shows the whole live
+view over a blurred copy of itself, a small line (white balance, drive, quality), the row of values and one big readout
+over a **curved dial** that serves every setting (ticks on each value, a firmer click on full stops and 0 EV). Tools,
+Drive, Quality and the ··· menu open as bottom panels with the picture still above; the tool screens open on one big
+number. **Haptics and sounds** follow the iOS spec (···: Haptics, Sounds, Quiet on tripod; sounds stay off when the
+phone is on silent or vibrate). **Report a problem** (··· and the connection-error banners) emails the camera log as
+`shutterlink-report.txt` with app, phone, camera and connection details, leaving scanned QR codes out (they can hold
+the camera's Wi-Fi password); without a mail app it offers the share sheet and Copy.
+
+**LUMIX live view** keeps only the newest UDP frame (the socket is drained without blocking), so it never runs late on
+older bodies such as the GM1, and writes LIVE frame-rate lines into the request log. The LUMIX menu settings (Photo
+Style, AF mode, colour temperature…) are read from the camera's own menu and show under All camera settings and Drive.
+
 **Same features as the iPhone app**, apart from what's listed under "Not ported yet" below:
 - Presets (Astro on every brand with the body's crop factor, Moon, Fireworks, Landscape, Action, Macro, Light trails),
   Undo and My presets.
@@ -441,7 +455,8 @@ the emulator join its own Wi-Fi through the same "Connect to device" prompt a ca
   stack (LUMIX, Nikon, Canon), Astro and every preset, Undo, a saved preset, the ND setup, the motion trigger, ETTR,
   sun and moon positions on known dates, the scene rules on fixed labels, and ML Kit looking at live view, plus
   the movement, shake and white-balance rules, the colour-cast meter, the QR formats (with a real PEN-F's code),
-  the Keystore password store, and auto-save of the self-test's shot (LUMIX: from the card).
+  the Keystore password store, auto-save of the self-test's shot (LUMIX: from the card), the LUMIX menu settings,
+  the newest-datagram live-view socket and its LIVE log lines, preset persistence, drive names and crop factors.
 - Checked by hand there:
   - portrait and landscape layouts, the setting dials, mode dial, tools tray, loupe and grid;
   - the card browser with stars, swipe-through viewer, Save, and the RAW download of starred photos;

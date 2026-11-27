@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -60,10 +61,10 @@ import kotlinx.coroutines.launch
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** The image's rectangle inside `bounds` (aspect fit). */
-private fun fitRect(contentW: Double, contentH: Double, bounds: Size): Rect {
+/** The image's rectangle inside `bounds`: aspect fit, or aspect fill (cropped) with `fill`. */
+private fun fitRect(contentW: Double, contentH: Double, bounds: Size, fill: Boolean = false): Rect {
     if (contentW <= 0 || contentH <= 0 || bounds.width <= 0 || bounds.height <= 0) return Rect(Offset.Zero, bounds)
-    val scale = min(bounds.width / contentW, bounds.height / contentH).toFloat()
+    val scale = (if (fill) kotlin.math.max(bounds.width / contentW, bounds.height / contentH) else min(bounds.width / contentW, bounds.height / contentH)).toFloat()
     val w = (contentW * scale).toFloat()
     val h = (contentH * scale).toFloat()
     return Rect(Offset((bounds.width - w) / 2, (bounds.height - h) / 2), Size(w, h))
@@ -81,9 +82,13 @@ fun LiveViewPane(
     showLoupe: Boolean,
     modifier: Modifier = Modifier,
     hudTopInset: androidx.compose.ui.unit.Dp = 0.dp,
+    /** The focus reading and zoom are shown under the picture instead (portrait, 213). */
+    loupeControlsBelow: Boolean = false,
+    /** Fill the bounds (landscape), cropping the picture, instead of fitting it. */
+    fill: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
-    var loupeZoom by remember { mutableFloatStateOf(camera.prefs.getFloat("loupe.zoom", 4f)) }
+    val loupeZoom = LoupeZoom.get(camera)
     var loupeCenter by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
     val flash = remember { Animatable(0f) }
 
@@ -111,10 +116,10 @@ fun LiveViewPane(
         }
     }
 
-    BoxWithConstraints(modifier.background(Color(0.05f, 0.05f, 0.05f)).clipToBounds()) {
+    BoxWithConstraints(modifier.background(Color(0xFF0D0D0C)).clipToBounds()) {
         val bounds = Size(constraints.maxWidth.toFloat(), constraints.maxHeight.toFloat())
         val (fw, fh) = camera.frameSpace
-        val imageRect = fitRect(fw, fh, bounds)
+        val imageRect = fitRect(fw, fh, bounds, fill)
         val frame = camera.liveFrame
 
         // The picture (magnified in the loupe), peaking and grid.
@@ -138,10 +143,7 @@ fun LiveViewPane(
                 if (!showLoupe) return@pointerInput
                 detectTransformGestures { _, pan, zoom, _ ->
                     val newZoom = (loupeZoom * zoom).coerceIn(2f, 10f)
-                    if (newZoom != loupeZoom) {
-                        loupeZoom = newZoom
-                        camera.prefs.edit().putFloat("loupe.zoom", newZoom).apply()
-                    }
+                    if (newZoom != loupeZoom) LoupeZoom.set(camera, newZoom)
                     loupeCenter = clamped(Offset(loupeCenter.x - pan.x / (imageRect.width * loupeZoom),
                         loupeCenter.y - pan.y / (imageRect.height * loupeZoom)))
                 }
@@ -214,7 +216,18 @@ fun LiveViewPane(
             }
         }
 
-        if (showLoupe) LoupeHud(camera, loupeZoom, loupeCenter, Modifier.align(Alignment.BottomCenter))
+        if (showLoupe && !loupeControlsBelow) LoupeHud(camera, loupeZoom, loupeCenter, Modifier.align(Alignment.BottomCenter))
+        if (showLoupe && loupeControlsBelow) {
+            // 213: the minimap in the corner; zoom and the focus reading are under the picture.
+            Canvas(Modifier.align(Alignment.TopEnd).padding(top = hudTopInset + 10.dp, end = 10.dp).size(48.dp, 36.dp)) {
+                drawRect(Color.Black.copy(alpha = 0.45f))
+                drawRect(Color.White.copy(alpha = 0.5f), style = Stroke(1f))
+                val w = size.width / loupeZoom
+                val h = size.height / loupeZoom
+                drawRect(Theme.accent, topLeft = Offset(loupeCenter.x * size.width - w / 2, loupeCenter.y * size.height - h / 2),
+                    size = Size(w, h), style = Stroke(1.5f))
+            }
+        }
 
         if (!showLoupe && (camera.motion.armed || camera.motion.editing)) MotionBox(camera, imageRect)
 
@@ -306,6 +319,69 @@ private fun StatusOverlay(camera: CameraModel) {
                     Text("Live view is off", color = Theme.secondary, fontSize = 15.sp)
                     AccentButton(onClick = { scope.launch { camera.restartLiveView() } }) { Text("Start live view") }
                 }
+            }
+        }
+    }
+}
+
+/** The loupe's magnification, shared by the picture and the readout under it (saved between launches). */
+object LoupeZoom {
+    private var value by androidx.compose.runtime.mutableFloatStateOf(0f)
+    fun get(camera: CameraModel): Float {
+        if (value == 0f) value = camera.prefs.getFloat("loupe.zoom", 4f)
+        return value
+    }
+    fun set(camera: CameraModel, zoom: Float) {
+        value = zoom
+        camera.prefs.edit().putFloat("loupe.zoom", zoom).apply()
+    }
+}
+
+/** How sharp the loupe's view is against the best and worst seen since it moved. */
+private class FocusReading(score: Double?, peak: Double, floor: Double) {
+    val swept: Boolean
+    val fraction: Double
+    val atPeak: Boolean
+    init {
+        // Only call a peak once the focus has actually been swept: the best reading must stand clearly
+        // above the worst, and there must be detail (stars, edges) to measure.
+        val range = peak - (if (floor.isFinite()) floor else peak)
+        swept = range > maxOf(3.0, peak * 0.2)
+        fraction = if (score != null && swept) ((score - (peak - range)) / range).coerceIn(0.0, 1.0) else 0.15
+        atPeak = swept && fraction > 0.95
+    }
+}
+
+/**
+ * The loupe's controls under the picture (213): zoom chips, then FOCUS over a big reading in Barlow
+ * ("SHARPEST" in green at the peak) and its bar.
+ */
+@Composable
+fun LoupeReadout(camera: CameraModel, modifier: Modifier = Modifier) {
+    val reading = FocusReading(camera.focusScore, camera.focusPeak, camera.focusFloor)
+    val zoom = LoupeZoom.get(camera)
+    FeedbackOnChange(Feedback.Moment.FOCUS_LOCK, reading.atPeak) { _, new -> new }
+    androidx.compose.foundation.layout.Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf(2f, 4f, 8f).forEach { z ->
+                val on = kotlin.math.abs(zoom - z) < 0.5f
+                Box(Modifier.size(Theme.target).clickable { LoupeZoom.set(camera, z) }, contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(36.dp).background(if (on) Theme.text else Color.Black.copy(alpha = 0.25f), androidx.compose.foundation.shape.CircleShape)
+                        .then(if (on) Modifier else Modifier.border(1.dp, Theme.text.copy(alpha = 0.35f), androidx.compose.foundation.shape.CircleShape)),
+                        contentAlignment = Alignment.Center) {
+                        Text("${z.toInt()}×", color = if (on) Theme.background else Theme.text, fontSize = 13.sp,
+                            fontWeight = if (on) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal)
+                    }
+                }
+            }
+        }
+        androidx.compose.foundation.layout.Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            CapsLabel("Focus", Theme.accent, 12.sp)
+            AutoFitText(if (reading.atPeak) "SHARPEST" else if (reading.swept) "keep turning" else "turn the ring slowly",
+                Theme.num(if (reading.atPeak) 54.sp else 40.sp), if (reading.atPeak) Theme.green else Theme.text, Modifier.fillMaxWidth())
+            Box(Modifier.padding(top = 4.dp).width(210.dp).height(6.dp).background(Theme.stroke, Pill)) {
+                Box(Modifier.fillMaxWidth(reading.fraction.toFloat()).height(6.dp).background(if (reading.atPeak) Theme.green else Theme.accent, Pill))
             }
         }
     }
