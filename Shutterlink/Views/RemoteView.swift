@@ -1419,9 +1419,11 @@ private struct MoreSheet: View {
                     .foregroundStyle(Theme.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 10)
+                #if !BETA
                 Button(action: openPro) {
                     row("Shutterlink Pro", value: ShutterlinkPro.shared.statusText, valueColor: Theme.accent, chevron: true)
                 }
+                #endif
                 Spacer().frame(height: 14)
                 if camera.capabilities.highResShot {
                     Button(action: openHighRes) { row("High Res Shot helper", chevron: true) }

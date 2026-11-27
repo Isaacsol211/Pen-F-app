@@ -66,6 +66,10 @@ final class ShutterlinkPro {
     private static let environmentKey = "pro.environment"
 
     var isUnlocked: Bool {
+        #if BETA
+        // Public beta builds (archived with BETA, see the TestFlight upload script): everything is free.
+        return true
+        #endif
         #if DEBUG
         switch override {
         case "locked": return false
@@ -78,6 +82,9 @@ final class ShutterlinkPro {
 
     /// For the ⋯ menu and the Pro screen.
     var statusText: String {
+        #if BETA
+        return "Everything unlocked for beta testers"
+        #endif
         #if DEBUG
         switch override {
         case "trial": return "Trial: 6 days left (debug)"
