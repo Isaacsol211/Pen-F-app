@@ -4,6 +4,7 @@ struct RemoteView: View {
     @Environment(CameraModel.self) private var camera
     @State private var showGallery = false
     @State private var showLog = false
+    @State private var showReport = false
     @State private var showAllSettings = false
     @State private var showAstro = false
     /// The Pro screen, with the locked tool that opened it.
@@ -109,6 +110,7 @@ struct RemoteView: View {
         // Design screens: full screen on a phone.
         .dScreen(isPresented: $showAllSettings) { AllSettingsView() }
         .dScreen(isPresented: $showLog) { LogView() }
+        .dScreen(isPresented: $showReport) { ReportProblemView() }
         .dScreen(isPresented: $showAstro) { AstroView() }
         .dScreen(item: $proPrompt) { ProView(feature: $0.feature) }
         // A tool's screen is only for the phone layouts; in the workspace the same state opens its panel.
@@ -601,6 +603,7 @@ struct RemoteView: View {
             openHighRes: { showMore = false; open(.highRes) },
             allSettings: { showMore = false; showAllSettings = true },
             log: { showMore = false; showLog = true },
+            report: { showMore = false; showReport = true },
             disconnect: { withAnimation(.snappy) { showMore = false; confirmDisconnect = true } },
             powerOff: { withAnimation(.snappy) { showMore = false; confirmPowerOff = true } })
     }
@@ -1384,6 +1387,7 @@ private struct MoreSheet: View {
     let openHighRes: () -> Void
     let allSettings: () -> Void
     let log: () -> Void
+    let report: () -> Void
     let disconnect: () -> Void
     let powerOff: () -> Void
     @AppStorage(Feedback.Key.haptics) private var haptics = true
@@ -1429,6 +1433,7 @@ private struct MoreSheet: View {
                 }
                 Button(action: allSettings) { row("All camera settings", chevron: true) }
                 Button(action: log) { row("Request log", chevron: true) }
+                Button(action: report) { row("Report a problem", chevron: true) }
                 Spacer().frame(height: 14)
                 Button(action: disconnect) { row("Disconnect") }
                 if camera.capabilities.powerOff {
