@@ -380,8 +380,17 @@ extension CameraModel {
 
     /// Writes into `folder` under the card's file name, adding " 2", " 3"… rather than replacing a
     /// different file of the same name (cameras restart their numbering).
+    /// The card's file name with any folders or leading dots removed, so a name from the camera like
+    /// "../../x.NEF" can't write outside the folder.
+    static func safeFileName(_ name: String) -> String {
+        let last = (name.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent
+        let cleaned = last.drop { $0 == "." }
+        return cleaned.isEmpty ? "photo" : String(cleaned)
+    }
+
     static func save(_ data: Data, name: String, in folder: URL) throws {
         let fm = FileManager.default
+        let name = safeFileName(name)
         var target = folder.appendingPathComponent(name)
         let base = (name as NSString).deletingPathExtension, ext = (name as NSString).pathExtension
         var n = 2
@@ -399,6 +408,6 @@ extension CameraModel {
         let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("RAW", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try data.write(to: folder.appendingPathComponent(name), options: .atomic)
+        try data.write(to: folder.appendingPathComponent(safeFileName(name)), options: .atomic)
     }
 }

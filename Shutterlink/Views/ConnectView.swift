@@ -602,7 +602,7 @@ struct ConnectView: View {
                 ("Unlock CCAPI once",
                  "Canon locks third-party control until the camera is activated with Canon's free CCAPI tool (developer account, one time per camera). Without it the app can't connect."),
                 ("Start Wi-Fi on the camera",
-                 "MENU ▸ Wireless ▸ Wi-Fi ▸ the CCAPI connection, as camera access point. Join the camera's network in \(Platform.settings) ▸ Wi-Fi."),
+                 "MENU ▸ Wireless ▸ Wi-Fi ▸ the CCAPI connection, as camera access point, with HTTPS and user authentication turned off. Join the camera's network in \(Platform.settings) ▸ Wi-Fi."),
                 ("Connect", "Allow Local Network access when \(Platform.os) asks."),
             ]
         case .sony:

@@ -155,7 +155,9 @@ enum LumixMenu {
     /// Shorter names for drive modes than "Burst Shooting · H".
     static func driveLabel(_ key: String) -> String? {
         let parts = key.split(separator: "|", maxSplits: 1).map(String.init)
-        let base = parts[0], detail = parts.count > 1 ? parts[1] : nil
+        // An empty key from the camera ("" or "|") splits into nothing.
+        guard let base = parts.first else { return nil }
+        let detail = parts.count > 1 ? parts[1] : nil
         switch (base, detail) {
         case ("normal", nil): return "Single"
         case ("burst", nil): return "Burst"

@@ -79,6 +79,14 @@ actor SerialGate {
     }
 }
 
+/// Refuses HTTP redirects: a camera has no reason to send the app anywhere else (Android does the same).
+final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    static let shared = NoRedirects()
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? { nil }
+}
+
 final class CameraHTTPClient: @unchecked Sendable {
     let host: String
     let userAgent: String
@@ -191,6 +199,9 @@ final class CameraHTTPClient: @unchecked Sendable {
         try Task.checkCancellation()
         let address = path.hasPrefix("http") ? path : "http://\(host)\(path)"
         guard let url = URL(string: address) else { throw CameraError("Bad camera address: \(host)") }
+        guard let target = url.host(), NetworkInfo.isLocal(target) else {
+            throw CameraError("\(url.host() ?? address) isn't on a local network. Shutterlink only connects to cameras over their own Wi-Fi.")
+        }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = method
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
@@ -207,7 +218,7 @@ final class CameraHTTPClient: @unchecked Sendable {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: request, delegate: NoRedirects.shared)
         } catch {
             debugLog("\(method) \(url.absoluteString) FAILED after \(Self.ms(since: started)) ms: \(error)")
             if log {

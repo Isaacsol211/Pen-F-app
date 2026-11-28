@@ -42,8 +42,10 @@ struct PTPError: LocalizedError {
 final class TCPChannel: @unchecked Sendable {
     private let connection: NWConnection
     private let queue = DispatchQueue(label: "ptpip.channel")
+    private let host: String
 
     init(host: String, port: UInt16) {
+        self.host = host
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         tcp.enableKeepalive = true
@@ -55,6 +57,9 @@ final class TCPChannel: @unchecked Sendable {
     }
 
     func open(timeout: TimeInterval = 5) async throws {
+        guard NetworkInfo.isLocal(host) else {
+            throw CameraError("\(host) isn't on a local network. Shutterlink only connects to cameras over their own Wi-Fi.")
+        }
         let once = OnceFlag()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.stateUpdateHandler = { state in
@@ -415,7 +420,9 @@ struct PTPPropDesc {
         let form = r.u8()
         if form == 1 {                    // range
             let lo = r.value(ofType: dataType), hi = r.value(ofType: dataType), step = r.value(ofType: dataType)
-            if step > 0, (hi - lo) / step < 2000 {
+            // A camera can describe a range as wide as Int64 allows: skip it rather than overflow.
+            let (span, overflow) = hi.subtractingReportingOverflow(lo)
+            if step > 0, !overflow, span >= 0, span / step < 2000 {
                 allowed = Array(stride(from: lo, through: hi, by: Int(step)))
             }
         } else if form == 2 {             // enumeration

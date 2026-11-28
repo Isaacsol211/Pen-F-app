@@ -91,12 +91,12 @@ enum BrandDetector {
     }
 
     private static func get(_ address: String, userAgent: String) async -> String? {
-        guard let url = URL(string: address) else { return nil }
+        guard let url = URL(string: address), let host = url.host(), NetworkInfo.isLocal(host) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 3)
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         let data: Data, response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: request, delegate: NoRedirects.shared)
         } catch {
             debugLog("probe \(address): \(error)")   // why the camera didn't answer (Local Network blocked, no route, timeout…)
             return nil
@@ -106,18 +106,19 @@ enum BrandDetector {
     }
 
     private static func post(_ address: String, json: [String: Any]) async -> String? {
-        guard let url = URL(string: address), let body = try? JSONSerialization.data(withJSONObject: json) else { return nil }
+        guard let url = URL(string: address), let host = url.host(), NetworkInfo.isLocal(host),
+              let body = try? JSONSerialization.data(withJSONObject: json) else { return nil }
         var request = URLRequest(url: url, timeoutInterval: 3)
         request.httpMethod = "POST"
         request.httpBody = body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        guard let (data, _) = try? await session.data(for: request) else { return nil }
+        guard let (data, _) = try? await session.data(for: request, delegate: NoRedirects.shared) else { return nil }
         return String(decoding: data.prefix(4000), as: UTF8.self)
     }
 
     /// Whether a TCP connection opens within 3 s (and then closes it again without sending anything).
     static func tcpOpens(host: String, port: UInt16) async -> Bool {
-        guard let nwPort = NWEndpoint.Port(rawValue: port) else { return false }
+        guard let nwPort = NWEndpoint.Port(rawValue: port), NetworkInfo.isLocal(host) else { return false }
         let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
         let once = OnceFlag()
         return await withCheckedContinuation { continuation in

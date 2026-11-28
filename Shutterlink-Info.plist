@@ -2,11 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Cameras speak plain HTTP on their own Wi-Fi (192.168.0.10, 192.168.54.1, …). -->
+	<!-- Cameras speak plain HTTP on their own Wi-Fi (192.168.0.10, 192.168.54.1, …): allowed for the
+	     local network only (NetworkInfo.isLocal checks every connection too); anything else must be HTTPS. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>

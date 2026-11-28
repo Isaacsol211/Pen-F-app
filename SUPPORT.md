@@ -29,6 +29,12 @@ Keep Shutterlink open on your iPhone while you shoot, including when you use the
 
 Shutterlink works with Olympus and OM System cameras with Wi-Fi remote shooting, Panasonic LUMIX cameras with Remote Shooting & View, Nikon Z bodies and DSLRs with Wi-Fi, Canon EOS bodies with CCAPI, and Sony bodies with Smart Remote Control (up to about 2019). What you can control depends on what each camera allows over Wi-Fi. If something doesn't work with your camera, please tell us.
 
+### Canon: HTTPS and login must be off
+
+Canon cameras only let other apps in through CCAPI, which has to be activated once per camera with Canon's free CCAPI tool. Shutterlink talks to CCAPI over plain HTTP without a login, so in the camera's CCAPI settings turn off **HTTPS** and **user authentication**.
+
+With those off, anyone who joins the camera's own Wi-Fi network can control the camera while its CCAPI connection is on. Keep the camera's Wi-Fi protected with a password, and turn the CCAPI connection off when you've finished shooting.
+
 ## Privacy
 
 Shutterlink doesn't collect any data. See the [privacy policy](PRIVACY.md).

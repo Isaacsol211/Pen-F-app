@@ -62,6 +62,7 @@ extension CameraModel {
     func forget(_ saved: SavedCamera) {
         if let ssid = saved.ssid, !savedCameras.contains(where: { $0.id != saved.id && $0.ssid == ssid }) {
             CameraWiFiPasswords.delete(for: ssid)
+            CameraWiFi.remove(ssid: ssid)
         }
         savedCameras.removeAll { $0.id == saved.id }
         SavedCamera.save(savedCameras)

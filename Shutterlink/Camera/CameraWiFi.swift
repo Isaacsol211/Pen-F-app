@@ -29,6 +29,14 @@ enum CameraWiFi {
         #endif
     }
 
+    /// Removes a network Shutterlink added from iOS's own list (Forget on a camera), so the phone
+    /// stops joining it by itself. Only networks this app added can be removed; others are left alone.
+    static func remove(ssid: String) {
+        #if !targetEnvironment(macCatalyst)
+        NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid)
+        #endif
+    }
+
     static func join(_ network: CameraNetwork) async throws {
         #if targetEnvironment(macCatalyst)
         throw CameraError("Join the camera's Wi-Fi in System Settings ▸ Wi-Fi.")
@@ -254,10 +262,12 @@ extension CameraModel {
 
     /// Fills Add a camera from a scanned QR code. Returns false when the code isn't one Shutterlink reads.
     func applyScannedCode(_ text: String) -> Bool {
-        // The request log shows what the code said, so a brand's format can be added from a real camera.
-        debugLog("wifi QR: \(text)")
+        // The request log shows the code's format (so a brand's format can be added from a real camera),
+        // never the code itself: it holds the camera's Wi-Fi password, and the log can be copied.
         let network = WiFiQRCode.parse(text)
-        appendLog(LogEntry(date: Date(), method: "QR", path: text.trimmingCharacters(in: .whitespacesAndNewlines),
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let format = trimmed.prefix { $0 != ":" && $0 != "," }.prefix(12)
+        appendLog(LogEntry(date: Date(), method: "QR", path: "\(format) code, \(trimmed.count) characters (contents hidden)",
                            status: network == nil ? nil : 200, millis: 0,
                            summary: network.map { "Wi-Fi \($0.ssid)" } ?? "not a code Shutterlink reads yet"))
         guard let network else { return false }

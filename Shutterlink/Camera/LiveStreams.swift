@@ -18,6 +18,11 @@ final class HTTPStreamReader: NSObject, URLSessionDataDelegate, @unchecked Senda
     }
 
     func start() {
+        // Same rule as every other camera connection: plain HTTP only on the local network.
+        guard let host = url.host(), NetworkInfo.isLocal(host) else {
+            onEnd?(CameraError("The live view address isn't on a local network."))
+            return
+        }
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 10
         config.timeoutIntervalForResource = 24 * 3600
