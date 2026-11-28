@@ -88,6 +88,11 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
 
         camera.status = "Reading camera info…"
         camera.cameraName = deviceName() ?: "Sony"
+        if (isNewerBody(camera.cameraName ?: "")) {
+            camera.cameraNote = "Shutterlink uses Sony's older remote control (Smart Remote / Ctrl w/ Smartphone). " +
+                "Newer bodies like this one use Creators' App instead and may allow only some of it, or none. " +
+                "Try what you need, and tell us what works."
+        }
         attempt { call("getApplicationInfo") }?.let { info ->
             camera.rawCommandList = "Application: ${info.joinToString(" ")}\n"
         }
@@ -450,6 +455,13 @@ class SonyDriver(private val camera: CameraModel) : CameraDriver {
     override suspend fun downloadOriginal(image: CameraImage): ByteArray = client.fetch(image.urls?.original, timeout = 300.0)
 
     companion object {
+        /** Bodies from about 2020 on, which moved to Creators' App and may not offer the older remote API. */
+        fun isNewerBody(model: String): Boolean {
+            val m = model.uppercase().replace("-", "").replace(" ", "")
+            return listOf("ILCE1", "ILCE9M3", "ILCE7M4", "ILCE7RM5", "ILCE7SM3", "ILCE7CM2", "ILCE7CR", "ILCE6700",
+                "ZVE1", "ZVE10", "ZV1M2", "ILME").any { m.startsWith(it) }
+        }
+
         fun modeLabel(sony: String): String = when (sony) {
             "Program Auto" -> "P"
             "Aperture" -> "A"

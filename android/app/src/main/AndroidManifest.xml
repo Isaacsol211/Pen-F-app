@@ -17,6 +17,8 @@
     <!-- Only to show the Wi-Fi network's name (Android hides SSIDs without it). Optional. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Haptic patterns (the dial, shutter, series complete…); a normal permission, no prompt. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:allowBackup="true"
@@ -30,6 +32,17 @@
         <meta-data
             android:name="com.google.mlkit.vision.DEPENDENCIES"
             android:value="barcode_ui" />
+
+        <!-- Report a problem: hands the report file (cache/reports/) to the mail app. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/report_paths" />
+        </provider>
 
         <activity
             android:name=".MainActivity"

@@ -1,6 +1,12 @@
 package com.apexcommerce.shutterlink.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
@@ -86,15 +92,16 @@ data class SettingSpec(val name: String, val title: String, val dial: Boolean) {
     companion object {
         /** Everything the PEN-F lets an app change over Wi-Fi, in shooting order. */
         val all = listOf(
-            SettingSpec("takemode", "Mode", false),
+            SettingSpec("takemode", "Mode", true),
             SettingSpec("focalvalue", "Aperture", true),
             SettingSpec("shutspeedvalue", "Shutter", true),
             SettingSpec("isospeedvalue", "ISO", true),
             SettingSpec("expcomp", "EV", true),
             SettingSpec("wbvalue", "White balance", true),
             SettingSpec("drivemode", "Drive", false),
+            SettingSpec("quality", "Quality", false),
             SettingSpec("colorphase", "Hue", true),
-            SettingSpec("exposemovie", "Movie", false),
+            SettingSpec("exposemovie", "Movie", true),
         )
 
         fun spec(name: String) = all.firstOrNull { it.name == name }
@@ -125,32 +132,63 @@ data class SettingSpec(val name: String, val title: String, val dial: Boolean) {
     }
 }
 
-/** The options for one setting: a swipe dial or a grid of buttons. Locked settings explain why. */
+/** Whether a locked value is one the camera picks itself (shown as "· Auto"). */
+fun isAutoValue(name: String, locked: Boolean, mode: String): Boolean =
+    locked && name in setOf("focalvalue", "shutspeedvalue", "isospeedvalue") && mode.isNotEmpty()
+
+/**
+ * The options for one setting (port of SettingsDock.swift's OptionPanel): the big readout over the
+ * curved dial, or a grid of buttons for drive, quality and the like. Locked settings explain why and
+ * offer the way out. `fill` = the panel has the height under the values to itself (portrait).
+ */
 @Composable
-fun OptionPanel(camera: CameraModel, spec: SettingSpec, onClose: () -> Unit) {
+fun OptionPanel(camera: CameraModel, spec: SettingSpec, onClose: () -> Unit, fill: Boolean = false, onTick: (Boolean) -> Unit = {}) {
     val raw = camera.properties[spec.name] ?: return
     val property = camera.dialOptions(raw)
     val scope = rememberCoroutineScope()
-    val ruler = property.settable && spec.dial
+    val label = if (spec.name == "expcomp") "EV" else spec.title
+    val mode = camera.properties["takemode"]?.value ?: ""
+    val auto = isAutoValue(spec.name, !property.settable, mode)
+    // A locked value's explanation (and its way out) or a grid can be taller than a short screen leaves: scroll.
+    val scrolls = !property.settable || !spec.dial
     Column(
-        Modifier.fillMaxWidth().surface(RoundedCornerShape(26.dp))
-            .padding(horizontal = 14.dp, vertical = if (ruler) 8.dp else 14.dp),
+        Modifier.fillMaxWidth().then(if (fill) Modifier.fillMaxHeight() else Modifier)
+            .then(if (scrolls) Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()) else Modifier)
+            .then(if (spec.dial) Modifier else Modifier.padding(14.dp)),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        if (!ruler) {
+        if (!spec.dial) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CapsLabel(spec.title, color = Theme.accent)
+                Text(spec.title, style = Theme.num(26.sp), color = Theme.text)
                 Spacer(Modifier.weight(1f))
-                Text(PropertyFormat.display(spec.name, property.value), style = monoStyle(15.sp))
+                Text(PropertyFormat.display(spec.name, property.value), style = Theme.num(22.sp, medium = true), color = Theme.accent)
                 SurfaceButton(onClick = onClose, circle = true) {
                     Icon(Icons.Filled.Close, "Close ${spec.title}", Modifier.size(16.dp))
                 }
             }
         }
         when {
-            !property.settable -> LockedExplanation(camera, spec)
-            spec.name == "shutspeedvalue" -> ShutterOptions(camera, property)
-            spec.dial -> ValueDial(property) { value -> scope.launch { camera.setProperty(spec.name, value) } }
+            !property.settable -> {
+                if (spec.name == "expcomp" && mode.uppercase() == "M") {
+                    // 205: EV means nothing in M, so no readout: a lock, why, and the way out.
+                    Icon(Icons.Filled.Lock, null, Modifier.padding(top = 20.dp).size(16.dp), tint = Theme.tertiary)
+                } else {
+                    DialReadout(label + if (auto) " · Auto" else "", stripText(spec.name, camera).removePrefix("ISO "),
+                        Modifier.padding(top = 10.dp), locked = true)
+                }
+                LockedExplanation(camera, spec)
+            }
+            spec.name == "shutspeedvalue" -> ShutterOptions(camera, property, fill, onTick)
+            spec.dial -> Box(if (fill) Modifier.weight(1f) else Modifier) {
+                ValueDial(property, label, fill, onTick) { value -> scope.launch { camera.setProperty(spec.name, value) } }
+                // A camera that lets EV be set in M (LUMIX) only uses it with ISO on Auto.
+                val iso = camera.properties["isospeedvalue"]?.value
+                if (spec.name == "expcomp" && mode.uppercase() == "M" && iso != null && !iso.lowercase().contains("auto")) {
+                    Text("In M the camera applies EV only with ISO on Auto.", color = Theme.secondary, fontSize = 13.sp,
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 104.dp))
+                }
+            }
             else -> OptionGrid(property) { value -> scope.launch { camera.setProperty(spec.name, value) } }
         }
     }
@@ -166,56 +204,79 @@ private fun LockedExplanation(camera: CameraModel, spec: SettingSpec) {
         "expcomp" -> "Switch to A" to "A"
         else -> null
     }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            if (mode.isEmpty()) "This can't be changed from the phone on this camera."
-            else "The camera sets this itself in ${PropertyFormat.display("takemode", mode)} mode.",
-            color = Theme.secondary, fontSize = 15.sp,
-        )
-        if (unlock != null && camera.properties["takemode"]?.options?.contains(unlock.second) == true) {
-            SurfaceButton(onClick = { scope.launch { camera.setProperty("takemode", unlock.second) } }) {
-                Icon(Icons.Filled.LockOpen, null, Modifier.size(18.dp))
-                Text(unlock.first, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            }
+    val exposure = spec.name in setOf("focalvalue", "shutspeedvalue", "isospeedvalue", "wbvalue")
+    val modeSettable = camera.properties["takemode"]?.settable == true
+    val why = when {
+        spec.name == "takemode" -> MODE_DIAL_HINT
+        spec.name == "expcomp" && mode.uppercase() == "M" ->
+            "Exposure compensation has no effect in M, where you set the exposure yourself. It works in P, A and S."
+        mode.isEmpty() || !(exposure || spec.name == "expcomp") -> "Set this on the camera: this body doesn't let the phone change it right now."
+        else -> "The camera sets this itself in ${PropertyFormat.display("takemode", mode)} mode."
+    }
+    val modes = camera.properties["takemode"]?.options ?: emptyList()
+    Column(Modifier.padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(why, color = Theme.text, fontSize = 15.sp, lineHeight = 20.sp, textAlign = TextAlign.Center)
+        when {
+            spec.name == "expcomp" && mode.uppercase() == "M" && ("A" in modes || "S" in modes) ->
+                listOf("Switch to A (aperture priority)" to "A", "Switch to S (shutter priority)" to "S").filter { it.second in modes }.forEach { item ->
+                    UnlockButton(item.first) { scope.launch { camera.setProperty("takemode", item.second) } }
+                }
+            unlock != null && unlock.second in modes -> UnlockButton(unlock.first) { scope.launch { camera.setProperty("takemode", unlock.second) } }
+            unlock != null && !modeSettable && mode.isNotEmpty() && mode.uppercase() != unlock.second ->
+                // The mode is on a physical dial (LUMIX): say which way to turn it.
+                Text("Turn the camera's mode dial to ${unlock.second} to set this from the phone.", color = Theme.secondary,
+                    fontSize = 13.sp, textAlign = TextAlign.Center)
         }
     }
 }
 
-/** Tappable grid for settings with a handful of named values (mode, drive, movie exposure…). */
+/** The way out of a locked value (205): a light-outlined capsule with a lock, 44 dp. */
+@Composable
+private fun UnlockButton(title: String, onClick: () -> Unit) {
+    Row(Modifier.heightIn(min = Theme.target).clip(Pill).border(1.5.dp, Theme.text, Pill).clickable(onClick = onClick)
+        .padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Icon(Icons.Filled.LockOpen, null, Modifier.size(16.dp), tint = Theme.text)
+        Text(title, color = Theme.text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** Tappable grid for settings with a handful of named values: three across, text only, the chosen one in the accent (208, 209). */
 @Composable
 fun OptionGrid(property: CameraProperty, onSelect: (String) -> Unit) {
-    val haptics = LocalHapticFeedback.current
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(92.dp),
-        modifier = Modifier.heightIn(max = 190.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(property.options) { option ->
-            val selected = option == property.value
-            Column(
-                Modifier.heightIn(min = 52.dp)
-                    .surface(RoundedCornerShape(14.dp), tint = if (selected) Theme.accent else null)
-                    .clickable {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSelect(option)
+    val view = androidx.compose.ui.platform.LocalView.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        property.options.chunked(3).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { option ->
+                    val selected = option == property.value
+                    val shape = RoundedCornerShape(14.dp)
+                    Box(
+                        Modifier.weight(1f).heightIn(min = 62.dp).clip(shape)
+                            .background(if (selected) Theme.accent else Color.Transparent, shape)
+                            .then(if (selected) Modifier else Modifier.border(1.dp, Theme.outline, shape))
+                            .clickable {
+                                Feedback.play(Feedback.Moment.SELECT, view)
+                                onSelect(option)
+                            }
+                            .padding(horizontal = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(PropertyFormat.display(property.name, option), color = if (selected) Theme.onAccent else Theme.text,
+                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2)
                     }
-                    .padding(6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                val color = if (selected) Color.Black else Color.White
-                SettingSpec.optionIcon(property.name, option)?.let { Icon(it, null, Modifier.size(18.dp), tint = color) }
-                Text(PropertyFormat.display(property.name, option), color = color, fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2)
+                }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }
 }
 
-/** Shutter: Live Composite / Live Time / Live Bulb / Bulb as chips, timed speeds on the dial. */
+/**
+ * Shutter: timed speeds on the dial, which runs on past the slowest one into the camera's own Live
+ * Comp / Live Time / Bulb. Once one of those is chosen, the kinds show as chips, with Stop after (210).
+ */
 @Composable
-fun ShutterOptions(camera: CameraModel, property: CameraProperty) {
+fun ShutterOptions(camera: CameraModel, property: CameraProperty, fill: Boolean = false, onTick: (Boolean) -> Unit = {}) {
     val scope = rememberCoroutineScope()
     var lastTimed by remember { mutableStateOf(camera.prefs.getString("lastTimedShutter", "250") ?: "250") }
     val liveModes = property.options.filter { PropertyFormat.isOpenEnded(it) }
@@ -225,33 +286,40 @@ fun ShutterOptions(camera: CameraModel, property: CameraProperty) {
         lastTimed in timedOptions -> lastTimed
         else -> timedOptions.firstOrNull() ?: property.value
     }
-    val timed = property.copy(options = timedOptions, value = timedValue)
     val current = if (PropertyFormat.isOpenEnded(property.value)) property.value else "timed"
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (liveModes.isNotEmpty()) {
+    Column(Modifier.fillMaxWidth().then(if (fill) Modifier.fillMaxHeight() else Modifier),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (liveModes.isNotEmpty() && current != "timed") {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 (listOf("timed") + liveModes).forEach { choice ->
                     val on = choice == current
-                    Text(
-                        if (choice == "timed") "Timed" else PropertyFormat.display("shutspeedvalue", choice),
-                        color = if (on) Color.Black else Color.White.copy(alpha = 0.8f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.background(if (on) Theme.accent else Color.White.copy(alpha = 0.1f), Pill)
-                            .clickable {
-                                val value = if (choice == "timed") timed.value else choice
-                                scope.launch { camera.setProperty("shutspeedvalue", value) }
-                            }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                    )
+                    Box(Modifier.heightIn(min = 34.dp).clip(Pill)
+                        .background(if (on) Theme.text else Color.Black.copy(alpha = 0.25f), Pill)
+                        .then(if (on) Modifier else Modifier.border(1.dp, Theme.text.copy(alpha = 0.35f), Pill))
+                        .clickable {
+                            val value = if (choice == "timed") timedValue else choice
+                            scope.launch { camera.setProperty("shutspeedvalue", value) }
+                        }
+                        .padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                        Text(if (choice == "timed") "Timed" else PropertyFormat.display("shutspeedvalue", choice),
+                            color = if (on) Theme.background else Theme.text, fontSize = 13.sp,
+                            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
+                    }
                 }
             }
         }
         if (current == "timed") {
-            ValueDial(timed) { value ->
-                lastTimed = value
-                camera.prefs.edit().putString("lastTimedShutter", value).apply()
-                scope.launch { camera.setProperty("shutspeedvalue", value) }
+            Box(if (fill) Modifier.weight(1f) else Modifier) {
+                ValueDial(property, "Shutter", fill, onTick) { value ->
+                    if (!PropertyFormat.isOpenEnded(value)) {
+                        lastTimed = value
+                        camera.prefs.edit().putString("lastTimedShutter", value).apply()
+                    }
+                    scope.launch { camera.setProperty("shutspeedvalue", value) }
+                }
             }
         } else {
+            Spacer(Modifier.height(14.dp))
             BulbTimerControl(camera)
             Text(
                 when {
@@ -260,7 +328,7 @@ fun ShutterOptions(camera: CameraModel, property: CameraProperty) {
                     camera.bulbTimer > 0 -> "The exposure stops by itself after ${CameraModel.durationLabel(camera.bulbTimer)}, or when you tap the shutter."
                     else -> "The exposure runs until you tap the shutter again."
                 },
-                color = Theme.secondary, fontSize = 13.sp,
+                color = Theme.secondary, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp),
             )
         }
     }
@@ -269,108 +337,57 @@ fun ShutterOptions(camera: CameraModel, property: CameraProperty) {
 /** Timed Bulb: Off, 30 s, 1–10 min. */
 @Composable
 fun BulbTimerControl(camera: CameraModel) {
-    val choices = listOf(0.0, 30.0, 60.0, 120.0, 300.0, 600.0)
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        CapsLabel("Stop after", color = Theme.tertiary)
-        choices.forEach { seconds ->
-            val on = camera.bulbTimer == seconds
-            Text(
-                if (seconds == 0.0) "Off" else CameraModel.durationLabel(seconds),
-                color = if (on) Color.Black else Color.White.copy(alpha = 0.85f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.background(if (on) Theme.accent else Color.White.copy(alpha = 0.1f), Pill)
-                    .clickable(enabled = !camera.isShooting) { camera.changeBulbTimer(seconds) }
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
-            )
+    val choices = listOf(0.0, 30.0, 60.0, 120.0, 300.0)
+    var picking by remember { mutableStateOf(false) }
+    val custom = camera.bulbTimer > 0 && camera.bulbTimer !in choices
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        CapsLabel("Stop after", color = Theme.secondary)
+        Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            choices.forEach { seconds ->
+                ChipButton(if (seconds == 0.0) "Off" else CameraModel.durationLabel(seconds), camera.bulbTimer == seconds,
+                    enabled = !camera.isShooting) { camera.changeBulbTimer(seconds) }
+            }
+            // 211: any other length, on a wheel.
+            ChipButton(if (custom) CameraModel.durationLabel(camera.bulbTimer) else "Other…", custom, enabled = !camera.isShooting) { picking = true }
         }
+    }
+    PanelCover(picking, { picking = false }, title = "Stop the exposure after") { dismiss ->
+        StopAfterPicker(camera.bulbTimer, { camera.changeBulbTimer(it) }, dismiss)
     }
 }
 
 /**
- * iPhone Camera–style exposure ruler (port of ValueDial): fine ticks for every step, taller
- * labelled ticks on full stops, a fixed centre marker, the live value above, and a haptic tick for
- * every step crossed. The value is sent to the camera when scrolling stops.
+ * A setting's dial (port of PropertyViews.swift's ValueDial): the big readout under the values, the
+ * curved dial low over the shutter row; the gap between them is what's left over (201). The value is
+ * sent to the camera once the dial settles, and follows the camera if it adjusts or rejects it.
  */
 @Composable
-fun ValueDial(property: CameraProperty, onCommit: (String) -> Unit) {
-    val usesIcons = property.name == "wbvalue"
-    val spacing: Dp = if (usesIcons) 46.dp else if (property.name == "shutspeedvalue") 13.dp else 11.dp
-    val options = property.options
-    val startIndex = options.indexOf(property.value).coerceAtLeast(0)
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
-    val fling = rememberSnapFlingBehavior(state)
-    val haptics = LocalHapticFeedback.current
-    var committed by remember(property.name) { mutableStateOf(property.value) }
-    val scope = rememberCoroutineScope()
-
-    // The item under the centre marker.
-    val centeredIndex by remember(options) { derivedStateOf { state.itemAtCenter() ?: startIndex } }
-    val current = options.getOrNull(centeredIndex) ?: property.value
-
-    // Haptic per step, firmer on full stops.
-    LaunchedEffect(options) {
-        snapshotFlow { centeredIndex }.distinctUntilChanged().collect { i ->
-            if (state.isScrollInProgress) {
-                haptics.performHapticFeedback(
-                    if (isMajor(property.name, options.getOrNull(i) ?: "")) HapticFeedbackType.LongPress else HapticFeedbackType.TextHandleMove,
-                )
-            }
-        }
-    }
-    // Commit when scrolling stops.
-    LaunchedEffect(options) {
-        snapshotFlow { state.isScrollInProgress }.distinctUntilChanged().filter { !it }.collect {
-            val value = options.getOrNull(centeredIndex) ?: return@collect
-            if (value != committed) {
-                committed = value
-                onCommit(value)
-            }
-        }
-    }
-    // The camera may adjust or reject a value (or a preset changed it): follow it.
-    LaunchedEffect(property.value) {
-        committed = property.value
-        val i = options.indexOf(property.value)
-        if (i >= 0 && i != centeredIndex && !state.isScrollInProgress) state.animateScrollToItem(i)
-    }
-
-    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            CapsLabel(PropertyFormat.title(property.name), color = Theme.secondary, size = 10.sp)
-            Text(PropertyFormat.display(property.name, current), color = Theme.accent, style = monoStyle(14.sp))
-        }
-        BoxWithConstraints(Modifier.fillMaxWidth().height(if (usesIcons) 40.dp else 30.dp)) {
-            val side = (maxWidth - spacing) / 2
-            LazyRow(
-                state = state,
-                flingBehavior = fling,
-                contentPadding = PaddingValues(horizontal = side.coerceAtLeast(0.dp)),
-                modifier = Modifier.fillMaxWidth()
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                    .drawWithContent {
-                        drawContent()
-                        drawRect(
-                            Brush.horizontalGradient(0f to Color.Transparent, 0.22f to Color.Black, 0.78f to Color.Black, 1f to Color.Transparent),
-                            blendMode = BlendMode.DstIn,
-                        )
-                    },
-            ) {
-                itemsIndexed(options) { index, option ->
-                    Tick(property.name, option, option == current, usesIcons, Modifier.width(spacing).clickable {
-                        scope.launch { state.animateScrollToItem(index) }
-                        committed = option
-                        onCommit(option)
-                    })
-                }
-            }
-            // Centre marker.
-            Box(Modifier.align(Alignment.TopCenter).width(2.dp).height(if (usesIcons) 20.dp else 22.dp)
-                .background(Theme.accent, Pill))
-        }
+fun ValueDial(property: CameraProperty, readoutLabel: String?, fill: Boolean = false, onTick: (Boolean) -> Unit = {}, onCommit: (String) -> Unit) {
+    var selection by remember(property.name) { mutableStateOf(property.value) }
+    LaunchedEffect(property.value) { selection = property.value }
+    Column(Modifier.fillMaxWidth().then(if (fill) Modifier.fillMaxHeight() else Modifier)) {
+        if (readoutLabel != null) DialReadout(readoutLabel, readoutText(property.name, selection), Modifier.padding(top = 10.dp))
+        if (fill) Spacer(Modifier.weight(1f)) else Spacer(Modifier.height(6.dp))
+        CurvedDial(
+            options = property.options, selection = selection,
+            label = { shortLabel(property.name, it) },
+            onSelectionChange = { selection = it },
+            onCommit = { if (it != property.value) onCommit(it) },
+            isMajor = { isMajor(property.name, it) },
+            isAnchor = { property.name == "expcomp" && it.toDoubleOrNull() == 0.0 },
+            onTick = onTick,
+        )
     }
 }
 
-/** The item nearest the middle of the list: the one under a dial's centre marker. */
+/** The selected value as the big readout shows it. */
+fun readoutText(name: String, value: String): String = when (name) {
+    "focalvalue" -> "f/" + shortLabel(name, value)
+    "takemode" -> modeTitle(value)
+    else -> PropertyFormat.display(name, value)
+}
+
 fun LazyListState.itemAtCenter(): Int? {
     val info = layoutInfo
     val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
@@ -415,7 +432,16 @@ fun isMajor(name: String, value: String): Boolean = when (name) {
 }
 
 fun shortLabel(name: String, value: String): String = when (name) {
+    "takemode" -> modeTitle(value)
     "focalvalue" -> if (value.endsWith(".0")) value.dropLast(2) else value
+    "wbvalue" -> {
+        // Short on the dial so five fit (206: "Fluor."); the readout above says it in full.
+        val full = PropertyFormat.display(name, value)
+        val short = listOf("Fluorescent" to "Fluor.", "Incandescent" to "Incand.", "Underwater" to "Water", "One-touch" to "1-touch",
+            "Auto (white priority)" to "Auto W", "Auto (ambience priority)" to "Auto A", "Daylight" to "Day", "Halogen" to "Halog.",
+            "Colour temperature" to "K", "White set" to "Set")
+        short.firstOrNull { full.startsWith(it.first) }?.let { it.second + full.drop(it.first.length) } ?: full
+    }
     "expcomp" -> value.toDoubleOrNull()?.let { ev -> if (ev == 0.0) "0" else String.format(java.util.Locale.US, "%+d", ev.roundToInt()) } ?: value
     else -> PropertyFormat.display(name, value)
 }

@@ -2,7 +2,13 @@ package com.apexcommerce.shutterlink.camera
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.nio.ByteBuffer
+import java.nio.channels.DatagramChannel
 import kotlin.math.abs
 
 /**
@@ -72,7 +78,17 @@ object DriverSelfTest {
         val props = camera.properties.values.sortedBy { it.name }
         check("settings read", props.isNotEmpty(),
             props.joinToString(" ") { "${it.name}=${it.value}${if (it.settable) "" else "(ro)"}[${it.options.size}]" })
-        for (name in listOf("expcomp", "focalvalue", "shutspeedvalue", "isospeedvalue", "wbvalue")) {
+        if (camera.brand == CameraBrand.PANASONIC) {
+            // The extra settings from the camera's own menu, with its names, and the mode dial.
+            val drive = camera.properties["drivemode"]
+            check("lumix menu settings", drive != null && camera.properties["colormode"] != null &&
+                PropertyFormat.title("colormode") == "Photo Style" && camera.properties["takemode"] != null,
+                "drive=${drive?.let { "${PropertyFormat.display("drivemode", it.value)} of ${it.options.size}" } ?: "-"} " +
+                    "mode=${camera.properties["takemode"]?.value ?: "-"} " +
+                    "extras=${LumixMenu.wanted.count { camera.properties[it.name] != null }} kelvin=${camera.properties[LumixMenu.KELVIN_NAME]?.options?.size ?: 0}")
+        }
+        val extras = if (camera.brand == CameraBrand.PANASONIC) listOf("drivemode", "colormode", "afmode", LumixMenu.KELVIN_NAME) else emptyList()
+        for (name in listOf("expcomp", "focalvalue", "shutspeedvalue", "isospeedvalue", "wbvalue") + extras) {
             val p = camera.settableProperty(name) ?: continue
             val target = p.options.firstOrNull { it != p.value && !PropertyFormat.isOpenEnded(it) && it != "auto" } ?: continue
             val ok = camera.setProperty(name, target)
@@ -126,6 +142,8 @@ object DriverSelfTest {
         if (camera.capabilities.focusDrive) shoots("focus stack", 3) { camera.startFocusStack(3, FocusStepSize.MEDIUM) }
         sceneChecks()
         wifiChecks()
+        lumixChecks()
+        liveViewChecks()
         shootingTools()
 
         if (camera.capabilities.cardBrowser) {
@@ -159,6 +177,10 @@ object DriverSelfTest {
         }
         camera.changeAutoSave(autoSaveWas)
 
+        // After 5 s of live view the Request log has a LIVE line with the frame rates.
+        val live = camera.log.lastOrNull { it.note && it.method == "LIVE" }
+        check("live view log", live != null, live?.path ?: "no LIVE line")
+
         camera.disconnect()
         finish()
     }
@@ -182,6 +204,17 @@ object DriverSelfTest {
             check("preset undo", camera.properties["takemode"]?.value == before && camera.lastError == null,
                 "mode $before → ${camera.properties["takemode"]?.value} ${camera.lastError ?: ""}")
         }
+        // A setup that's on is kept with the camera, so it can still be turned off after a restart.
+        val undoWas = camera.presetUndo
+        camera.presetUndo = SettingsSnapshot("selftest", "Self-test", mapOf("isospeedvalue" to "200"))
+        camera.savePresetUndo()
+        camera.presetUndo = null
+        camera.restorePresetUndo()
+        val restored = camera.isPresetOn("selftest") && camera.presetUndo?.values?.get("isospeedvalue") == "200"
+        camera.presetUndo = undoWas
+        camera.savePresetUndo()
+        check("preset stays on", restored, "restored ${camera.savedCameras.firstOrNull()?.id ?: "no saved camera"}")
+
         camera.saveCurrentSettings("Self-test")
         camera.savedPresetsForCamera.firstOrNull()?.let { saved ->
             val ok = camera.runPreset(saved.id, saved.name) { camera.steps(saved) }
@@ -291,6 +324,94 @@ object DriverSelfTest {
         val lampCast = FrameMeter.neutralCast(frame(225, 200, 175))
         check("colour cast", lampCast != null && abs(lampCast.red - 225) < 2 && lampCast.warmth > 0.08 && lampCast.orange > 0.04 &&
             FrameMeter.neutralCast(frame(250, 40, 40)) == null, "lamp=$lampCast")
+    }
+
+    /** The LUMIX menu reader, drive names and the other tables, on made-up input (no camera needed). */
+    private fun lumixChecks() {
+        val menu = MiniXml.parse("""<camrply><result>ok</result><menuset model="G7"><photosettings><menu>
+            <item id="menu_item_id_ph_sty" title_id="title_ph_sty" func_type="select"><group>
+            <item id="menu_item_id_ph_sty_standard" title_id="title_ph_sty_standard" cmd_mode="setsetting" cmd_type="colormode" cmd_value="standard" cmd_value2="__value__"/>
+            <item id="menu_item_id_ph_sty_vivid" title_id="title_ph_sty_vivid" cmd_mode="setsetting" cmd_type="colormode" cmd_value="vivid" cmd_value2="__value__"/>
+            </group></item></menu></photosettings><qmenu2><menu>
+            <item id="menu_item_id_whitebalance" title_id="title_whitebalance" func_type="sp_embeded_whitebalance"><group>
+            <item id="menu_item_id_whitebalance_auto" cmd_mode="setsetting" cmd_type="whitebalance" cmd_value="auto"/>
+            <item id="menu_item_id_whitebalance_color_temp" min_val="2500" max_val="10000" step_val="100" cmd_mode="setsetting" cmd_type="whitebalance" cmd_value="color_temp" cmd_value2="__value__"/>
+            </group></item>
+            <item id="menu_item_id_1shoot" title_id="title_1shoot" cmd_mode="setsetting" cmd_type="drivemode" cmd_value="normal"/>
+            <item id="menu_item_id_burst" title_id="title_burst" func_type="select" cmd_mode="setsetting" cmd_type="drivemode" cmd_value="burst"><group>
+            <item id="menu_item_id_burst_h" title_id="title_burst_h" cmd_mode="setsetting" cmd_type="drivemode" cmd_value="burst" cmd_value2="h"/>
+            </group></item>
+            <item id="menu_item_id_selftimer" title_id="title_selftimer" func_type="select" cmd_mode="setsetting" cmd_type="drivemode" cmd_value="selftimer"><group>
+            <item id="menu_item_id_selftimer_2sec" title_id="title_selftimer_2sec" cmd_mode="setsetting" cmd_type="drivemode" cmd_value="selftimer" cmd_value2="2sec"/>
+            </group></item></menu></qmenu2>
+            <titlelist><language code="en" default="yes"><title id="title_ph_sty">Photo Style</title>
+            <title id="title_ph_sty_standard">Standard</title><title id="title_ph_sty_vivid">Vivid</title>
+            <title id="title_1shoot">Single</title><title id="title_burst">Burst Shooting</title><title id="title_burst_h">H</title>
+            <title id="title_selftimer">Self Timer</title><title id="title_selftimer_2sec">2sec.</title>
+            </language></titlelist></menuset></camrply>""")
+        val parsed = menu?.let { LumixMenu.parse(it) }
+        val drive = parsed?.settings?.firstOrNull { it.name == "drivemode" }
+        val style = parsed?.settings?.firstOrNull { it.name == "colormode" }
+        val kelvin = parsed?.kelvin
+        check("lumix menu", parsed != null && drive != null && style != null && kelvin != null &&
+            parsed.settings.map { it.name } == listOf("drivemode", "colormode") &&
+            drive.options == listOf("normal", "burst|h", "selftimer|2sec") &&
+            drive.labels["burst|h"] == "Burst H" && drive.labels["burst"] == "Burst" && drive.labels["selftimer|2sec"] == "Self-timer 2 s" &&
+            drive.optionItems["burst|h"] == listOf("menu_item_id_burst_h", "menu_item_id_burst") &&
+            style.options == listOf("standard", "vivid") && style.labels["vivid"] == "Vivid" &&
+            style.headingItems == listOf("menu_item_id_ph_sty") &&
+            kelvin.options.size == 76 && kelvin.itemId == "menu_item_id_whitebalance_color_temp",
+            "settings=${parsed?.settings?.map { "${it.name}${it.options}" }} labels=${drive?.labels} kelvin=${parsed?.kelvin}")
+
+        val state = MiniXml.parse("""<camrply><result>ok</result><menuinfo><item id="menu_item_id_recmode" enable="yes" value="manual_exposure" />
+            <item id="menu_item_id_crtv_ctrl" enable="no" /></menuinfo></camrply>""")?.let { LumixMenu.parseState(it) } ?: emptyMap()
+        check("lumix curmenu", state["menu_item_id_crtv_ctrl"]?.enabled == false && state["menu_item_id_recmode"]?.enabled == true &&
+            state["menu_item_id_recmode"]?.value?.let { PanasonicDriver.lumixMode(it) } == "M" &&
+            PanasonicDriver.lumixMode("aperture_ae") == "A" && PanasonicDriver.lumixMode("custom_1") == "Custom 1",
+            "$state")
+        val keys = listOf(
+            PanasonicDriver.optionKey("burst", "h", listOf("normal", "burst|h")),
+            PanasonicDriver.optionKey("burst", null, listOf("burst|h")),
+            PanasonicDriver.optionKey("selftimer", "10sec", listOf("selftimer|2sec")),
+        )
+        val labels = listOf(LumixMenu.driveLabel("autobracket|3shot_1/3ev"), LumixMenu.driveLabel("4k_photo|pre_burst"), LumixMenu.driveLabel("odd|thing"))
+        val strip = listOf("burst|h", "selftimer|10sec3shot", "lowvib-normal", "silent-continuous-H", "normal", "").map { driveShort(it) }
+        check("drive names", keys == listOf("burst|h", "burst", "selftimer|10sec") &&
+            labels == listOf("Bracket 3 × 1/3 EV", "4K Pre-Burst", null) &&
+            strip == listOf("Burst H", "Timer 10s×3", "Anti-shock", "Silent Cont H", "Single", "–"),
+            "keys=$keys labels=$labels strip=$strip")
+
+        // Crop factors for the bodies the tables used to get wrong, and Sony's newer bodies.
+        val crops = listOf(cropFactor(CameraBrand.CANON, "Canon EOS R6m2"), cropFactor(CameraBrand.CANON, "Canon EOS R10"),
+            cropFactor(CameraBrand.CANON, "EOS R50"), cropFactor(CameraBrand.CANON, "EOS R8"), cropFactor(CameraBrand.CANON, "EOS R7"),
+            cropFactor(CameraBrand.SONY, "ZV-E1"), cropFactor(CameraBrand.SONY, "ZV-E10"))
+        check("crop factors", crops == listOf(1.0, 1.6, 1.6, 1.0, 1.6, 1.0, 1.5) &&
+            SonyDriver.isNewerBody("ILCE-7M4") && !SonyDriver.isNewerBody("ILCE-6000"), "$crops")
+    }
+
+    /** Live view's skip-to-newest and its Request log line, without a camera. */
+    private suspend fun liveViewChecks() {
+        val stats = LiveViewStats(since = 0).apply {
+            completed = 48; stale = 2; dropped = 1; jpegBytes = 48L * 9 * 1024; frameWidth = 320; frameHeight = 240
+        }
+        val line = stats.plainSummary(until = 2000)
+        check("live view summary", line == "320×240 · 25.0 frames/s from the camera, 24.0/s shown, 1 unreadable, 2 stale, 9 KB each (last 2 s)", line)
+
+        // Three datagrams already waiting: the reader returns the third and counts two as passed over.
+        val newest = withContext(Dispatchers.IO) {
+            runCatching {
+                val channel = DatagramChannel.open().bind(InetSocketAddress(InetAddress.getLoopbackAddress(), 0))
+                DatagramReader(channel).use { reader ->
+                    DatagramChannel.open().use { sender ->
+                        for (i in 1..3) sender.send(ByteBuffer.wrap(byteArrayOf(i.toByte(), 0x55)), channel.localAddress)
+                    }
+                    Thread.sleep(150)
+                    val count = reader.receive(300, newest = true)
+                    Triple(count, reader.buffer.array()[0].toInt(), reader.skipped)
+                }
+            }.getOrElse { e -> debugLog("SELFTEST live view reader: $e"); null }
+        }
+        check("live view newest datagram", newest == Triple(2, 3, 2), "length, first byte, skipped = $newest")
     }
 
     /**

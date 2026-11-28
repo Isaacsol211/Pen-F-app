@@ -139,7 +139,7 @@ object ModelProfiles {
             fixed = true, noEv = true),
         p("LUMIX FZ1000", listOf("FZ1000"), 2014),
         p("LUMIX GM5", listOf("GM5"), 2014),
-        p("LUMIX G7 / G70", listOf("G7", "G70"), 2015),
+        p("LUMIX G7 / G70", listOf("G7", "G70"), 2015, support = SupportLevel.HARDWARE),
         p("LUMIX GF7", listOf("GF7"), 2015),
         p("LUMIX TZ70 / ZS50", listOf("TZ70", "ZS50", "TZ71"), 2015, noIso = true),
         p("LUMIX FZ300 / FZ330", listOf("FZ300", "FZ330"), 2015),
