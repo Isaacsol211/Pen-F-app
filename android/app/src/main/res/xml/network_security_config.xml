@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Cameras only speak plain HTTP on their own Wi-Fi (192.168.x.x), and their addresses can't be
-     listed as domains, so cleartext is allowed. The app never talks to the internet. -->
+<!-- Cameras only speak plain HTTP on their own Wi-Fi (192.168.x.x), and address ranges can't be listed
+     here, so cleartext is allowed in this file. The app enforces the limit itself: every HTTP request
+     and socket goes through isLocalHost() (CameraHttpClient.kt), which refuses anything that isn't a
+     private, link-local or loopback address or a .local / unqualified name. -->
+
 <network-security-config>
     <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

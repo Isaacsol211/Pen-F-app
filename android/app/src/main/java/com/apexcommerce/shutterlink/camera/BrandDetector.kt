@@ -105,6 +105,7 @@ object BrandDetector {
 
     /** Whether a TCP connection opens within 3 s (and then closes it again without sending anything). */
     fun tcpOpens(host: String, port: Int): Boolean = runCatching {
+        if (!isLocalHost(host)) return false
         Socket().use { it.connect(InetSocketAddress(host, port), 3000) }
         true
     }.onFailure { noAnswer("tcp://$host:$port", it) }.getOrDefault(false)

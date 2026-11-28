@@ -667,7 +667,7 @@ fun steps(brand: CameraBrand?): List<Pair<String, String>> = when (brand) {
     )
     CameraBrand.CANON -> listOf(
         "Unlock CCAPI once" to "Canon locks third-party control until the camera is activated with Canon's free CCAPI tool (developer account, one time per camera). Without it the app can't connect.",
-        "Start Wi-Fi on the camera" to "MENU ▸ Wireless ▸ Wi-Fi ▸ the CCAPI connection, as camera access point. Join the camera's network in Settings ▸ Wi-Fi.",
+        "Start Wi-Fi on the camera" to "MENU ▸ Wireless ▸ Wi-Fi ▸ the CCAPI connection, as camera access point, with HTTPS and user authentication turned off. Join the camera's network in Settings ▸ Wi-Fi.",
         "Connect" to "If Automatic doesn't find it, type the camera's \"CCAPI top URL\" under Advanced.",
     )
     CameraBrand.SONY -> listOf(

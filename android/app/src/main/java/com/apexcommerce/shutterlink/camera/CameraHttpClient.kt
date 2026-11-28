@@ -55,10 +55,40 @@ class CameraHttpException(val status: Int, val path: String, val body: String) :
         }
 }
 
+/**
+ * Whether [host] is on the local network: a private, link-local or loopback IP address, an unqualified
+ * name or a .local name. Cameras only speak plain HTTP (and PTP/IP) on their own Wi-Fi, so every
+ * connection is checked against this and nothing unencrypted goes to the internet, even if a typed
+ * address or a camera's reply points elsewhere. Same rule as NetworkInfo.isLocal on iOS.
+ */
+fun isLocalHost(host: String): Boolean {
+    val name = host.trim('[', ']').lowercase()
+    if (name == "localhost" || name.endsWith(".local")) return true
+    val octets = name.split(".").map { it.toIntOrNull() }
+    if (octets.size == 4 && octets.all { it != null && it in 0..255 }) {
+        val a = octets[0]!!
+        val b = octets[1]!!
+        return a == 10 || a == 127 || (a == 172 && b in 16..31) || (a == 192 && b == 168) || (a == 169 && b == 254)
+    }
+    if (name.contains(':')) { // IPv6: loopback, link-local (fe80::/10), unique local (fc00::/7)
+        return name == "::1" || listOf("fe8", "fe9", "fea", "feb", "fc", "fd").any { name.startsWith(it) }
+    }
+    // An unqualified name (no dots) can only be resolved on the local network.
+    return name.isNotEmpty() && !name.contains('.') && name.all { it.isLetterOrDigit() || it == '-' }
+}
+
 /** Shared OkHttp pools: one for queued commands, one that skips the queue for urgent stops. */
 object Http {
     val base: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            // Every client is built from this one, so this covers commands, probes and Sony's live view.
+            .addInterceptor { chain ->
+                val host = chain.request().url.host
+                if (!isLocalHost(host)) {
+                    throw IOException("$host isn't on a local network. Shutterlink only connects to cameras over their own Wi-Fi.")
+                }
+                chain.proceed(chain.request())
+            }
             .connectTimeout(5, TimeUnit.SECONDS)
             // Long exposures hold the reply open; each call sets its own overall timeout.
             .readTimeout(0, TimeUnit.SECONDS)

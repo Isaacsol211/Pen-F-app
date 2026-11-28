@@ -84,6 +84,9 @@ class TcpChannel(private val host: String, private val port: Int) {
     @Volatile var broken = false
 
     fun open(timeoutMs: Int = 5000) {
+        if (!isLocalHost(host)) {
+            throw CameraException("$host isn't on a local network. Shutterlink only connects to cameras over their own Wi-Fi.")
+        }
         socket.tcpNoDelay = true
         socket.keepAlive = true
         socket.connect(InetSocketAddress(host, port), timeoutMs)
@@ -420,7 +423,9 @@ class PtpPropDesc(data: ByteArray) {
                 val lo = r.value(dataType)
                 val hi = r.value(dataType)
                 val increment = r.value(dataType)
-                if (increment > 0 && hi >= lo && (hi - lo) / increment < 2000) values.addAll((lo..hi).step(increment))
+                // A camera can describe a range as wide as a Long allows: skip it rather than overflow.
+                val span = runCatching { Math.subtractExact(hi, lo) }.getOrNull()
+                if (increment > 0 && span != null && span >= 0 && span / increment < 2000) values.addAll((lo..hi).step(increment))
             }
             2 -> {                       // enumeration
                 val count = r.u16()

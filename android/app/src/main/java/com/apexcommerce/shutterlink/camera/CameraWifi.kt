@@ -200,10 +200,13 @@ suspend fun CameraModel.savedNetwork(saved: SavedCamera): WifiCredentials? {
 
 /** Fills Add a camera from a scanned QR code. Returns false when the code isn't one Shutterlink reads. */
 fun CameraModel.applyScannedCode(text: String): Boolean {
-    // The request log shows what the code said, so a brand's format can be added from a real camera.
-    debugLog("wifi QR: $text")
+    // The request log shows the code's format (so a brand's format can be added from a real camera),
+    // never the code itself: it holds the camera's Wi-Fi password, and the log can be copied.
     val network = WifiQrCode.parse(text)
-    appendLog(LogEntry(System.currentTimeMillis(), "QR", text.trim(), if (network == null) null else 200, 0,
+    val trimmed = text.trim()
+    val format = trimmed.takeWhile { it != ':' && it != ',' }.take(12)
+    appendLog(LogEntry(System.currentTimeMillis(), "QR", "$format code, ${trimmed.length} characters (contents hidden)",
+        if (network == null) null else 200, 0,
         network?.let { "Wi-Fi ${it.ssid}" } ?: "not a code Shutterlink reads yet"))
     network ?: return false
     wifiSsid = network.ssid
