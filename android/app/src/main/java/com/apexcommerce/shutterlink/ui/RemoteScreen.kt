@@ -279,10 +279,15 @@ private fun PortraitLayout(
     val selected = portraitSelection(camera, activeSetting)
     Box(Modifier.fillMaxSize()) {
         LiveBackdrop(camera)
-        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+        // The controls under the picture need about 450 dp (status, small line, values, readout, dial,
+        // shutter row). On a short (16:9) screen the picture gives way, as a centred 4:3 box, rather than
+        // the dial running into the shutter row.
+        val pictureHeight = minOf(maxWidth * 3 / 4, maxHeight - 450.dp).coerceAtLeast(160.dp)
+        Column(Modifier.fillMaxSize()) {
             InfoBar(camera) { menuButton() }
-            Box {
-                LiveViewPane(camera, showGrid, showHistogram, showLoupe, Modifier.fillMaxWidth().aspectRatio(4f / 3f), loupeControlsBelow = true)
+            Box(Modifier.fillMaxWidth().height(pictureHeight), contentAlignment = Alignment.Center) {
+                LiveViewPane(camera, showGrid, showHistogram, showLoupe, Modifier.fillMaxHeight().aspectRatio(4f / 3f), loupeControlsBelow = true)
                 Banners(camera, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
                 SuggestionOverlay(camera, showLoupe, applySuggestion, Modifier.align(Alignment.BottomCenter).padding(10.dp))
             }
@@ -337,6 +342,7 @@ private fun PortraitLayout(
                     Box(Modifier.width(84.dp), contentAlignment = Alignment.Center) { ToolsButton(camera, toolsOpen, toggleTools) }
                 }
             }
+        }
         }
     }
 }

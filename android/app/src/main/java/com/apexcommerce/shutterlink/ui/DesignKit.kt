@@ -376,14 +376,17 @@ fun ChipButton(text: String, selected: Boolean, modifier: Modifier = Modifier, e
 fun <T> SegRow(label: String, options: List<T>, selection: T, onSelect: (T) -> Unit, title: (T) -> String, accent: Color = Theme.accent) {
     FeedbackOnChange(Feedback.Moment.SELECT, selection)
     Row(Modifier.fillMaxWidth().hairRow(54.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = Theme.secondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Text(label, color = Theme.secondary, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
         Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             options.forEach { option ->
                 val on = option == selection
-                Box(Modifier.heightIn(min = Theme.target).clickable(role = Role.RadioButton) { onSelect(option) }.padding(horizontal = 9.dp),
+                // The underline is drawn behind the option (a fillMaxWidth child would stretch it across the row).
+                Box(Modifier.heightIn(min = Theme.target).clickable(role = Role.RadioButton) { onSelect(option) }
+                    .drawBehind { if (on) drawRect(accent, topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - 2.dp.toPx()),
+                        size = androidx.compose.ui.geometry.Size(size.width, 2.dp.toPx())) }
+                    .padding(horizontal = 9.dp),
                     contentAlignment = Alignment.Center) {
-                    Text(title(option), style = Theme.num(18.sp, medium = !on), color = if (on) accent else Theme.secondary)
-                    if (on) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(2.dp).background(accent))
+                    Text(title(option), style = Theme.num(18.sp, medium = !on), color = if (on) accent else Theme.secondary, maxLines = 1)
                 }
             }
         }

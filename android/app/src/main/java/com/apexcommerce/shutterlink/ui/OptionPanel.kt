@@ -1,6 +1,7 @@
 package com.apexcommerce.shutterlink.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.filled.Lock
@@ -91,15 +92,16 @@ data class SettingSpec(val name: String, val title: String, val dial: Boolean) {
     companion object {
         /** Everything the PEN-F lets an app change over Wi-Fi, in shooting order. */
         val all = listOf(
-            SettingSpec("takemode", "Mode", false),
+            SettingSpec("takemode", "Mode", true),
             SettingSpec("focalvalue", "Aperture", true),
             SettingSpec("shutspeedvalue", "Shutter", true),
             SettingSpec("isospeedvalue", "ISO", true),
             SettingSpec("expcomp", "EV", true),
             SettingSpec("wbvalue", "White balance", true),
             SettingSpec("drivemode", "Drive", false),
+            SettingSpec("quality", "Quality", false),
             SettingSpec("colorphase", "Hue", true),
-            SettingSpec("exposemovie", "Movie", false),
+            SettingSpec("exposemovie", "Movie", true),
         )
 
         fun spec(name: String) = all.firstOrNull { it.name == name }
@@ -147,8 +149,11 @@ fun OptionPanel(camera: CameraModel, spec: SettingSpec, onClose: () -> Unit, fil
     val label = if (spec.name == "expcomp") "EV" else spec.title
     val mode = camera.properties["takemode"]?.value ?: ""
     val auto = isAutoValue(spec.name, !property.settable, mode)
+    // A locked value's explanation (and its way out) or a grid can be taller than a short screen leaves: scroll.
+    val scrolls = !property.settable || !spec.dial
     Column(
         Modifier.fillMaxWidth().then(if (fill) Modifier.fillMaxHeight() else Modifier)
+            .then(if (scrolls) Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()) else Modifier)
             .then(if (spec.dial) Modifier else Modifier.padding(14.dp)),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),

@@ -2,11 +2,11 @@
 
 Effective 24 November 2026
 
-Shutterlink is an iPhone, iPad and Apple Watch remote for cameras, published on the App Store as Shutterlink Remote by Apexmerce Solutions Private Limited. This policy covers the app.
+Shutterlink is an iPhone, iPad and Apple Watch remote for cameras, published on the App Store as Shutterlink Remote by Apexmerce Solutions Private Limited, and an Android app published on Google Play under the same name. This policy covers both.
 
 ## We don't collect data
 
-Shutterlink has no account, no analytics, no advertising, no tracking and no third-party code. Nothing you do in the app is sent to us or to anyone else.
+Shutterlink has no account, no analytics, no advertising and no tracking. Nothing you do in the app is sent to us or to anyone else. The iPhone, iPad and Watch app has no third-party code; the Android app uses Google's ML Kit, which sends Google some diagnostics (see "On Android" below).
 
 ## What the app does on your device
 
@@ -20,6 +20,17 @@ Shutterlink has no account, no analytics, no advertising, no tracking and no thi
 - **Request log.** The app keeps a log of the commands it sends to the camera, to help with troubleshooting. It stays on your device unless you copy it yourself.
 
 You can turn off the Local Network, Photos, Camera and Location permissions at any time in Settings on your iPhone or iPad. Deleting the app deletes its data.
+
+## On Android
+
+Shutterlink Remote for Android works the same way, with these differences:
+
+- **Google ML Kit.** Scene suggestions and the QR code scanner use Google's ML Kit, which runs on your phone: the live view and the code aren't sent anywhere. ML Kit itself sends Google some diagnostics (your phone's model and Android version, the app's version, an identifier for this installation that isn't meant to identify you, and performance figures), encrypted, which Google uses to keep ML Kit working and doesn't pass on to third parties. We don't receive it. Details: https://developers.google.com/ml-kit/android-data-disclosure
+- **QR code scanner.** It runs in Google Play services with its own camera screen, so Shutterlink never gets access to your camera.
+- **Wi-Fi.** Joining the camera's Wi-Fi uses the Nearby devices permission (Android 13 and later) or location (Android 10 to 12). The network name and password stay on your phone, the password encrypted with a key in the Android Keystore.
+- **Photos.** Downloaded pictures go to Pictures ▸ Shutterlink on your phone, RAW files to Download ▸ Shutterlink ▸ RAW.
+- **Report a problem.** If you choose to, the app prepares an email (or a message to share) with the camera log and your phone and camera details, leaving out scanned QR codes because they can contain the camera's Wi-Fi password. You see it in your own email app and decide whether to send it.
+- **Purchases.** The Android app has no purchases yet.
 
 ## Purchases
 

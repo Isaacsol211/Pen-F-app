@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -16,12 +18,29 @@ android {
         // MediaStore saving without a storage permission.
         minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        // versionCode only ever goes up: major * 10000 + minor * 100 + build (2.0, first Play build = 20001).
+        versionCode = 20001
+        versionName = "2.0"
+    }
+
+    // The Google Play upload key lives outside the repo (PEN-F Remote/android-signing/, backed up by the
+    // user); android/keystore.properties (gitignored) points at it. Without that file release builds are unsigned.
+    val keystoreFile = rootProject.file("keystore.properties")
+    val uploadKey = if (keystoreFile.exists()) Properties().apply { keystoreFile.inputStream().use { load(it) } } else null
+    signingConfigs {
+        if (uploadKey != null) {
+            create("upload") {
+                storeFile = file(uploadKey.getProperty("storeFile"))
+                storePassword = uploadKey.getProperty("storePassword")
+                keyAlias = uploadKey.getProperty("keyAlias")
+                keyPassword = uploadKey.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
+            if (uploadKey != null) signingConfig = signingConfigs.getByName("upload")
             isMinifyEnabled = true
             // OkHttp ships its own consumer rules; nothing app-specific is reflected on.
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
